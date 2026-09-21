@@ -13,6 +13,10 @@ vendor/
 *.so
 *.so.[0-9]*
 
+# Reference standards and datasheets (SMPTE, ITU, NRSC, chip datasheets) -
+# copyrighted, kept locally for reading, never redistributed.
+docs/
+
 # Conda / virtualenv
 .venv/
 *.conda
