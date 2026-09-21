@@ -44,11 +44,12 @@ import numpy as np # type: ignore
 # Local imports 
 from apps import theme
 from apps.utils import (apply_launcher_theme, apply_dark_theme,
-                       centre_on, DialogGeometryTracker,
-                       geometry_is_reachable, maximize_when_shown,
-                       flowgraph_settings, normal_geometry, read_settings,
-                       restore_window_geometry, save_flowgraph_settings,
-                       save_window_geometry, use_saved_theme)
+                        centre_on, DialogGeometryTracker,
+                        geometry_is_reachable, maximize_when_shown,
+                        flowgraph_settings, normal_geometry, read_settings,
+                        restore_window_geometry, save_flowgraph_settings,
+                        save_window_geometry, update_app_config,
+                        use_saved_theme)
 from apps.settings_dialog import SettingsDialog
 
 # Which way each radio goes. Two of the four are one-way instruments, and
@@ -1094,13 +1095,7 @@ class RFbenchToolkit(QMainWindow):
     def save_setting(self, key, value):
         """Merge one setting into ``window_settings.json``."""
         try:
-            settings = {}
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-            settings[key] = value
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=4)
+            update_app_config(self.settings_file, {key: value})
         except Exception as e:
             print(f"Error saving {key}: {e}")
 
@@ -1297,24 +1292,14 @@ class RFbenchToolkit(QMainWindow):
     def save_window_position(self):
         """Save the window's position, size and whether it is maximized."""
         try:
-            # Load existing settings
-            settings = {}
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-
             # The normal geometry even when maximized, so un-maximizing after
             # a restart gives back the size the window had before.
-            position = dict(settings.get('window_position') or {})
+            position = dict(read_settings(self.settings_file).get('window_position') or {})
             normal = normal_geometry(self)
             if normal is not None:
                 position.update(zip(('x', 'y', 'width', 'height'), normal))
             position['maximized'] = self.isMaximized()
-            settings['window_position'] = position
-
-            # Save updated settings
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=4)
+            self.save_setting('window_position', position)
         except Exception as e:
             print(f"Error saving window position: {e}")
             
@@ -1463,13 +1448,9 @@ class RFbenchToolkit(QMainWindow):
 
     def remember_face(self, key, index):
         try:
-            settings = {}
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-            settings.setdefault('tile_faces', {})[key] = int(index)
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=4)
+            faces = dict(read_settings(self.settings_file).get('tile_faces') or {})
+            faces[key] = int(index)
+            self.save_setting('tile_faces', faces)
         except Exception as e:
             print(f"Error saving tile face: {e}")
 
@@ -1533,19 +1514,13 @@ class RFbenchToolkit(QMainWindow):
 
             # Save dialog position/size to per-app config file
             try:
-                app_config = {}
-                if os.path.exists(app_config_file):
-                    with open(app_config_file, 'r') as f:
-                        app_config = json.load(f)
                 pos = tracker.captured or {
                     'x': config_dialog.pos().x(),
                     'y': config_dialog.pos().y(),
                     'width': config_dialog.width(),
                     'height': config_dialog.height(),
                 }
-                app_config['dialog_position'] = pos
-                with open(app_config_file, 'w') as f:
-                    json.dump(app_config, f, indent=4)
+                update_app_config(app_config_file, {'dialog_position': pos})
             except Exception as e:
                 print(f"Error saving dialog position: {e}")
 
@@ -1701,16 +1676,7 @@ class RFbenchToolkit(QMainWindow):
         # The radio may have changed, which changes what every tile can do.
         self.apply_radio_directions()
         if tracker.captured:
-            try:
-                existing = {}
-                if os.path.exists(self.settings_file):
-                    with open(self.settings_file, 'r') as f:
-                        existing = json.load(f)
-                existing['settings_dialog_position'] = tracker.captured
-                with open(self.settings_file, 'w') as f:
-                    json.dump(existing, f, indent=4)
-            except Exception as e:
-                print(f"Error saving settings dialog geometry: {e}")
+            self.save_setting('settings_dialog_position', tracker.captured)
 
     def closeEvent(self, event):
         """Save window position when closing the application"""

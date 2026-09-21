@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout)
 from PyQt5.QtCore import Qt # type: ignore
 
-from apps.utils import geometry_is_reachable, read_settings
+from apps.utils import geometry_is_reachable, read_settings, update_app_config
 
 
 def valid_ip(ip):
@@ -146,27 +146,15 @@ class SettingsDialog(QDialog):
         if not valid_ip(ip):
             ip = ''                 # greyed out, and nothing to keep
 
-        existing = {}
-        try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    existing = json.load(f)
-        except Exception as e:
-            print(f"Error loading existing settings: {e}")
-
         # The launcher keeps its window position and theme in the same
         # file, so this merges rather than writes it whole - and drops the
         # two keys the multi-radio launcher kept.
-        existing.pop('ip_addresses', None)
-        existing.pop('radio_mode', None)
-        existing.update({
-            'media_directory': self.media_path.text(),
-            'radio_type': self.radio_hw_combo.currentData(),
-            'usrp_ip': ip,
-        })
         try:
-            with open(self.settings_file, 'w') as f:
-                json.dump(existing, f, indent=4)
+            update_app_config(self.settings_file, {
+                'media_directory': self.media_path.text(),
+                'radio_type': self.radio_hw_combo.currentData(),
+                'usrp_ip': ip,
+            }, remove=('ip_addresses', 'radio_mode'))
         except Exception as e:
             print(f"Error saving settings: {e}")
 

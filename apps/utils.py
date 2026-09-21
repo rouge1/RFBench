@@ -314,17 +314,19 @@ def _app_config_path(module_name, config_dir='config'):
     return os.path.join(config_dir, f"{module_name}_config.json")
 
 
-def update_app_config(path, changes):
-    """Write these keys into an app's JSON config, keeping every other one.
+def update_app_config(path, changes, remove=()):
+    """Atomically merge keys into a JSON config, keeping every other one.
 
-    **Three things share each app's file** and none of them owns it: the
-    config dialog writes its settings there, the launcher the dialog's
-    position, and the flowgraph window its geometry and whatever its
-    controls were left at (`save_flowgraph_settings`). Every dialog used to
-    write the whole file from its own dict, so pressing OK threw away the
-    window's ``flowgraph_position`` a moment before the window came up to
-    read it - and the position never came back. A file that cannot be read
-    is started afresh rather than stopping the save.
+    Per-app files are shared by the config dialog, launcher and flowgraph
+    window. The global settings file is shared by the launcher and Settings.
+    A direct whole-file write in any of those places can throw away a key
+    another window owns, so all callers use this merge-and-replace path. A
+    file that cannot be read is started afresh rather than stopping the save.
+
+    ``remove`` names keys to drop from the file, for retiring a setting the
+    code no longer reads - ``ip_addresses`` and ``radio_mode``, left behind
+    by the multi-radio launcher. A merge alone cannot delete a key, and the
+    whole-file write that could would take another window's with it.
     """
     config = {}
     try:
@@ -338,6 +340,8 @@ def update_app_config(path, changes):
         print(f"Could not read {path}, so it is being started afresh: {exc}",
               file=sys.stderr)
         config = {}
+    for key in remove:
+        config.pop(key, None)
     config.update(changes)
     folder = os.path.dirname(path)
     if folder:
@@ -638,9 +642,7 @@ def adopt_legacy_config(config_dir, legacy_name, config_file):
                 current = json.load(f)
             if isinstance(current, dict):
                 merged.update(current)
-        os.makedirs(config_dir, exist_ok=True)
-        with open(config_file, 'w') as f:
-            json.dump(merged, f, indent=4)
+        update_app_config(config_file, merged)
         os.replace(legacy, legacy + '.migrated')
     except Exception as e:
         # A failed migration must never stop the dialog opening. The app falls

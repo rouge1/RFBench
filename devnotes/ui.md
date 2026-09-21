@@ -281,16 +281,21 @@ for frequency most of them did not:
   slider, because its window steps in whole megahertz, but it loads the
   frequency through `int(round(...))` all the same.
 
-**Everything that writes an app's file merges into it**, through
-`update_app_config` in `apps/utils.py`. Three things share each file and
-none of them owns it: the dialog writes its settings, the launcher the
-dialog's position, the window its geometry and its controls. Every
-dialog's `save_config` used to write the whole file from its own dict, so
-OK deleted `flowgraph_position` a moment before the window came up to
-read it. This was found on 2026-09-18 while adding the power saving: the
-JSON restore described above had never once run through either launcher.
-A dialog's `load_config` defaults whatever the file lacks, so a key left
-over from an older version does no harm.
+**Everything that writes a settings file merges into it**, through
+`update_app_config` in `apps/utils.py`. Three things share each per-app file
+and none of them owns it: the dialog writes its settings, the launcher the
+dialog's position, the window its geometry and its controls. The launcher and
+Settings likewise share the global file. Every writer uses the same atomic
+merge path, so OK or Cancel cannot delete another window's saved state. A
+dialog's `load_config` defaults whatever the file lacks, so a key left over
+from an older version does no harm.
+
+Retiring a setting is the one thing a merge cannot do, so `update_app_config`
+takes a `remove=` of keys to drop. Settings passes it `ip_addresses` and
+`radio_mode`, left behind by the multi-radio launcher: `read_settings` already
+ignores both, and this clears them off the disk as well the next time Settings
+is OK'd. It is the writer that drops them rather than a whole-file rewrite,
+because that file also holds the launcher's window position and theme.
 
 `scripts/test_flowgraph_windows.py` sets each window's own controls to a
 new value in their finest digit - 301.0007 on a 0.01 window - and saves
@@ -380,6 +385,15 @@ X input through xdotool (`apt install xdotool`):
 python scripts/test_launcher_gui.py "FM + RDS Receiver"
 python scripts/test_launcher_gui.py "FM + RDS Transmitter" --hold 30
 python scripts/test_launcher_gui.py "ATSC Video Receiver"
+```
+
+`scripts/test_launcher_cancel.py` covers the other dialog exit: it opens an
+isolated launcher, clicks the AM Sine tile, clicks the real Cancel button and
+checks that `dialog_position` is saved without launching a flowgraph. It uses
+Qt mouse events and never touches the user's `config/`:
+
+```sh
+QT_QPA_PLATFORM=offscreen python scripts/test_launcher_cancel.py
 ```
 
 `scripts/test_app_close.py` checks the last of those for every app at once,

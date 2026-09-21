@@ -77,6 +77,7 @@ fixed.
 | [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
 | [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
 | [machines.md](devnotes/machines.md) | `windows/`, `linux/environment.yml`, anything run on TVAdemo or the Windows laptop | TVAdemo, running on Windows, and building the environment on a new Linux machine |
+| [todo.md](devnotes/todo.md) | bench and off-air follow-ups | short-lived work that still needs hardware or a real signal |
 
 Something learned goes into its subject's file. If it could bite anywhere,
 it also gets a line below.
@@ -120,10 +121,11 @@ damage something. Each links to the why.
   its `closeEvent` saves.
   [ui](devnotes/ui.md#how-every-dialog-gets-laid-out),
   [ui](devnotes/ui.md#the-flowgraph-windows-wear-it-too)
-- **An app's `config/<module>_config.json` is written only through
-  `update_app_config`**, which merges. The dialog, the launcher and the
-  flowgraph window each keep something in it, and a dialog that wrote the
-  whole file deleted the window's saved position every time OK was pressed.
+- **Every JSON settings file is written only through `update_app_config`**,
+  which merges and atomically replaces it. The dialog, the launcher and the
+  flowgraph window each keep something in an app's file, and Settings shares
+  the global file with the launcher; a whole-file write can delete another
+  window's saved state.
   [ui](devnotes/ui.md#what-the-windows-own-controls-were-left-at)
 - **`apply_flowgraph_theme(self)` comes first in a flowgraph's `__init__`**,
   and no flowgraph stylesheet sets a font on `QWidget` or `QLabel`. It
@@ -209,6 +211,9 @@ All settings are stored in `config/window_settings.json`:
 - `theme` — `"slate"` (dark, the default), `"reading-room"` (light) or `"walnut"` (brown and tan), set by the disc in the launcher's header and read by every window as it opens — see [the themes](devnotes/ui.md#the-themes-and-the-disc-that-picks-one).
 
 Per-app configs are saved separately as `config/<module_name>_config.json`: the dialog's settings, `dialog_position`, `flowgraph_position`, and whatever the window's `SAVED_SETTINGS` names, all merged in by `update_app_config`.
+
+Global and per-app JSON writes all use `update_app_config`, which preserves
+keys owned by another window and replaces the file atomically.
 
 ### USRP / Hardware
 
