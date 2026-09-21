@@ -68,6 +68,83 @@ every time Settings closes:
 - **The single-face path is the same code.** `create_app_button` is kept as
   a one-face call into `create_tile`, so nothing else had to change.
 
+### Banks that collapse
+
+Each bank's heading is a button, `BankHeader`, that wipes the bank's tiles
+shut and open. The chevron is at the far end of the heading's line,
+pointing down while the bank is open and right while it is shut; the user
+chose that end on 2026-09-21, which keeps the names lined up with the
+tiles. The whole row takes the click - name, line and chevron - and Tab
+then Space works it from the keyboard. Under the pointer the chevron gets
+the gear's hover ground. It has no tooltip; a screen reader hears
+"Collapse Audio" or "Expand Audio". Which banks are shut is kept in
+`window_settings.json` as `collapsed_banks`, a list of `APP_TILES` rows,
+so a bank left shut comes up shut. The pulse runs down a shut bank's line
+as it does an open one's: the line is still there.
+
+A first attempt, built elsewhere, crashed the launcher on every toggle.
+What it taught:
+
+- **Clip the tiles; never squeeze them.** It put the grid in a holder and
+  animated the holder's maximum height, and the layout pressed every tile
+  flat to fit - the caption printed over the picture mid-wipe - and on
+  down to 0 px. `BankBody` holds the grid at its full height in a child
+  widget and shows `reveal` of it, 0 to 1, from the top, and Qt clips the
+  rest; a tile is never shorter than it is. Shut, the body is hidden
+  outright, so it takes no room and Tab does not land on tiles nobody can
+  see.
+- **A 0 px tile kills the launcher.** `shadow_pixmap` cannot draw a shadow
+  for a tile with no height and raises, and an exception in a
+  `paintEvent` aborts a PyQt program. `ShadowColumn` skips any tile with
+  no area, whatever else changes.
+- **The tiles are not the column's children any more**, and three things
+  had assumed they were. `ShadowColumn` drew each shadow at `tile.x()`,
+  `tile.y()`, which are now inside the bank's body: every shadow in the
+  page piled up at the top of the column, behind the first heading. It
+  maps them with `tile.mapTo` now. A tile lifting under the pointer
+  repainted its parent to redraw its shadow; it repaints the column,
+  found by `shadow_column`. And the body and its grid are plain
+  `QWidget`s, which the launcher stylesheet's `QWidget { background }`
+  paints in the ground - over the shadows beneath them - so the
+  stylesheet makes `#bank-body` and `#bank-grid` transparent.
+- **The gap under the heading is inside the body.** A tile lifts 3 px
+  under the pointer, and with the gap outside, the body clipped the top
+  off a lifted tile in the top row. `TILE_HEADROOM` puts the 10 px inside
+  it.
+- **The shadows are cut off with the tiles.** While a body is part open,
+  `ShadowColumn` clips its tiles' shadows at the body's bottom edge; at
+  rest they reach past it as ever.
+- **One animation turns the chevron and wipes the bank**, so the two
+  cannot drift apart, and a second press partway turns round from where
+  it has got to, over only the time the rest of the way takes.
+- **A stopped `QVariantAnimation` announces a new value when its ends are
+  changed.** It works out its value afresh at its current time, and
+  stopped at the end of the last toggle that is the new end: the second
+  toggle flung the bank straight open before the wipe began, and a
+  duration worked out from where the bank then was came to 1 ms.
+  `toggle_bank` reads where the bank is first and sets the animation up
+  with its signals blocked. A `QPropertyAnimation` does not do this - it
+  ignores values while it is stopped - which is why the tiles' lift never
+  showed it.
+- **The state is read once.** The first attempt looked the collapsed
+  banks up in `window_settings.json` from the pulse's timer - thirty file
+  reads a second for as long as the launcher showed - and treated the
+  file as the state, so a save that failed sprang a bank back open. The
+  launcher reads it once and writes it on each toggle.
+- **The first size is measured with every bank open.** `natural_size`
+  adds back each shut bank's height, so opening one later does not bring
+  a scroll bar that the default size would not have had.
+- **Opening or shutting a bank can move the tiles a pixel or two**: a
+  shorter page can drop the scroll bar, and the grid is laid out afresh
+  for the width that gives back, as on any change of page height.
+
+`scripts/test_bank_collapse.py` toggles every bank in every theme in a
+throwaway copy of the repository, grabbing every frame, and checks each of
+the above; it fails on each of the first attempt's faults, put back one at
+a time. `scripts/test_launcher_gui.py` holds every bank open while it
+runs, because it finds tiles in a screenshot by row, and a shut bank
+would leave every click after it a bank too high.
+
 ## Settings, and the one IP address
 
 The gear opens `apps/settings_dialog.py`: the media folder, the radio,
@@ -992,6 +1069,18 @@ without being asked.
   only while the launcher is showing and the theme has a pulse. It stops
   in `hideEvent`, so while an app runs, with the launcher hidden, it
   costs the app nothing.
+- **The chevron at the end of the line catches the pulse.** The user
+  asked for it on 2026-09-21. As the pulse's bright head - `BRIGHTEST`,
+  0.8 of the way along it from the back - reaches the chevron, the
+  chevron lights over `catch`, 0.08 s, then dies away over `land`,
+  0.5 s. Lit, it takes the pulse's colour, with a wide faint stroke of
+  that colour round it and a haze behind it, the way the name lights.
+  When it arrives is worked out from the line as it is laid out
+  (`_pulse_arrives`), not written down, so it stays on the head at any
+  window width. It is painted by `BankHeader` rather than being a glow
+  effect, because the name in the same row carries one and effects do
+  not nest. The haze reaches no further than the heading is tall, 16 to
+  19 px: the heading clips it there.
 
 #### The disc
 

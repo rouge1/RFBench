@@ -235,11 +235,13 @@ DEFAULT = 'slate'
 #: glow of the pulse's colour gathering round its name, faster as it goes -
 #: for ``charge`` (0.7 s at first, found too short), then fires: the pulse
 #: leaves the end of the name and crosses the line in ``sweep``, while the
-#: name's glow dies away over ``decay``. Each row ``stagger`` after the one
-#: above, so it runs down the window as well as along it, every
+#: name's glow dies away over ``decay``. The chevron at the far end of the
+#: line catches it: it lights over ``catch`` as the pulse's bright head
+#: reaches it, and dies away over ``land``. Each row ``stagger`` after the
+#: one above, so it runs down the window as well as along it, every
 #: ``period``. ``length`` is the pulse's, head and tail, in pixels.
-PULSE = {'charge': 1.2, 'sweep': 1.6, 'decay': 0.35, 'stagger': 0.5,
-         'period': 4.5, 'length': 160}
+PULSE = {'charge': 1.2, 'sweep': 1.6, 'decay': 0.35, 'catch': 0.08,
+         'land': 0.5, 'stagger': 0.5, 'period': 4.5, 'length': 160}
 
 #: The tokens of the theme in force in this process: one palette and the
 #: type. It is one dict, changed in place by :func:`use`, so a module that
@@ -362,8 +364,15 @@ QToolTip { background: %(panel_2)s; color: %(ink)s;
 
 /* A bank heading. The hairline running off it is a PulseLine in
    RFbenchToolkit.py, which paints itself - a pulse runs along it on a
-   theme that has one. */
+   theme that has one - and the chevron at its end is painted by the
+   heading, a BankHeader, which is the button that collapses the bank. */
 #bank-name { color: %(heading)s; font-size: %(s_sm)spx; background: transparent; }
+
+/* A bank's tiles sit in a body that wipes open and shut, and a grid in
+   that. Both are plain QWidgets, which the rule at the top would paint
+   in the ground - over the tiles' shadows, which the column underneath
+   draws. */
+#bank-body, #bank-grid { background: transparent; }
 
 /* A tile. Dimming is painted rather than set here: QSS has no opacity
    property, and a QGraphicsOpacityEffect on the tile would have to nest

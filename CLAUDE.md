@@ -75,7 +75,7 @@ fixed.
 | [fm-video.md](devnotes/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
 | [media.md](devnotes/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
 | [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
-| [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
+| [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
 | [machines.md](devnotes/machines.md) | `windows/`, `linux/environment.yml`, anything run on TVAdemo or the Windows laptop | TVAdemo, running on Windows, and building the environment on a new Linux machine |
 | [todo.md](devnotes/todo.md) | bench and off-air follow-ups | short-lived work that still needs hardware or a real signal |
 
@@ -157,6 +157,11 @@ damage something. Each links to the why.
 - **On Windows, activate the `gnu` environment; never call its `python.exe`
   directly** (`DLL load failed`). A GUI started there over SSH runs in
   session 0 and cannot be seen. [machines](devnotes/machines.md#running-on-windows)
+- **An exception in a Qt override - a `paintEvent`, say - aborts the
+  whole program**, launcher included, with a core dump. Guard what a
+  paint does with a size or a value that can be zero: a 0 px tile's
+  shadow took the launcher down on every bank toggle.
+  [ui](devnotes/ui.md#banks-that-collapse)
 - **A Python signal handler does not run while Qt's event loop idles.**
   Python runs it only when the main thread next runs Python, so a Qt
   program that must answer `SIGTERM` needs a Python timer ticking, held
@@ -209,6 +214,7 @@ All settings are stored in `config/window_settings.json`:
 - `media_directory` — path for recorded audio/video files.
 - `radio_type` — `"hackrf"`, `"usrp"`, or `"vsg"`.
 - `theme` — `"slate"` (dark, the default), `"reading-room"` (light) or `"walnut"` (brown and tan), set by the disc in the launcher's header and read by every window as it opens — see [the themes](devnotes/ui.md#the-themes-and-the-disc-that-picks-one).
+- `collapsed_banks` — the `APP_TILES` rows whose bank the launcher was left with shut, set by the chevron at the end of each bank's heading — see [banks that collapse](devnotes/ui.md#banks-that-collapse).
 
 Per-app configs are saved separately as `config/<module_name>_config.json`: the dialog's settings, `dialog_position`, `flowgraph_position`, and whatever the window's `SAVED_SETTINGS` names, all merged in by `update_app_config`.
 

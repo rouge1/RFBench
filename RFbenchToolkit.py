@@ -31,9 +31,11 @@ from PyQt5.QtWidgets import ( # type: ignore
 )
 from PyQt5.QtCore import (Qt, QEvent, QSize, QPoint, QPointF,  # type: ignore
                           QRectF, QElapsedTimer, QTimer,
-                          QPropertyAnimation, QEasingCurve, pyqtProperty)
+                          QPropertyAnimation, QVariantAnimation, QEasingCurve,
+                          pyqtProperty)
 from PyQt5.QtGui import (QColor, QIcon, QImage, QPixmap, QFont,  # type: ignore
-                         QFontMetrics, QLinearGradient, QPainter,
+                         QFontMetrics, QLinearGradient, QRadialGradient,
+                         QPainter,
                          QPainterPath, QPen)
 from PyQt5.QtSvg import QSvgRenderer # type: ignore
 
@@ -153,6 +155,16 @@ PREFERRED_TILE = 185
 BADGE_SIZE = 27
 BADGE_INSET = 6
 FLIP_MS = 380
+
+#: How long a bank takes to wipe all the way shut or open, its chevron
+#: turning with it. A toggle reversed partway takes only the rest of it.
+BANK_TOGGLE_MS = 220
+
+#: The gap between a bank's heading and its tiles. It is inside the
+#: bank's body rather than in the page, because the body clips what it
+#: holds and a tile lifts ``lift`` px under the pointer: with the gap
+#: outside, a lifted tile in the top row lost its top edge.
+TILE_HEADROOM = 10
 
 #: How often the pulse along each bank's line moves - 30 a second. Its
 #: timing is ``theme.PULSE``.
@@ -330,23 +342,271 @@ class ShadowColumn(QWidget):
         option.initFrom(self)
         self.style().drawPrimitive(QStyle.PE_Widget, option, painter, self)
         if theme.TOKENS.get('shadow'):
-            for tile in self.findChildren(FlipTile):
-                if not tile.isVisible():
-                    continue
-                lift = tile.lift if theme.TOKENS.get('shadow_hover') else 0.0
-                # Drawn from where the tile is, risen or not, as a CSS
-                # box-shadow moves with its box: the deeper drop of the
-                # lifted shadow is what puts it further below the card.
-                for hover, weight in ((False, 1.0 - lift), (True, lift)):
-                    if weight <= 0:
-                        continue
-                    shadow, margin = shadow_pixmap(tile.width(), tile.height(),
-                                                   hover)
-                    painter.setOpacity(weight)
-                    painter.drawPixmap(tile.x() - margin, tile.y() - margin,
-                                       shadow)
-                painter.setOpacity(1.0)
+            for body in self.findChildren(BankBody):
+                if body.isVisible():
+                    self._paint_shadows(painter, body)
         painter.end()
+
+    def _paint_shadows(self, painter, body):
+        """The shadows under one bank's tiles.
+
+        The tiles sit in the bank's body, not in the column, so where each
+        one is has to be mapped here - ``tile.pos()`` is inside the body.
+        While the body is wiping open or shut it clips its tiles at its
+        bottom edge, and their shadows are cut off along the same line;
+        at rest they reach past it as they always have.
+        """
+        painter.save()
+        if body.reveal < 1.0:
+            painter.setClipRect(0, 0, self.width(), body.geometry().bottom() + 1)
+        for tile in body.findChildren(FlipTile):
+            # A tile with no area has no shadow - and asked for one,
+            # shadow_pixmap raises, which in a paintEvent ends the program.
+            if not tile.isVisible() or tile.width() < 1 or tile.height() < 1:
+                continue
+            at = tile.mapTo(self, QPoint(0, 0))
+            lift = tile.lift if theme.TOKENS.get('shadow_hover') else 0.0
+            # Drawn from where the tile is, risen or not, as a CSS
+            # box-shadow moves with its box: the deeper drop of the
+            # lifted shadow is what puts it further below the card.
+            for hover, weight in ((False, 1.0 - lift), (True, lift)):
+                if weight <= 0:
+                    continue
+                shadow, margin = shadow_pixmap(tile.width(), tile.height(),
+                                               hover)
+                painter.setOpacity(weight)
+                painter.drawPixmap(at.x() - margin, at.y() - margin, shadow)
+            painter.setOpacity(1.0)
+        painter.restore()
+
+
+def shadow_column(widget):
+    """The ShadowColumn a widget sits in, however deep, or None."""
+    while widget is not None and not isinstance(widget, ShadowColumn):
+        widget = widget.parentWidget()
+    return widget
+
+
+class BankBody(QWidget):
+    """A bank's tiles, which wipe shut and open under its heading.
+
+    The grid is held at its full height in ``inner`` and this widget
+    shows ``reveal`` of it, 0 to 1, from the top: the tiles below the
+    line are clipped away, never squeezed. Letting a layout shrink the
+    grid instead - a maximum height on a widget with the grid in its
+    layout - pressed every tile flat as it went, the caption printed
+    over the picture, and down to 0 px, where a tile's shadow cannot be
+    drawn and the launcher died painting it.
+
+    It is hidden outright once shut, so the page does not keep a
+    zero-height row, and tabbing does not land on tiles nobody can see.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('bank-body')
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.inner = QWidget(self)
+        self.inner.setObjectName('bank-grid')
+        self.grid = QGridLayout(self.inner)
+        self.grid.setSpacing(TILE_GAP)
+        self.grid.setContentsMargins(0, TILE_HEADROOM, 0, 0)
+        self.reveal = 1.0
+
+    def full_height(self):
+        """How tall the bank is when it is open."""
+        return self.inner.sizeHint().height()
+
+    def sizeHint(self):
+        return QSize(self.inner.sizeHint().width(),
+                     int(round(self.full_height() * self.reveal)))
+
+    def minimumSizeHint(self):
+        # The grid's own minimum width, as when it sat in the page itself.
+        return QSize(self.inner.minimumSizeHint().width(),
+                     self.sizeHint().height())
+
+    def set_reveal(self, reveal):
+        self.reveal = min(1.0, max(0.0, float(reveal)))
+        self.updateGeometry()
+
+    def refit(self):
+        """Take a new height after the grid has been laid out afresh.
+
+        Called by hand after ``_lay_out``, because the launcher measures
+        the page straight afterwards and the grid's own request arrives
+        only once the event loop has run.
+        """
+        self.updateGeometry()
+        self._fit_inner()
+
+    def _fit_inner(self):
+        self.inner.setGeometry(0, 0, self.width(), self.full_height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_inner()
+
+    def event(self, event):
+        # The grid asking for more or less room - a caption rewrapped, a
+        # tile added - reaches here as a LayoutRequest, since this widget
+        # has no layout of its own to pass it to.
+        if event.type() == QEvent.LayoutRequest:
+            self.refit()
+        return super().event(event)
+
+
+class BankHeader(QAbstractButton):
+    """A bank's heading - its name, its line, and a chevron at the end of
+    the line - which is also the button that collapses the bank.
+
+    The whole row takes the click. The name is the biggest target on it,
+    and the line between name and chevron would otherwise be a gap that
+    did nothing; both ignore the mouse, as a QLabel and a plain QWidget
+    do, so a press on either comes here. The chevron is painted in the
+    room the row keeps clear at its right end, pointing down while the
+    bank is open and right while it is shut, and ``turn`` - 1 open, 0
+    shut - moves it between the two on the animation that wipes the
+    tiles. Under the pointer it gets the gear's hover ground; from the
+    keyboard, Tab reaches it and Space toggles, and the ring shows only
+    when Tab brought the focus, as on the theme disc.
+
+    The chevron also catches the pulse. As the pulse's bright head
+    reaches the end of the line, ``glow`` - set by the launcher's pulse
+    timer, 0 to 1 - turns the chevron the pulse's colour, with a halo
+    round the strokes and a haze behind them, and lets it die away. The
+    glow is painted rather than a QGraphicsDropShadowEffect: the name in
+    this row carries one already, and effects do not nest predictably.
+
+    No tooltip: a chevron at the end of a heading says what it does, and
+    the user found tooltips that only repeat the page clutter. A screen
+    reader gets "Collapse Audio" or "Expand Audio" as its name.
+    """
+
+    #: Kept clear at the right end of the row for the chevron's square.
+    CHEVRON_ROOM = 26
+
+    def __init__(self, name, parent=None):
+        super().__init__(parent)
+        self.setObjectName('bank-header')
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.TabFocus)
+        self.setAttribute(Qt.WA_Hover, True)
+        self._ring = False
+        self._turn = 1.0
+        self._glow = 0.0
+        self.bank_name = name
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, self.CHEVRON_ROOM, 0)
+        row.setSpacing(12)
+        # The heading charges before it fires its line's pulse.
+        self.label = ChargeLabel(name)
+        self.label.setObjectName('bank-name')
+        self.label.setFont(token_font('s_sm'))
+        row.addWidget(self.label)
+        # The hairline that runs off the end of the heading. In the page
+        # that is a ::after with an empty content; Qt's :: are sub-controls
+        # of a known widget, not pseudo-elements anyone can invent, so it
+        # is a widget.
+        self.line = PulseLine()
+        row.addWidget(self.line, 1)
+        self.describe(is_open=True)
+
+    def describe(self, is_open):
+        self.setAccessibleName(
+            f"{'Collapse' if is_open else 'Expand'} {self.bank_name}")
+
+    def focusInEvent(self, event):
+        self._ring = event.reason() in (Qt.TabFocusReason,
+                                        Qt.BacktabFocusReason)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self._ring = False
+        super().focusOutEvent(event)
+
+    def _get_turn(self):
+        return self._turn
+
+    def _set_turn(self, value):
+        self._turn = min(1.0, max(0.0, float(value)))
+        self.update()
+
+    turn = pyqtProperty(float, _get_turn, _set_turn)
+
+    def set_glow(self, glow):
+        """Light the chevron in the pulse's colour, 0 to 1 - as
+        ``ChargeLabel.set_charge`` lights the name."""
+        pulse = theme.TOKENS.get('pulse')
+        glow = min(1.0, max(0.0, glow)) if pulse else 0.0
+        if abs(glow - self._glow) < 0.004 and glow not in (0.0, 1.0):
+            return
+        if glow == self._glow:
+            return
+        self._glow = glow
+        self.update()
+
+    def chevron_box(self):
+        """The chevron's square, in this row's own coordinates: as tall
+        as the heading, so the chevron adds nothing to the page's height -
+        16 to 19 px across the three themes' type."""
+        side = self.height()
+        return QRectF(self.width() - side, 0, side, side)
+
+    def paintEvent(self, event):
+        colours = theme.TOKENS
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        box = self.chevron_box()
+        hovered = self.underMouse() and self.isEnabled()
+        if hovered:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(colours['panel']))
+            painter.drawRoundedRect(box, 2, 2)
+        glow = self._glow if colours.get('pulse') else 0.0
+        hot = QColor(colours.get('pulse') or colours['heading'])
+        if glow > 0:
+            # A haze of the pulse's colour behind the chevron, as far as
+            # the row reaches above and below it.
+            haze = QRadialGradient(box.center(), box.height() / 2)
+            for at, strength in ((0.0, 0.5), (0.5, 0.22), (1.0, 0.0)):
+                colour = QColor(hot)
+                colour.setAlphaF(strength * glow)
+                haze.setColorAt(at, colour)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(haze)
+            painter.drawEllipse(box.center(), box.height() / 2,
+                                box.height() / 2)
+        if self.hasFocus() and self._ring:
+            painter.setPen(QPen(QColor(colours['ink']), 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(box.adjusted(0.75, 0.75, -0.75, -0.75),
+                                    2, 2)
+        # Two strokes, drawn pointing down and turned a quarter to the
+        # right as the bank shuts.
+        painter.translate(box.center())
+        painter.rotate(-90.0 * (1.0 - self._turn))
+        chevron = (QPointF(-4.0, -2.0), QPointF(0.0, 2.0), QPointF(4.0, -2.0))
+        if glow > 0:
+            # A wide faint stroke of the pulse's colour round the chevron,
+            # as round the name's letters: the haze alone is too soft to
+            # read as lit.
+            halo = QColor(hot)
+            halo.setAlphaF(0.35 * glow)
+            painter.setPen(QPen(halo, 4.5, Qt.SolidLine, Qt.RoundCap,
+                                Qt.RoundJoin))
+            painter.drawPolyline(*chevron)
+        rest = QColor(colours['ink' if hovered else 'heading'])
+        painter.setPen(QPen(mix_colour(rest, hot, glow), 1.6, Qt.SolidLine,
+                            Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPolyline(*chevron)
+        painter.end()
+
+
+def mix_colour(rest, hot, amount):
+    """``rest`` taken ``amount`` of the way to ``hot``, 0 to 1."""
+    return QColor(*(int(round(a + (b - a) * amount)) for a, b in
+                    zip(rest.getRgb()[:3], hot.getRgb()[:3])))
 
 
 class ChargeLabel(QLabel):
@@ -388,8 +648,7 @@ class ChargeLabel(QLabel):
             return
         rest = QColor(theme.TOKENS['heading'])
         hot = QColor(theme.TOKENS.get('pulse') or theme.TOKENS['heading'])
-        mix = QColor(*(int(round(a + (b - a) * self.charge)) for a, b in
-                       zip(rest.getRgb()[:3], hot.getRgb()[:3])))
+        mix = mix_colour(rest, hot, self.charge)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setFont(self.font())
@@ -424,6 +683,10 @@ class PulseLine(QWidget):
     #: How long the pulse is, head and tail, in pixels.
     LENGTH = theme.PULSE['length']
 
+    #: Where along it, from the back, the pulse is brightest - its head.
+    #: The chevron at the end of the line lights as this reaches it.
+    BRIGHTEST = 0.8
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('hairline')
@@ -444,7 +707,7 @@ class PulseLine(QWidget):
                 colour.setAlphaF(strength)
                 gradient = QLinearGradient(head, 0, head + self.LENGTH, 0)
                 gradient.setColorAt(0.0, clear)
-                gradient.setColorAt(0.8, colour)
+                gradient.setColorAt(self.BRIGHTEST, colour)
                 gradient.setColorAt(1.0, clear)
                 painter.fillRect(QRectF(head, top, self.LENGTH, height),
                                  gradient)
@@ -871,9 +1134,11 @@ class FlipTile(QPushButton):
     def _set_lift(self, value):
         self._lift = float(value)
         self._rise()
-        # The shadow is painted by the column the tile sits in.
-        if self.parentWidget() is not None:
-            self.parentWidget().update()
+        # The shadow is painted by the column the tile sits in - not by
+        # the tile's parent, which is its bank's grid.
+        column = shadow_column(self)
+        if column is not None:
+            column.update()
 
     def _rise(self):
         """Move the tile up off its place by as much as it is lifted.
@@ -992,6 +1257,16 @@ class RFbenchToolkit(QMainWindow):
         self._banks = []
         self._lines = []
         self._headings = []
+        # Per bank, in order: its heading, its body, the animation that
+        # wipes it, and its row in APP_TILES. Which rows are collapsed is
+        # read once here and written on each toggle - never read back
+        # from the file, which the pulse would otherwise do 30 times a
+        # second.
+        self._headers = []
+        self._bodies = []
+        self._bank_anims = []
+        self._bank_rows = []
+        self._collapsed = self.saved_collapsed()
         self._layout_at = None
         self._build_banks()
 
@@ -1100,7 +1375,12 @@ class RFbenchToolkit(QMainWindow):
             print(f"Error saving {key}: {e}")
 
     def _build_banks(self):
-        """A heading and a grid for each row of APP_TILES."""
+        """A heading and a body of tiles for each row of APP_TILES.
+
+        The heading is a button that collapses the bank - see BankHeader
+        and BankBody. A bank the launcher was left with collapsed comes
+        up collapsed, with nothing to animate.
+        """
         rows = {}
         for row, col, faces in APP_TILES:
             rows.setdefault(row, []).append((col, faces))
@@ -1108,32 +1388,99 @@ class RFbenchToolkit(QMainWindow):
         for row in sorted(rows):
             self._body.addSpacing(BANK_GAP)
 
-            head = QHBoxLayout()
-            head.setSpacing(12)
-            # The heading charges before it fires its line's pulse.
-            name = ChargeLabel(BANK_NAMES.get(row, f"Row {row}"))
-            name.setObjectName('bank-name')
-            name.setFont(token_font('s_sm'))
-            self._headings.append(name)
-            head.addWidget(name)
-            # The hairline that runs off the end of the heading. In the
-            # page that is a ::after with an empty content; Qt's :: are
-            # sub-controls of a known widget, not pseudo-elements anyone
-            # can invent, so it is a widget.
-            rule = PulseLine()
-            self._lines.append(rule)
-            head.addWidget(rule, 1)
-            self._body.addLayout(head)
-            self._body.addSpacing(10)
+            header = BankHeader(BANK_NAMES.get(row, f"Row {row}"))
+            self._headings.append(header.label)
+            self._lines.append(header.line)
+            self._body.addWidget(header)
 
-            grid = QGridLayout()
-            grid.setSpacing(TILE_GAP)
-            grid.setContentsMargins(0, 0, 0, 0)
+            body = BankBody()
             tiles = [self.create_tile(faces) for _col, faces in sorted(rows[row])]
-            self._body.addLayout(grid)
-            self._banks.append((grid, tiles))
+            self._body.addWidget(body)
+            self._banks.append((body.grid, tiles))
+
+            bank = len(self._bodies)
+            # One animation per bank drives both the wipe and the turn of
+            # the chevron, so the two cannot drift apart.
+            anim = QVariantAnimation(self)
+            anim.setEasingCurve(QEasingCurve.InOutQuad)
+            anim.valueChanged.connect(
+                lambda value, bank=bank: self._show_bank(bank, value))
+            anim.finished.connect(
+                lambda bank=bank: self._bank_settled(bank))
+            header.clicked.connect(
+                lambda _checked=False, bank=bank: self.toggle_bank(bank))
+            self._headers.append(header)
+            self._bodies.append(body)
+            self._bank_anims.append(anim)
+            self._bank_rows.append(row)
+            if row in self._collapsed:
+                header.describe(is_open=False)
+                self._show_bank(bank, 0.0)
+                self._bank_settled(bank)
 
         self._body.addStretch(1)
+
+    # ------------------------------------------------ collapsing the banks
+    def saved_collapsed(self):
+        """The rows the launcher was last left with collapsed."""
+        rows = {row for row, _col, _faces in APP_TILES}
+        saved = read_settings(self.settings_file).get('collapsed_banks')
+        try:
+            return {int(row) for row in saved or ()} & rows
+        except (TypeError, ValueError):
+            print(f"Ignoring a collapsed_banks that is not a list of rows: "
+                  f"{saved!r}")
+            return set()
+
+    def toggle_bank(self, bank):
+        """Collapse bank ``bank`` if it is open, open it if it is not.
+
+        Pressed again partway, it turns round from wherever it has got to,
+        over only the time the rest of the way takes - the animation is
+        stopped and started afresh, never queued.
+        """
+        row = self._bank_rows[bank]
+        shutting = row not in self._collapsed
+        if shutting:
+            self._collapsed.add(row)
+        else:
+            self._collapsed.discard(row)
+        self.save_setting('collapsed_banks', sorted(self._collapsed))
+        self._headers[bank].describe(is_open=not shutting)
+
+        body, anim = self._bodies[bank], self._bank_anims[bank]
+        target = 0.0 if shutting else 1.0
+        start = body.reveal
+        anim.stop()
+        if start == target:
+            self._show_bank(bank, target)
+            self._bank_settled(bank)
+            return
+        body.show()
+        # Quietly: a stopped animation works its value out afresh when its
+        # ends are changed, and says so - which, stopped at the end of the
+        # last toggle, flung the bank straight to the new end before the
+        # wipe had begun.
+        anim.blockSignals(True)
+        anim.setStartValue(start)
+        anim.setEndValue(target)
+        anim.setDuration(max(1, int(round(
+            BANK_TOGGLE_MS * abs(target - start)))))
+        anim.blockSignals(False)
+        anim.start()
+
+    def _show_bank(self, bank, reveal):
+        """Open bank ``bank`` this far, 0 shut to 1 open, chevron and all."""
+        self._bodies[bank].set_reveal(reveal)
+        self._headers[bank].turn = reveal
+        # The shadows are the column's, and cut off with the tiles.
+        self._column.update()
+
+    def _bank_settled(self, bank):
+        """Hide a bank that has finished shutting, so it takes no room."""
+        body = self._bodies[bank]
+        body.setVisible(body.reveal > 0.0)
+        self._column.update()
 
     def _relayout(self):
         """Fit as many tiles to a row as the window has room for.
@@ -1209,6 +1556,11 @@ class RFbenchToolkit(QMainWindow):
             # with fewer tiles than columns still starts at the left.
             for column in range(columns + 1):
                 grid.setColumnStretch(column, 1 if column == columns else 0)
+        # Each bank's body takes its new height now, not once the grid's
+        # own request has come round the event loop: _relayout and
+        # natural_size measure the page straight after this.
+        for body in self._bodies:
+            body.refit()
         # A shadow reaches past its tile, so a tile that has moved leaves
         # some behind outside the patch Qt repaints for it.
         self._column.update()
@@ -1269,6 +1621,13 @@ class RFbenchToolkit(QMainWindow):
         # cache - 143x196 against a real 997x766, measured.
         self._body.invalidate()
         height = RAIL_HEIGHT + self._body.sizeHint().height()
+        # Measured with every bank open, whichever are collapsed, so the
+        # window opening one later does not bring a scroll bar the default
+        # size would not have had. A hidden body is not in the page's
+        # measure at all; a part-open one is in it at its part.
+        for body in self._bodies:
+            shown = 0 if body.isHidden() else body.sizeHint().height()
+            height += body.full_height() - shown
         return width, height
 
     def resize_to_default(self):
@@ -1360,19 +1719,24 @@ class RFbenchToolkit(QMainWindow):
                     line.update()
             for heading in self._headings:
                 heading.set_charge(0.0)
+            for header in self._headers:
+                header.set_glow(0.0)
 
     def _move_pulse(self):
-        """Charge each heading, then fire its pulse down the line.
+        """Charge each heading, fire its pulse down the line, and light
+        the chevron at the end of it as the pulse arrives.
 
         Per row, ``into`` seconds through its own cycle: charging for
         ``charge``, the glow gathering faster as it goes; then the pulse
         crosses in ``sweep`` while the glow dies away over ``decay``; then
         rest until ``period``. Each row ``stagger`` after the one above.
+        The chevron lights over ``catch`` up to the moment the pulse's
+        bright head reaches it, and dies away over ``land``.
         """
         timing = theme.PULSE
         seconds = self._pulse_clock.elapsed() / 1000
-        for row, (line, heading) in enumerate(zip(self._lines,
-                                                  self._headings)):
+        for row, (line, heading, header) in enumerate(zip(
+                self._lines, self._headings, self._headers)):
             into = (seconds - row * timing['stagger']) % timing['period']
             fired = into - timing['charge']
             if fired < 0:
@@ -1386,6 +1750,31 @@ class RFbenchToolkit(QMainWindow):
                 line.phase = phase
                 line.update()
             heading.set_charge(charge)
+            since = fired - self._pulse_arrives(header)
+            if fired < 0 or since < -timing['catch']:
+                glow = 0.0
+            elif since < 0:
+                glow = (1.0 + since / timing['catch']) ** 2
+            else:
+                glow = max(0.0, 1.0 - since / timing['land'])
+            header.set_glow(glow)
+
+    @staticmethod
+    def _pulse_arrives(header):
+        """How far into its sweep, in seconds, a pulse's bright head
+        reaches the chevron at the end of this heading's line.
+
+        Worked out from the line as it is laid out, so it stays true at
+        any window width: PulseLine draws the head at
+        ``(width + LENGTH) * phase - (1 - BRIGHTEST) * LENGTH`` along the
+        line, and the chevron is a little past its end.
+        """
+        line = header.line
+        width, length = line.width(), PulseLine.LENGTH
+        chevron = header.chevron_box().center().x() - (line.x() + width)
+        return theme.PULSE['sweep'] * (
+            (width + chevron + (1 - PulseLine.BRIGHTEST) * length)
+            / (width + length))
 
     def hideEvent(self, event):
         super().hideEvent(event)

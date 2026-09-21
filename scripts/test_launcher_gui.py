@@ -229,37 +229,53 @@ def tile_showing(key, face):
 
 
 @contextlib.contextmanager
-def theme_held(name='slate'):
-    """Run the launcher in a dark theme, and put the user's back afterwards.
-
-    ``button_grid`` finds the tiles as bright pictures on a dark window,
-    and on Reading Room's paper the whole window is bright - one blob, no
-    tiles. The same one-key write and restore as ``tile_showing``, for the
-    same reason.
-    """
+def setting_held(key, value):
+    """Hold one launcher setting at ``value`` for the test, and put the
+    user's back afterwards - the same one-key write and restore as
+    ``tile_showing``, for the same reason."""
     def write(value):
         settings = {}
         if os.path.exists(SETTINGS):
             with open(SETTINGS) as f:
                 settings = json.load(f)
         if value is None:
-            settings.pop('theme', None)
+            settings.pop(key, None)
         else:
-            settings['theme'] = value
+            settings[key] = value
         os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
         with open(SETTINGS, 'w') as f:
             json.dump(settings, f, indent=4)
 
     try:
         with open(SETTINGS) as f:
-            original = json.load(f).get('theme')
+            original = json.load(f).get(key)
     except Exception:
         original = None
-    write(name)
+    write(value)
     try:
         yield
     finally:
         write(original)
+
+
+def theme_held(name='slate'):
+    """Run the launcher in a dark theme, and put the user's back afterwards.
+
+    ``button_grid`` finds the tiles as bright pictures on a dark window,
+    and on Reading Room's paper the whole window is bright - one blob, no
+    tiles.
+    """
+    return setting_held('theme', name)
+
+
+def banks_open():
+    """Run the launcher with every bank open, and put the user's back.
+
+    A collapsed bank has no tiles to find, and the rows found would then
+    no longer line up with the rows of APP_TILES - every click after it
+    would land a bank too high.
+    """
+    return setting_held('collapsed_banks', [])
 
 
 def click(x, y):
@@ -307,7 +323,7 @@ def main():
     if tile['faces'] > 1:
         print(f"{args.app!r} is face {tile['face'] + 1} of {tile['faces']} on "
               f"the {tile['key']} tile - turning it over first")
-    with tile_showing(tile['key'], tile['face']), theme_held():
+    with tile_showing(tile['key'], tile['face']), theme_held(), banks_open():
         return run(args, row, col)
 
 
