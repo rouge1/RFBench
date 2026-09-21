@@ -44,7 +44,7 @@ from apps.media import AUDIO, choices
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS, adopt_legacy_config,
-                        FrequencyChooser)
+                        FrequencyChooser, frequency_range)
 
 def get_wav_files(settings):
     """Get list of WAV and MP3 files from media directory"""
@@ -453,7 +453,7 @@ class fmAudioRecordedGenerator(gr.top_block, Qt.QWidget):
         sinefreq_container.setLayout(sinefreq_layout)
         self.top_grid_layout.addWidget(sinefreq_container, 1, 5, 1, 5)
 
-        self._centerFreq_range = Range(50, 2200, 0.01, cf, 200)
+        self._centerFreq_range = frequency_range(50, 2200, 0.01, cf, 200)
         self._centerFreq_win = RangeWidget(self._centerFreq_range, self.set_centerFreq, "Center Frequency (MHz)", "counter", float, QtCore.Qt.Horizontal)
         self.top_grid_layout.addWidget(self._centerFreq_win, 0, 0, 1, 3)
         for r in range(0, 1):

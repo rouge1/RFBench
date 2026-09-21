@@ -29,7 +29,8 @@ from PyQt5 import Qt, QtCore  # type: ignore
 
 from apps.rds_core import RdsDemod, RdsProtocol, clock_text
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
-                        read_settings, update_app_config, SPECTRUM_Y_AXIS)
+                        read_settings, update_app_config, SPECTRUM_Y_AXIS,
+                        FREQ_DECIMALS, FREQ_STEP_MHZ, FrequencyChooser)
 
 MPX_RATE = 250e3          # everything after the channel filter runs here
 # Each radio's own rate, chosen from what it will actually accept, and each
@@ -40,6 +41,14 @@ MPX_RATE = 250e3          # everything after the channel filter runs here
 SAMPLE_RATES = {'hackrf': 2e6, 'usrp': 2e6, 'bb60': 2.5e6}
 LO_OFFSET = 300e3         # keep the station clear of the radio's DC spike
 AUDIO_RATE = 48000
+
+#: The same span as the FM + RDS Transmitter's, so it can be followed off
+#: the broadcast band. 30 MHz to 6 GHz covers the HackRF and the BB60D.
+FREQ_MIN_MHZ = 30.0
+FREQ_MAX_MHZ = 6000.0
+#: What the dialog's slider sweeps, as on the transmitter: the broadcast
+#: band, with anything else typed into the box.
+FM_BAND_MHZ = (87.5, 108.0)
 MAX_DEVIATION = 75e3
 
 
@@ -131,15 +140,12 @@ class ConfigDialog(Qt.QDialog):
                                                     self.usrp_ip)))
 
     def create_frequency_control(self):
-        row = Qt.QHBoxLayout()
-        row.addWidget(Qt.QLabel("Station Frequency (MHz):"))
-        self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(1)
-        self.freq_spin.setSingleStep(0.1)
-        self.freq_spin.setRange(87.5, 108.0)
-        self.freq_spin.setValue(98.7)
-        row.addWidget(self.freq_spin)
-        self.layout.addLayout(row)
+        # Not only the broadcast band: the FM + RDS Transmitter can go out
+        # anywhere its radio reaches, and this has to be able to follow it.
+        self.cf_chooser = FrequencyChooser(
+            minimum=FREQ_MIN_MHZ, maximum=FREQ_MAX_MHZ, value=98.7,
+            label="Station Frequency (MHz):", slider_range=FM_BAND_MHZ)
+        self.layout.addWidget(self.cf_chooser)
 
     def create_gain_control(self):
         row = Qt.QHBoxLayout()
@@ -195,7 +201,7 @@ class ConfigDialog(Qt.QDialog):
         # discard everything saved after it. The radio type is not among them;
         # it comes from Settings.
         restore = [
-            ('frequency_mhz', lambda v: self.freq_spin.setValue(float(v))),
+            ('frequency_mhz', lambda v: self.cf_chooser.setValue(float(v))),
             ('gain_percent', lambda v: self.gain_slider.setValue(int(v))),
             ('region', lambda v: self.region_combo.setCurrentIndex(
                 1 if v == 'RDS' else 0)),
@@ -212,7 +218,7 @@ class ConfigDialog(Qt.QDialog):
     def save_config(self):
         config = {
             'radio_type': self.radio_type,
-            'frequency_mhz': self.freq_spin.value(),
+            'frequency_mhz': self.cf_chooser.value(),
             'gain_percent': self.gain_slider.value(),
             'region': self.region_combo.currentData(),
             'audio': self.audio_check.isChecked(),
@@ -227,7 +233,7 @@ class ConfigDialog(Qt.QDialog):
         return {
             'radio_type': self.radio_type,
             'ipXmitAddr': self.usrp_ip if self.radio_type == 'usrp' else '',
-            'frequency_mhz': self.freq_spin.value(),
+            'frequency_mhz': self.cf_chooser.value(),
             'gain_percent': self.gain_slider.value(),
             'region': self.region_combo.currentData(),
             'audio': self.audio_check.isChecked(),
@@ -335,10 +341,13 @@ class rdsReceiver(gr.top_block, Qt.QWidget):
         row = Qt.QHBoxLayout()
         row.addWidget(Qt.QLabel("Station (MHz):"))
         self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(1)
-        self.freq_spin.setSingleStep(0.1)
-        self.freq_spin.setRange(87.5, 108.0)
+        self.freq_spin.setDecimals(FREQ_DECIMALS)
+        self.freq_spin.setSingleStep(FREQ_STEP_MHZ)
+        self.freq_spin.setRange(FREQ_MIN_MHZ, FREQ_MAX_MHZ)
         self.freq_spin.setValue(self.freq_mhz)
+        # Retune on Enter, not on every keystroke - each retune restarts
+        # the decoder.
+        self.freq_spin.setKeyboardTracking(False)
         self.freq_spin.valueChanged.connect(self.set_frequency)
         row.addWidget(self.freq_spin)
 

@@ -303,8 +303,9 @@ frequency and sample-rate callbacks work through the existing HackRF path.
    with `apply_flowgraph_theme(self)` as the first thing the flowgraph's
    `__init__` does, `SAVED_SETTINGS` on the flowgraph class naming its
    power and frequency controls - with a dialog control fine enough to
-   read back what the window saves; `FrequencyChooser` for frequency - and
-   `save_config` writing through `update_app_config`.
+   read back what the window saves; `FrequencyChooser` for frequency, and
+   `frequency_range` for the window's frequency counter, both two decimals -
+   and `save_config` writing through `update_app_config`.
    Add it to `MODULES` in `scripts/test_flowgraph_windows.py`, which checks
    all three.
 2. Add an icon to `icons/`.

@@ -39,7 +39,7 @@ from apps.media import AUDIO, choices
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
-                        FrequencyChooser)
+                        FrequencyChooser, frequency_range)
 
 if __name__ == '__main__':
     import ctypes
@@ -546,7 +546,7 @@ class ppmookLiveAudioXmitter(gr.top_block, Qt.QWidget):
         self.digital_glfsr_source_x_0 = digital.glfsr_source_f(31, True, 0b1001000000000000000000000000000, 1)
         self.digital_binary_slicer_fb_1 = digital.binary_slicer_fb()
         self.digital_binary_slicer_fb_0 = digital.binary_slicer_fb()
-        self._centerFrequency_range = qtgui.Range(30, 2200, 0.01, cf, 200)  # Use cf directly here
+        self._centerFrequency_range = frequency_range(30, 2200, 0.01, cf, 200)  # Use cf directly here
         self._centerFrequency_win = qtgui.RangeWidget(self._centerFrequency_range, self.set_cf, "Center Frequency (MHz)", "counter", float, QtCore.Qt.Horizontal)
         self.top_grid_layout.addWidget(self._centerFrequency_win, 0, 0, 1, 5)
         for r in range(0, 1):

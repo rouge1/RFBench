@@ -38,7 +38,7 @@ from apps.ntscAnalogVideoRecorded import (AURAL_CARRIER, AURAL_DEVIATION,
 from apps.theme import TOKENS
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
-                        FrequencyChooser)
+                        FrequencyChooser, FREQ_DECIMALS)
 
 # 20 MS/s, not 10. A 6 MHz channel will not fit either side of DC at 10, so
 # the radio's own LO leakage would land inside the picture; at 20 the whole
@@ -767,7 +767,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
 
         row.addWidget(Qt.QLabel("MHz:"))
         self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(3)
+        self.freq_spin.setDecimals(FREQ_DECIMALS)
         self.freq_spin.setSingleStep(0.1)
         self.freq_spin.setRange(50.0, 2200.0)
         self.freq_spin.setValue(self.center_mhz)

@@ -27,6 +27,10 @@ type and clock time.
   everything *except* the station you want. 80% blocks good is usable but
   well short of the 96–99% a HackRF gets — the antenna on it is set up for
   UHF television, not the FM band.
+- **It tunes 30 MHz to 6 GHz, not only 87.5-108**, so it can follow the FM +
+  RDS Transmitter off the broadcast band - nothing in the chain after the
+  radio depends on the carrier. The dialog's slider still sweeps only the
+  broadcast band (`FM_BAND_MHZ`), as the transmitter's does; see there.
 - **Gains are applied after `tb.start()`** (`main()` calls `tb.apply_gain()`).
   SoapyHackRF silently ignores the `AMP` stage when it is set before the stream
   is running - worth ~14 dB, which is the difference between decoding and not.
@@ -235,6 +239,23 @@ multiplex. Levels are shares of the 75 kHz peak deviation: audio 0.55, pilot
 with music playing.
 
 Things worth knowing before changing it:
+
+- **It transmits anywhere from 30 MHz to 6 GHz**, 433.92 as readily as
+  101.3: nothing in the multiplex or the modulator depends on the carrier,
+  so the band limit it once had was only the spin box's. 30 MHz is the
+  VSG60's floor and 6 GHz the HackRF's and the VSG60's ceiling; a USRP's
+  daughterboard may stop short of either, as the WBX here does at 2.2 GHz.
+  Off the broadcast band a car radio hears nothing, so the RDS Receiver,
+  which tunes the same span, is the way to listen. The window's frequency
+  box tunes on Enter rather than on every keystroke, because across that
+  span typing 915 passed through 91 MHz, a broadcast channel, on the way.
+  **The dialog's slider covers only 87.5-108** (`FM_BAND_MHZ`, the
+  `slider_range` of `FrequencyChooser`), which the user asked for: across
+  the whole 30-6000 the band would be a sliver of the slider. A frequency
+  typed into the box outside it stands, with the slider resting at the
+  nearer end, and using the slider at all - grabbing it, clicking its
+  groove, an arrow key - brings the frequency back to where it sits,
+  inside the band.
 
 - **Keep a Python reference to every block.** `rds_source` is a Python block; if
   its wrapper is garbage collected while the C++ scheduler is running, the

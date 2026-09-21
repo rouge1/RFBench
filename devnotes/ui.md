@@ -262,24 +262,31 @@ it saves the value the window started with.
 **A saved value has to fit the dialog control that reads it back**, and
 for frequency most of them did not:
 
-- **A window's counter takes two more decimals than its step.** GNU
-  Radio's `Range` sets its counter's precision that way, and a typed value
-  is not snapped to the step. So a window stepping in 0.01 MHz takes
-  433.9234, one stepping in 0.1 takes 533.012, and the NTSC transmitter's,
-  stepping in 0.001, takes 10 Hz. `FrequencyChooser` held 0.1 MHz; it now
-  holds `FREQ_DECIMALS`, five, and its box shows only the digits a value
-  needs - 533.0, 433.92 - so the television dialogs look as they did.
+- **Every frequency is two decimals, dialog and window alike** - 108.00,
+  433.92 - which is `FREQ_DECIMALS`. The user chose it for every app on
+  2026-09-21. Left alone, GNU Radio's `Range` gives a window's counter two
+  more decimals than its step, and a typed value is not snapped to the
+  step: a 0.01 window showed 108.0000 and took 433.9234, and the NTSC
+  transmitter's, stepping in 0.001, took 10 Hz. For a while the dialogs
+  held five places to keep up. Now every window's frequency counter is
+  built by `frequency_range`, which sets the counter to two places before
+  `RangeWidget` reads them; the NTSC transmitter steps in 0.01 like the
+  rest; and the receivers' own boxes hold two. With both ends at two, a
+  window's frequency still comes back in its dialog exactly. A new app's
+  window builds its frequency counter the same way.
 - **Seven dialogs chose frequency with a whole-MHz `QSlider`** - ASK, FSK,
   PSK, AM Sine, AM Audio, FM Audio and PPM-OOK - while their windows tune
   in 0.01. They use `FrequencyChooser` now, as the ATSC, NTSC and FM video
   dialogs already did. That is a looks change the user chose on
   2026-09-18, over rounding what the window saved to what the slider
-  could show.
+  could show. The FM Subcarrier Generator's was the last; it kept its
+  slider while its window stepped in whole megahertz, and went over on
+  2026-09-21 along with the two decimals, its window now stepping in 0.01
+  like the other audio transmitters'. No dialog has a whole-MHz slider now.
 - **`QSlider.setValue` raises on a float, and `load_config`'s bare
   `except` then drops every setting after it** - power included, since it
-  is loaded after frequency. The subcarrier dialog kept its whole-MHz
-  slider, because its window steps in whole megahertz, but it loads the
-  frequency through `int(round(...))` all the same.
+  is loaded after frequency. Worth remembering for any slider a saved
+  value is read back into.
 
 **Everything that writes a settings file merges into it**, through
 `update_app_config` in `apps/utils.py`. Three things share each per-app file

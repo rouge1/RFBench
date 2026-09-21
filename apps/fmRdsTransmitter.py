@@ -34,7 +34,8 @@ from apps.rds_core import PTY_RBDS, clock_text
 from apps.rds_encode import RdsEncoder, RdsSubcarrier, system_clock
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         power_percent, read_settings, update_app_config,
-                        resolve_power_range, scale_power, SPECTRUM_Y_AXIS)
+                        resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
+                        FREQ_DECIMALS, FREQ_STEP_MHZ, FrequencyChooser)
 
 MPX_RATE = 200e3          # everything below 100 kHz fits comfortably
 TX_RATE = 2e6             # MPX interpolated by 10
@@ -46,6 +47,18 @@ MAX_DEVIATION = 75e3
 AUDIO_LEVEL = 0.55
 PILOT_LEVEL = 0.09        # 9% of 75 kHz, the standard pilot injection
 RDS_INJECTION = 0.04
+
+#: Anywhere the radios reach, not only the broadcast band: nothing in the
+#: multiplex or the modulator depends on the carrier, so FM + RDS goes out
+#: the same at 433.92 as at 101.3. 30 MHz is the VSG60's floor, 6 GHz the
+#: HackRF's and the VSG60's ceiling.
+FREQ_MIN_MHZ = 30.0
+FREQ_MAX_MHZ = 6000.0
+
+#: What the dialog's slider sweeps: the FM broadcast band. The box beside
+#: it still takes anything above; using the slider brings the frequency
+#: back into the band.
+FM_BAND_MHZ = (87.5, 108.0)
 
 
 def call_to_pi(call):
@@ -145,17 +158,14 @@ class ConfigDialog(Qt.QDialog):
             ok_button.setGraphicsEffect(opacity_effect)
 
     def create_frequency_control(self):
-        row = Qt.QHBoxLayout()
-        row.addWidget(Qt.QLabel("Transmit Frequency (MHz):"))
-        self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(1)
-        self.freq_spin.setSingleStep(0.1)
-        self.freq_spin.setRange(87.5, 108.0)
-        self.freq_spin.setValue(101.3)
-        row.addWidget(self.freq_spin)
-        self.layout.addLayout(row)
-        warn = Qt.QLabel("Pick an empty channel and keep power low - this is a "
-                         "real broadcast-band transmitter.")
+        self.cf_chooser = FrequencyChooser(
+            minimum=FREQ_MIN_MHZ, maximum=FREQ_MAX_MHZ, value=101.3,
+            label="Transmit Frequency (MHz):", slider_range=FM_BAND_MHZ)
+        self.layout.addWidget(self.cf_chooser)
+        warn = Qt.QLabel("Pick an empty frequency and keep power low - this is "
+                         "a real transmitter. Only 87.5-108 MHz reaches an "
+                         "ordinary FM radio; anywhere else, listen with the "
+                         "FM + RDS Receiver.")
         warn.setWordWrap(True)
         self.layout.addWidget(warn)
 
@@ -232,7 +242,7 @@ class ConfigDialog(Qt.QDialog):
             print(f"FM+RDS: could not read saved config: {exc}", file=sys.stderr)
             return
         for key, apply in (
-            ('frequency_mhz', lambda v: self.freq_spin.setValue(float(v))),
+            ('frequency_mhz', lambda v: self.cf_chooser.setValue(float(v))),
             ('power_percent', lambda v: self.pwr_slider.setValue(
                 power_percent(v, 0))),
             ('call', lambda v: self.call_edit.setText(str(v))),
@@ -257,7 +267,7 @@ class ConfigDialog(Qt.QDialog):
 
     def save_config(self):
         config = {
-            'frequency_mhz': self.freq_spin.value(),
+            'frequency_mhz': self.cf_chooser.value(),
             'power_percent': self.pwr_slider.value(),
             'call': self.call_edit.text(),
             'ps': self.ps_edit.text(),
@@ -276,7 +286,7 @@ class ConfigDialog(Qt.QDialog):
         return {
             'radio_type': self.radio_type,
             'ipXmitAddr': self.usrp_ip if self.radio_type == 'usrp' else '',
-            'frequency_mhz': self.freq_spin.value(),
+            'frequency_mhz': self.cf_chooser.value(),
             'power_percent': self.pwr_slider.value(),
             'call': self.call_edit.text().strip().upper(),
             'ps': self.ps_edit.text(),
@@ -508,10 +518,14 @@ class fmRdsTransmitter(gr.top_block, Qt.QWidget):
 
         grid.addWidget(Qt.QLabel("<b>Frequency (MHz)</b>"), 0, 0)
         self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(1)
-        self.freq_spin.setSingleStep(0.1)
-        self.freq_spin.setRange(87.5, 108.0)
+        self.freq_spin.setDecimals(FREQ_DECIMALS)
+        self.freq_spin.setSingleStep(FREQ_STEP_MHZ)
+        self.freq_spin.setRange(FREQ_MIN_MHZ, FREQ_MAX_MHZ)
         self.freq_spin.setValue(self.freq_mhz)
+        # Tune on Enter, not on every keystroke: typing 915 would otherwise
+        # put the carrier on 91 MHz, in the middle of the broadcast band, on
+        # the way.
+        self.freq_spin.setKeyboardTracking(False)
         self.freq_spin.valueChanged.connect(self.set_frequency)
         grid.addWidget(self.freq_spin, 0, 1)
 

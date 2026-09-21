@@ -65,7 +65,7 @@ from apps.ntscReceiver import CompositeFrameSink, find_player, rx_gain_plan
 from apps.theme import TOKENS
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
-                        FrequencyChooser)
+                        FrequencyChooser, FREQ_DECIMALS)
 
 DEFAULT_FORMAT = NTSC.key
 AUDIO_RATE = 48000
@@ -915,7 +915,7 @@ class fmVideoReceiver(gr.top_block, Qt.QWidget):
 
         row.addWidget(Qt.QLabel("MHz:"))
         self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(3)
+        self.freq_spin.setDecimals(FREQ_DECIMALS)
         self.freq_spin.setSingleStep(0.1)
         self.freq_spin.setRange(FREQ_MIN_MHZ, FREQ_MAX_MHZ)
         self.freq_spin.setValue(self.center_mhz)

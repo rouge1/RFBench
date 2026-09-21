@@ -54,23 +54,41 @@ def align_output_buffer(block, port, item_size):
 #: the slider. 0.1 MHz keeps the slider a manageable length.
 FREQ_STEP_MHZ = 0.1
 
-#: How finely a frequency is *held*: five decimals of a megahertz, 10 Hz.
-#: A typed or saved value keeps every digit up to this, whatever the step.
-#: Five because that is the finest any flowgraph window's own counter
-#: takes - GNU Radio's ``Range`` gives its counter two decimals more than
-#: its step, and the NTSC transmitter's steps in 0.001 - so a frequency
-#: tuned in a window comes back in its dialog exactly
-#: (`save_flowgraph_settings`). Held to 0.1 MHz, as it once was, 433.92
-#: came back as 433.9.
-FREQ_DECIMALS = 5
+#: How finely a frequency is held and shown, in every dialog and every
+#: window: two decimals of a megahertz, 10 kHz - 108.00, 433.92. A typed or
+#: saved value keeps every digit up to this, whatever the step. Dialogs
+#: and windows hold the same number of places, so a frequency tuned in a
+#: window comes back in its dialog exactly (`save_flowgraph_settings`) -
+#: which is why a window's counter comes from `frequency_range` rather
+#: than a bare ``Range``, whose counter takes two decimals more than its
+#: step. The user chose two for every app on 2026-09-21, over the five
+#: this once was: 108.0000 was more digits than anything here tunes by.
+FREQ_DECIMALS = 2
+
+
+def frequency_range(minimum, maximum, step, default, min_length=200):
+    """A GNU Radio ``Range`` for a window's frequency counter, showing
+    `FREQ_DECIMALS` places.
+
+    ``Range`` works its counter's decimals out from the step - two more
+    than it has, so a step of 0.01 showed 108.0000 - and ``RangeWidget``
+    reads them from it as it builds the counter. Setting them here, before
+    that, is the only place they can be changed.
+    """
+    from gnuradio.qtgui import Range
+    ranges = Range(minimum, maximum, step, default, min_length)
+    ranges.precision = FREQ_DECIMALS
+    return ranges
 
 
 class TrimmedSpinBox(Qt.QDoubleSpinBox):
     """A spin box that shows only the decimals its value needs.
 
-    All five always shown would put 533.00000 in front of anyone tuning a
-    television channel; this shows 533.0, and 433.92 as 433.92. At least
-    one decimal stays, as the box always had. Typing takes all five.
+    FM video's deviation holds four places, and all four always shown
+    would put 2.7000 in front of anyone setting it; this shows 2.7, and
+    2.75 as 2.75. At least one decimal stays, as the box always had.
+    Typing takes all four. Frequencies do not use it: they are shown to
+    `FREQ_DECIMALS` places always, 108.00, the way the user asked for.
     """
 
     def textFromValue(self, value):
@@ -113,6 +131,14 @@ class FrequencyChooser(Qt.QWidget):
       with its page step set to one 6 MHz channel so PageUp and PageDown
       walk the band a channel at a time.
 
+    ``slider_range``, (low, high) in megahertz, sweeps the slider over only
+    part of what the box takes - the FM broadcast band on the RDS apps,
+    whose box reaches 6 GHz: across 30 to 6000 MHz one pixel of the slider
+    is tens of megahertz, and the band would be a sliver of it. A typed
+    frequency outside it stands, with the slider resting at the nearer
+    end; the moment the slider is used - grabbed, clicked or keyed - the
+    frequency comes back to where it sits, inside the band.
+
     ``valueChanged`` carries megahertz as a float and fires once per real
     change, whichever of the three caused it.
     """
@@ -120,10 +146,14 @@ class FrequencyChooser(Qt.QWidget):
     valueChanged = pyqtSignal(float)
 
     def __init__(self, minimum=50.0, maximum=2200.0, value=None, channels=None,
-                 label="Center Frequency (MHz):", parent=None):
+                 label="Center Frequency (MHz):", slider_range=None,
+                 parent=None):
         super().__init__(parent)
         self._min = float(minimum)
         self._max = float(maximum)
+        low, high = slider_range or (self._min, self._max)
+        self._slider_min = max(self._min, float(low))
+        self._slider_max = min(self._max, float(high))
         self._value = None
 
         layout = Qt.QVBoxLayout(self)
@@ -145,7 +175,7 @@ class FrequencyChooser(Qt.QWidget):
 
         row = Qt.QHBoxLayout()
         row.addWidget(Qt.QLabel(label))
-        self.spin = TrimmedSpinBox()
+        self.spin = Qt.QDoubleSpinBox()
         self.spin.setDecimals(FREQ_DECIMALS)
         self.spin.setSingleStep(FREQ_STEP_MHZ)
         self.spin.setRange(self._min, self._max)
@@ -158,11 +188,17 @@ class FrequencyChooser(Qt.QWidget):
         layout.addLayout(row)
 
         self.slider = Qt.QSlider(QtNs.Horizontal)
-        self.slider.setRange(self._steps(self._min), self._steps(self._max))
+        self.slider.setRange(self._steps(self._slider_min),
+                             self._steps(self._slider_max))
         self.slider.setSingleStep(1)                  # an arrow key: 0.1 MHz
         self.slider.setPageStep(int(6.0 / FREQ_STEP_MHZ))   # a page: 6 MHz
         self.slider.valueChanged.connect(
             lambda steps: self.setValue(steps * FREQ_STEP_MHZ))
+        # With the frequency off the slider's range, the slider rests at an
+        # end, and grabbing it there or pushing it further that way changes
+        # nothing, so valueChanged never fires. These two do.
+        self.slider.sliderPressed.connect(self._slider_touched)
+        self.slider.actionTriggered.connect(self._slider_touched)
         layout.addWidget(self.slider)
 
         self.setValue(self._min if value is None else value)
@@ -170,6 +206,12 @@ class FrequencyChooser(Qt.QWidget):
     @staticmethod
     def _steps(mhz):
         return int(round(float(mhz) / FREQ_STEP_MHZ))
+
+    def _slider_touched(self, _action=None):
+        """Bring a typed frequency off the slider's range back to it."""
+        if self._value is not None and \
+                not self._slider_min <= self._value <= self._slider_max:
+            self.setValue(self.slider.sliderPosition() * FREQ_STEP_MHZ)
 
     def value(self):
         return self._value

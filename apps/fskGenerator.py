@@ -50,7 +50,7 @@ import sip # type: ignore
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
-                        FrequencyChooser)
+                        FrequencyChooser, frequency_range)
 
 
 class ConfigDialog(Qt.QDialog):
@@ -381,7 +381,7 @@ class fskGenerator(gr.top_block, Qt.QWidget):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(0, 3):
             self.top_grid_layout.setColumnStretch(c, 1)
-        self._cf_range = Range(50, 2100, 0.01, cfDefault, 200)
+        self._cf_range = frequency_range(50, 2100, 0.01, cfDefault, 200)
         self._cf_win = RangeWidget(self._cf_range, self.set_cf, "Center Frequency (MHz)", "counter", float, QtCore.Qt.Horizontal)
         self.top_grid_layout.addWidget(self._cf_win, 0, 0, 1, 3)
         for r in range(0, 1):

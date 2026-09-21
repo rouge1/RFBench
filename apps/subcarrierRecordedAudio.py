@@ -39,7 +39,8 @@ from apps.audio_file import AudioFileSource
 from apps.media import AUDIO, choices
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, power_percent,
-                        resolve_power_range, scale_power, SPECTRUM_Y_AXIS, adopt_legacy_config)
+                        resolve_power_range, scale_power, SPECTRUM_Y_AXIS, adopt_legacy_config,
+                        FrequencyChooser, frequency_range)
 
 
 class ConfigDialog(Qt.QDialog):
@@ -92,17 +93,12 @@ class ConfigDialog(Qt.QDialog):
             ok_button.setGraphicsEffect(opacity_effect)
 
     def create_frequency_control(self):
-        self.cf_layout = Qt.QHBoxLayout()
-        self.cf_slider = Qt.QSlider(QtCore.Qt.Horizontal)
-        self.cf_slider.setMinimum(50)
-        self.cf_slider.setMaximum(2200)
-        self.cf_slider.setValue(315)
-        self.cf_label = Qt.QLabel("Center Frequency: 315 MHz")
-        self.cf_slider.valueChanged.connect(
-            lambda v: self.cf_label.setText(f"Center Frequency: {v} MHz"))
-        self.cf_layout.addWidget(self.cf_label)
-        self.cf_layout.addWidget(self.cf_slider)
-        self.layout.addLayout(self.cf_layout)
+        # Not a whole-MHz slider, as it once was: the window tunes to two
+        # decimals like every other app's, and what it was left at comes
+        # back here (SAVED_SETTINGS) - see FrequencyChooser.
+        self.cf_chooser = FrequencyChooser(minimum=50.0, maximum=2200.0,
+                                           value=315.0)
+        self.layout.addWidget(self.cf_chooser)
 
     def create_power_control(self):
         self.pwr_layout = Qt.QHBoxLayout()
@@ -213,11 +209,7 @@ class ConfigDialog(Qt.QDialog):
             try:
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
-                # An int: the window saves what it was left at here,
-                # and a QSlider refuses a float - which load_config's
-                # bare except turns into losing every later setting.
-                self.cf_slider.setValue(
-                    int(round(float(config.get('center_freq', 315)))))
+                self.cf_chooser.setValue(config.get('center_freq', 315))
                 self.pwr_slider.setValue(power_percent(config.get('power_level'), 50))
                 self.submod_combo.setCurrentIndex(config.get('submod', 0))
                 self.scfreq_slider.setValue(config.get('scfreq', 20))
@@ -244,7 +236,7 @@ class ConfigDialog(Qt.QDialog):
 
     def save_config(self):
         config = {
-            'center_freq': self.cf_slider.value(),
+            'center_freq': self.cf_chooser.value(),
             'power_level': self.pwr_slider.value(),
             'submod': self.submod_combo.currentIndex(),
             'scfreq': self.scfreq_slider.value(),
@@ -266,7 +258,7 @@ class ConfigDialog(Qt.QDialog):
         values = {
             'radio_type': self.radio_type,
             'ipXmitAddr': ipXmitAddr,
-            'cf': self.cf_slider.value(),
+            'cf': self.cf_chooser.value(),
             'rfPwr': self.pwr_slider.value(),
             'audio_file': self.audio_combo.currentData(),
             'submod': self.submod_combo.currentIndex(),
@@ -341,7 +333,7 @@ class subcarrierRecordedAudio(gr.top_block, Qt.QWidget):
         self.noiseFreq = noiseFreq = values['noise_freq']
 
         # Center frequency control - move to first row
-        self._cf_range = qtgui.Range(50, 2200, 1, values['cf'], 200)
+        self._cf_range = frequency_range(50, 2200, 0.01, values['cf'], 200)
         self._cf_win = qtgui.RangeWidget(self._cf_range, self.set_cf, 
             "Center Frequency (MHz)", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_grid_layout.addWidget(self._cf_win, 0, 0, 1, 10)

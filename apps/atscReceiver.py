@@ -38,7 +38,7 @@ from apps.atsc_rx_core import (Afc, SYMBOL_RATE, TsAnalyzer,
 from apps.theme import TOKENS
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
-                        FrequencyChooser, align_output_buffer)
+                        FrequencyChooser, FREQ_DECIMALS, align_output_buffer)
 
 # Each radio's own rate, chosen from what it will actually accept:
 # SoapyHackRF takes whole megahertz only, and the BB60D's ladder is
@@ -650,7 +650,7 @@ class atscReceiver(gr.top_block, Qt.QWidget):
 
         row.addWidget(Qt.QLabel("MHz:"))
         self.freq_spin = Qt.QDoubleSpinBox()
-        self.freq_spin.setDecimals(3)
+        self.freq_spin.setDecimals(FREQ_DECIMALS)
         self.freq_spin.setSingleStep(0.1)
         self.freq_spin.setRange(50.0, 2200.0)
         self.freq_spin.setValue(self.center_mhz)

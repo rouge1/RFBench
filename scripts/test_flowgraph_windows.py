@@ -116,8 +116,8 @@ WINDOW_CONTROL = {
 DIALOG_CONTROL = {
     'power_level': ('pwr_slider',), 'power_percent': ('pwr_slider',),
     'gain_percent': ('gain_slider',),
-    'center_freq': ('cf_chooser', 'cf_slider'), 'center_mhz': ('cf_chooser',),
-    'frequency_mhz': ('freq_spin',), 'deviation_mhz': ('deviation_spin',),
+    'center_freq': ('cf_chooser',), 'center_mhz': ('cf_chooser',),
+    'frequency_mhz': ('cf_chooser',), 'deviation_mhz': ('deviation_spin',),
 }
 
 

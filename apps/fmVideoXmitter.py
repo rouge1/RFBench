@@ -50,7 +50,7 @@ from apps.ntsc_source import (AudioTrack, TestPattern, VideoFile, has_audio,
 from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
-                        FrequencyChooser, TrimmedSpinBox)
+                        FrequencyChooser, TrimmedSpinBox, frequency_range)
 
 #: The rate each format's composite is encoded at, before it is interpolated
 #: up to the radio's. NTSC at 10 MS/s: its encoder manages about twice real
@@ -579,7 +579,7 @@ class fmVideoXmitter(gr.top_block, Qt.QWidget):
             f"{curve.label if curve else 'none'}"))
         self.top_grid_layout.addWidget(self._standard_tool_bar, 0, 0, 1, 5)
 
-        self._cf_range = Range(FREQ_MIN_MHZ, FREQ_MAX_MHZ, 0.1, cf, 200)
+        self._cf_range = frequency_range(FREQ_MIN_MHZ, FREQ_MAX_MHZ, 0.1, cf, 200)
         self._cf_win = RangeWidget(self._cf_range, self.set_cf,
                                    "Center Frequency (MHz)", "counter", float,
                                    QtCore.Qt.Horizontal)
