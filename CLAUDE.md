@@ -78,7 +78,6 @@ fixed.
 | [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
 | [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
 | [machines.md](devnotes/machines.md) | `windows/`, `linux/environment.yml`, anything run on TVAdemo or the Windows laptop | TVAdemo, running on Windows, and building the environment on a new Linux machine |
-| [todo.md](devnotes/todo.md) | bench and off-air follow-ups | short-lived work that still needs hardware or a real signal |
 
 Something learned goes into its subject's file. If it could bite anywhere,
 it also gets a line below.

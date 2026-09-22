@@ -17,6 +17,9 @@ vendor/
 # copyrighted, kept locally for reading, never redistributed.
 docs/
 
+# Personal bench notes, kept local.
+devnotes/todo.md
+
 # Conda / virtualenv
 .venv/
 *.conda
