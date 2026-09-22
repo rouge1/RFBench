@@ -34,6 +34,21 @@ type and clock time.
 - **Gains are applied after `tb.start()`** (`main()` calls `tb.apply_gain()`).
   SoapyHackRF silently ignores the `AMP` stage when it is set before the stream
   is running - worth ~14 dB, which is the difference between decoding and not.
+- **"Stereo pilot locked" means a pilot that stands out from the noise
+  beside it, not a level.** It used to mean the pilot's band read over 1e-4,
+  and it said so on every empty channel: with no station the discriminator
+  turns noise into a multiplex full of noise, and that band then reads
+  about 5e-3, more than a real 9% pilot (2e-3). Nothing is broadcast from
+  15 to 23 kHz but the pilot, so `PilotMeter` also measures the guard band
+  either side of it (16-18 and 20-22 kHz), scales it to the pilot band's
+  width, and wants the pilot 10 dB over it; it lets go only below 6 dB, so
+  a weak station does not flicker. On a BB60D recording of the FM band
+  (2026-09-22) the old test said stereo on 34 of 35 channels, the new one
+  on exactly the five with a pilot (18-37 dB over the noise; empty
+  channels within 2 dB of 0). Found off air in a standalone FM receiver
+  built from this chain, where a HackRF on an empty channel read "Stereo".
+  `scripts/test_rds_pilot.py` runs the receiver's own front end and meter
+  on noise, mono and stereo stations.
 
 The decoding itself lives in `apps/rds_core.py`, deliberately free of GNU Radio
 and Qt so it can be run against a recorded capture:
@@ -42,6 +57,7 @@ and Qt so it can be run against a recorded capture:
 python scripts/test_rds_core.py <capture>   # capture path without .cfile
 python scripts/test_rds_radiotext.py        # RadioText changes - no radio, no capture
 python scripts/test_rds_clock.py            # clock time, received and sent - no radio
+python scripts/test_rds_pilot.py            # the stereo indicator against noise - no radio
 ```
 
 `RdsDemod` mixes the MPX down by the 57 kHz subcarrier and integrates each

@@ -51,6 +51,18 @@ FREQ_MAX_MHZ = 6000.0
 FM_BAND_MHZ = (87.5, 108.0)
 MAX_DEVIATION = 75e3
 
+#: The pilot's band, and the guard band either side of it: nothing is
+#: broadcast from 15 to 23 kHz but the pilot, so what the guard holds is the
+#: noise the pilot has to stand out from.
+PILOT_BAND_HZ = (18.2e3, 19.8e3)
+GUARD_OUTER_HZ = (16e3, 22e3)
+GUARD_INNER_HZ = (18e3, 20e3)
+#: How far the pilot must stand over that noise, in the same bandwidth, to
+#: count as locked; it is let go only below the second. Noise reads within
+#: 2 dB of 0, stations with a pilot 13 dB and up - see devnotes/rds.md.
+PILOT_LOCK_DB = 10.0
+PILOT_UNLOCK_DB = 6.0
+
 
 def rx_gain_plan(percent, radio_type):
     """Map the 0-100% slider onto a receiver's own gain controls.
@@ -238,6 +250,84 @@ class ConfigDialog(Qt.QDialog):
             'region': self.region_combo.currentData(),
             'audio': self.audio_check.isChecked(),
         }
+
+
+def fm_front_end(samp_rate):
+    """The channel filter and discriminator: the radio's IQ, with the station
+    ``LO_OFFSET`` above the LO, in; the MPX at ``MPX_RATE`` out."""
+    channel = filter.freq_xlating_fir_filter_ccf(
+        int(samp_rate // MPX_RATE),
+        firdes.low_pass(1.0, samp_rate, 100e3, 20e3),
+        LO_OFFSET, samp_rate)
+    demod = analog.quadrature_demod_cf(MPX_RATE / (2 * np.pi * MAX_DEVIATION))
+    return channel, demod
+
+
+def guard_taps():
+    """A complex band-pass over the guard band, 16-18 and 20-22 kHz: the
+    wide band less the narrow one. Symmetric about the pilot, so the
+    discriminator's noise rising with frequency evens out."""
+    wide = firdes.complex_band_pass(1.0, MPX_RATE, *GUARD_OUTER_HZ, 500)
+    narrow = firdes.complex_band_pass(1.0, MPX_RATE, *GUARD_INNER_HZ, 500)
+    assert len(wide) == len(narrow)          # the same transition, the same length
+    return (np.asarray(wide) - np.asarray(narrow)).tolist()
+
+
+class PilotMeter:
+    """The pilot's band-pass, which the PLL takes, and whether the pilot
+    stands out from the noise beside it.
+
+    Not a level: with no station the discriminator turns noise into a
+    multiplex full of noise, and the pilot's band then reads more than a
+    real pilot does. A fixed level (1e-4, which this used) called every
+    empty channel stereo. So the guard band beside the pilot is measured
+    too, scaled to the pilot band's width, and the pilot must stand
+    ``PILOT_LOCK_DB`` over it.
+    """
+
+    def __init__(self, tb, mpx_complex):
+        taps = firdes.complex_band_pass(1.0, MPX_RATE, *PILOT_BAND_HZ, 500)
+        self.bpf = filter.fir_filter_ccc(1, taps)
+        self.pilot_mag = blocks.complex_to_mag_squared(1)
+        self.pilot_avg = filter.single_pole_iir_filter_ff(1e-4)
+        self.pilot_probe = blocks.probe_signal_f()
+        tb.connect(mpx_complex, self.bpf, self.pilot_mag, self.pilot_avg,
+                   self.pilot_probe)
+        guard = guard_taps()
+        self.guard_bpf = filter.fir_filter_ccc(1, guard)
+        self.guard_mag = blocks.complex_to_mag_squared(1)
+        self.guard_avg = filter.single_pole_iir_filter_ff(1e-4)
+        self.guard_probe = blocks.probe_signal_f()
+        tb.connect(mpx_complex, self.guard_bpf, self.guard_mag, self.guard_avg,
+                   self.guard_probe)
+        # What each passes of flat noise, to scale the guard to the pilot band.
+        self._guard_to_pilot = (np.sum(np.abs(np.asarray(taps)) ** 2)
+                                / np.sum(np.abs(np.asarray(guard)) ** 2))
+        self._on = False
+
+    def level(self):
+        return self.pilot_probe.level()
+
+    def snr_db(self):
+        """How far the pilot's band stands over the noise beside it, in the
+        same bandwidth: 0 dB is noise alone."""
+        pilot = self.pilot_probe.level()
+        noise = self.guard_probe.level() * self._guard_to_pilot
+        if pilot <= 0:
+            return -200.0
+        if noise <= 0:
+            return 200.0                          # a clean signal, no noise at all
+        return float(10 * np.log10(pilot / noise))
+
+    def locked(self):
+        """A pilot of 2% or more (1e-4; a 9% one reads ~2e-3) standing out
+        from the noise beside it."""
+        need = PILOT_UNLOCK_DB if self._on else PILOT_LOCK_DB
+        self._on = bool(self.level() > 1e-4 and self.snr_db() > need)
+        return self._on
+
+    def reset(self):
+        self._on = False
 
 
 class rds_sink(gr.sync_block):
@@ -433,18 +523,15 @@ class rdsReceiver(gr.top_block, Qt.QWidget):
             self.radio_source.set_gain_mode(0, False)
 
         # Shift the station from the LO offset down to DC and decimate to MPX.
-        self.channel = filter.freq_xlating_fir_filter_ccf(
-            int(samp_rate // MPX_RATE),
-            firdes.low_pass(1.0, samp_rate, 100e3, 20e3),
-            LO_OFFSET, samp_rate)
-        self.demod = analog.quadrature_demod_cf(MPX_RATE / (2 * np.pi * MAX_DEVIATION))
+        self.channel, self.demod = fm_front_end(samp_rate)
 
         # Pilot reference: band-pass the 19 kHz tone and lock a PLL to it. Its
         # third harmonic is the RDS subcarrier and its 16th subharmonic is the
-        # bit clock, so this one lock drives both.
+        # bit clock, so this one lock drives both. The meter also says
+        # whether there is a pilot at all, for the stereo indicator.
         self.to_complex = blocks.float_to_complex(1)
-        self.pilot_bpf = filter.fir_filter_ccc(
-            1, firdes.complex_band_pass(1.0, MPX_RATE, 18.2e3, 19.8e3, 500))
+        self.pilot = PilotMeter(self, self.to_complex)
+        self.pilot_bpf = self.pilot.bpf
         self.pilot_pll = analog.pll_refout_cc(
             0.001,
             2 * np.pi * 19.2e3 / MPX_RATE,
@@ -453,16 +540,9 @@ class rdsReceiver(gr.top_block, Qt.QWidget):
 
         self.connect(self.radio_source, self.channel, self.demod)
         self.connect(self.demod, self.to_complex)
-        self.connect(self.to_complex, self.pilot_bpf, self.pilot_pll)
+        self.connect(self.pilot_bpf, self.pilot_pll)
         self.connect(self.demod, (self.rds, 0))
         self.connect(self.pilot_pll, (self.rds, 1))
-
-        # Pilot strength, for the stereo indicator.
-        self.pilot_mag = blocks.complex_to_mag_squared(1)
-        self.pilot_avg = filter.single_pole_iir_filter_ff(1e-4)
-        self.pilot_probe = blocks.probe_signal_f()
-        self.connect(self.pilot_bpf, self.pilot_mag, self.pilot_avg,
-                     self.pilot_probe)
 
         self._build_spectrum()
 
@@ -543,6 +623,7 @@ class rdsReceiver(gr.top_block, Qt.QWidget):
 
     def reset_decoder(self):
         self.rds.reset(MPX_RATE, self.region)
+        self.pilot.reset()                        # a new station earns its lock
 
     # ------------------------------------------------------------- readout
     def refresh_readout(self):
@@ -575,9 +656,7 @@ class rdsReceiver(gr.top_block, Qt.QWidget):
             flags.append("Traffic Program")
         if snap['ta']:
             flags.append("Traffic Announcement")
-        pilot = self.pilot_probe.level()
-        stereo = pilot > 1e-4
-        flags.append("Stereo pilot locked" if stereo else "No pilot")
+        flags.append("Stereo pilot locked" if self.pilot.locked() else "No pilot")
         self.lbl['flags'].setText(", ".join(flags))
 
         clock = snap['clock']
