@@ -306,8 +306,10 @@ def ensure_plugin_path():
     """Put the system SoapySDR module directory on the plugin path.
 
     SoapySDR reads ``SOAPY_SDR_PLUGIN_PATH`` when it first loads modules,
-    which is on the first enumerate, so setting it here is in time even
-    though ``SoapySDR`` may already be imported. Whatever is already in the
+    which is on the first enumerate *anywhere in the process* - so this is
+    in time only if nothing has used SoapySDR yet. The launcher's HackRF
+    check, or any gr-soapy block, gets there first; `find_devices` loads the
+    module itself when that has happened. Whatever is already in the
     variable is kept ahead of what we add.
     """
     paths = [p for p in os.environ.get('SOAPY_SDR_PLUGIN_PATH', '').split(':')
@@ -374,27 +376,122 @@ def find_devices():
     ``get`` - it has to be turned into a dict before it can be read like
     one. Getting that wrong once cost an afternoon, because the exception
     it raises looks exactly like no device being plugged in.
+
+    **So does SoapySDR having loaded its modules before the plugin path was
+    set.** It loads them once per process, on first use, and never looks
+    again - so after the launcher had checked for a HackRF, a BB60D on USB
+    enumerated as nothing until the launcher was restarted. When no BB60
+    turns up, its module file is loaded by hand and the enumerate repeated.
     """
     ensure_plugin_path()
     try:
         import SoapySDR  # type: ignore
-        devices = [dict(d) for d in SoapySDR.Device.enumerate()]
+        devices = _enumerate(SoapySDR)
+        if not devices and _load_module(SoapySDR):
+            devices = _enumerate(SoapySDR)
     except Exception as exc:
         print(f"BB60: could not enumerate SoapySDR devices: {exc}",
               file=sys.stderr)
         return []
-    return [d for d in devices
+    return devices
+
+
+def _enumerate(SoapySDR):
+    return [d for d in (dict(k) for k in SoapySDR.Device.enumerate())
             if DRIVER.lower() in str(d.get('driver', '')).lower()]
 
 
+def _load_module(SoapySDR):
+    """Load the BB60 module file directly; True if that added it.
+
+    ``loadModule`` returns an empty string for a module it has just loaded
+    and "<path> already loaded" for one that was in all along - in which
+    case enumerating again would find nothing new.
+    """
+    loaded = False
+    for directory in ensure_plugin_path():
+        for path in sorted(glob.glob(os.path.join(directory, '*BB60*'))):
+            error = SoapySDR.loadModule(path)
+            if not error:
+                loaded = True
+            elif 'already loaded' not in error:
+                print(f"BB60: could not load {path}: {error}", file=sys.stderr)
+    return loaded
+
+
 def is_available():
-    """True if the SoapySDR module for this device can be found at all."""
+    """True if the SoapySDR module for this device can be found at all.
+
+    Found, not loaded: ``listModules`` lists the module files on the search
+    path, so this is True even when SoapySDR loaded its modules before the
+    path was set and the BB60 is not among them - `find_devices` sees to
+    that.
+    """
     ensure_plugin_path()
     try:
         import SoapySDR  # type: ignore
         return any('BB60' in m for m in SoapySDR.listModules())
     except Exception:
         return False
+
+
+#: USB vendor and product ID, as sysfs writes them.
+USB_ID = ('2817', '0007')
+
+
+def _device_nodes():
+    """The ``/dev/bus/usb`` node of every BB60 plugged in. Linux only."""
+    nodes = set()
+    for device in glob.glob('/sys/bus/usb/devices/*'):
+        try:
+            ids = tuple(open(os.path.join(device, name)).read().strip()
+                        for name in ('idVendor', 'idProduct'))
+            if ids == USB_ID:
+                bus, dev = (int(open(os.path.join(device, name)).read())
+                            for name in ('busnum', 'devnum'))
+                nodes.add(f'/dev/bus/usb/{bus:03d}/{dev:03d}')
+        except (OSError, ValueError):
+            continue
+    return nodes
+
+
+def holders():
+    """Other programs that have the BB60 open, as "command (PID n)".
+
+    **Enumerating cannot tell.** A BB60D another program has open is listed
+    all the same, so `find_devices` passes and it is the open afterwards
+    that fails. The kernel knows, though: libusb keeps the device's
+    ``/dev/bus/usb`` node open for as long as it has the device, so the
+    holder is whichever process has that node among its file descriptors.
+    Only processes this user can read are seen, and nothing at all off
+    Linux - an empty list means none was found, not that there is none.
+    """
+    nodes = _device_nodes()
+    found = []
+    for proc in glob.glob('/proc/[0-9]*') if nodes else []:
+        pid = int(os.path.basename(proc))
+        if pid == os.getpid():
+            continue
+        try:
+            fds = os.listdir(os.path.join(proc, 'fd'))
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(os.path.join(proc, 'fd', fd)) not in nodes:
+                    continue
+            except OSError:
+                continue
+            try:
+                with open(os.path.join(proc, 'cmdline'), 'rb') as fh:
+                    args = fh.read().decode('utf-8', 'replace').split('\0')
+                # "python -m fm_receiver", not the full path to python.
+                command = ' '.join(os.path.basename(a) for a in args if a)
+            except OSError:
+                command = ''
+            found.append(f"{command[:80] or 'another program'} (PID {pid})")
+            break
+    return found
 
 
 class bb60_source(gr.sync_block):
@@ -425,15 +522,35 @@ class bb60_source(gr.sync_block):
         self.overflows = 0
         self._sdr = None
         self._stream = None
+        self._capturing = False
         self._lock = threading.Lock()
         self._pending = {}
 
     # -- lifecycle -------------------------------------------------------
 
     def start(self):
+        """Open the device and set it streaming - and never raise.
+
+        **An exception here hangs the whole program, not just this block.**
+        GNU Radio calls ``start`` on the block's own thread and ``tb.start()``
+        waits for every block to check in; one that raised never does, so
+        ``tb.start()`` never returned. A receiver's ``main()`` calls it on
+        the launcher's thread, and a BB60D left open by another program
+        froze the launcher solid. So a failure is printed and ``False``
+        returned, which ends the flowgraph cleanly instead.
+        """
+        try:
+            self._open()
+            return True
+        except Exception as exc:
+            print(f"BB60 source: {exc}", file=sys.stderr)
+            self.stop()
+            return False
+
+    def _open(self):
         ensure_plugin_path()
         install_log_handler()
-        capture_driver_output()
+        self._capturing = capture_driver_output()
         reset_overflows()
         import SoapySDR  # type: ignore
         from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32  # type: ignore
@@ -441,8 +558,12 @@ class bb60_source(gr.sync_block):
         if not find_devices():
             raise RuntimeError(
                 "No Signal Hound BB60 was found on USB. Check it is "
-                "connected, and that no other application - Sceptre, or "
-                "another flowgraph - already has it open.")
+                "connected.")
+        busy = holders()
+        if busy:
+            raise RuntimeError(
+                f"The Signal Hound BB60D is already open in "
+                f"{', '.join(busy)}. Close that first.")
         # Enumerating is what loads the module, and with it the system
         # libSoapySDR that the module logs into. Before this call that
         # library may not have been in the process at all.
@@ -457,7 +578,6 @@ class bb60_source(gr.sync_block):
                         sample_rate=self.sample_rate,
                         gain_percent=self.gain_percent)
         self._sdr.activateStream(self._stream)
-        return True
 
     def stop(self):
         sdr, stream, self._sdr, self._stream = self._sdr, self._stream, None, None
@@ -468,7 +588,11 @@ class bb60_source(gr.sync_block):
             except Exception as exc:
                 print(f"BB60 source: error closing the stream: {exc}",
                       file=sys.stderr)
-        release_driver_output()
+        # A failed start has already been through here, and GNU Radio may
+        # still call this afterwards; release the shared stderr filter once.
+        if self._capturing:
+            self._capturing = False
+            release_driver_output()
         return True
 
     # -- settings --------------------------------------------------------

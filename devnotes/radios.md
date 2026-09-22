@@ -73,7 +73,7 @@ makes it usable for a 6 MHz television channel.
 `apps/bb60_source.py` drives it live, wrapping the **raw** SoapySDR Python
 binding as a `gr.sync_block` in the spirit of `apps/vsg_sink.py`. Measured
 streaming 10 MS/s into the ATSC receiver in real time with zero overflows.
-Four things about this device that are not like the others:
+Five things about this device that are not like the others:
 
 - **`setupStream` comes before configuration, not after.** Set the rate or
   the frequency on a device whose stream has not been set up and the module
@@ -92,6 +92,35 @@ Four things about this device that are not like the others:
   behind a broad `except` that looks *exactly* like no device being plugged
   in. That cost an afternoon; `find_devices()` now converts first and
   prints anything that goes wrong.
+- **SoapySDR loads its modules once per process, on first use**, reading
+  `SOAPY_SDR_PLUGIN_PATH` then and never again. Anything that touches
+  SoapySDR before `ensure_plugin_path()` runs - the launcher's HackRF
+  check before a HackRF app, or any gr-soapy block, even one that fails -
+  leaves the BB60 module out, and a BB60D on USB enumerates as nothing
+  until the process restarts: launch one HackRF app, switch Settings to
+  the BB60D, and the launcher said it was not connected. `find_devices()`
+  now loads the module file itself with `SoapySDR.loadModule` when no
+  BB60 turns up, and enumerates again. `listModules()` is no help in
+  spotting this: it lists the module *files* on the search path, not the
+  ones loaded, so `is_available()` says True throughout.
+
+**A BB60D another program has open is still listed**, so `find_devices()`
+passing says nothing about whether it will open; the open fails afterwards
+with `Unable to open BB60 device -1`. The kernel knows the holder: libusb
+keeps the device's `/dev/bus/usb` node open for as long as it has the
+device, and `holders()` finds whichever process has that node among its
+file descriptors - verified against a second process streaming from it.
+The launcher refuses with "Signal Hound BB60D In Use", naming the program
+and its PID, and `start()` checks again. It only sees this user's
+processes, and nothing off Linux.
+
+**That failed open froze the whole launcher.** GNU Radio calls a block's
+`start()` on the block's own thread, and `tb.start()` waits for every block
+to check in. One that raises never does, so `tb.start()` never returns -
+measured with a bare Python block, while one that returns `False` lets the
+flowgraph end by itself. A receiver's `main()` calls `tb.start()` on the
+launcher's thread. So `bb60_source.start()` never raises: it prints why and
+returns `False`, and the flowgraph ends with nothing received.
 
 Gain is two elements, `ATT` (−30…0 dB) and `RF` (0…20 dB), presented as one
 0–100 % slider: the attenuator comes out first, because attenuation costs

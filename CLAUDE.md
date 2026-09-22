@@ -162,6 +162,11 @@ damage something. Each links to the why.
   paint does with a size or a value that can be zero: a 0 px tile's
   shadow took the launcher down on every bank toggle.
   [ui](devnotes/ui.md#banks-that-collapse)
+- **A Python block's `start()` must never raise.** GNU Radio calls it on
+  the block's own thread and `tb.start()` waits for it forever; an app's
+  `main()` runs on the launcher's thread, so a BB60D left open by another
+  program froze the launcher solid. Print why and return `False`, which
+  ends the flowgraph instead. [radios](devnotes/radios.md#signal-hound-bb60d-as-a-receiver)
 - **A Python signal handler does not run while Qt's event loop idles.**
   Python runs it only when the main thread next runs Python, so a Qt
   program that must answer `SIGTERM` needs a Python timer ticking, held
@@ -235,7 +240,7 @@ cable that is not the problem.
 - **HackRF One** — USB SDR via SoapySDR (`soapy.sink('driver=hackrf', ...)`). No IP address needed; OK button always enabled. Gain set via `set_gain(0, 'VGA', value)` (0–47 dB) and `set_gain(0, 'AMP', 0)`.
 - **Ettus USRP** — Network SDR via UHD (`gnuradio-uhd`). IP address set in the settings gear dialog; OK button disabled until there is one. Gain set via `set_gain(value, 0)`.
 - **Signal Hound VSG60** — USB vector signal generator (VID:PID `2817:0008`). Transmit only. No SoapySDR module and no stock GNU Radio block exists, so `apps/vsg_sink.py` wraps the vendor C API (`libvsg_api.so`) with ctypes as a `gr.sync_block`. No IP address needed; OK button always enabled. Level set via `set_level(dBm)` — a *calibrated absolute* output power, not a relative gain index.
-- **Signal Hound BB60D** — USB spectrum analyser (VID:PID `2817:0007`). Receive only. It *is* a SoapySDR device, but not one `gr-soapy` can drive, so `apps/bb60_source.py` wraps the raw SoapySDR Python binding as a `gr.sync_block` — see [the BB60D section](devnotes/radios.md#signal-hound-bb60d-as-a-receiver) for why, and for the three things about it that are not like the other radios.
+- **Signal Hound BB60D** — USB spectrum analyser (VID:PID `2817:0007`). Receive only. It *is* a SoapySDR device, but not one `gr-soapy` can drive, so `apps/bb60_source.py` wraps the raw SoapySDR Python binding as a `gr.sync_block` — see [the BB60D section](devnotes/radios.md#signal-hound-bb60d-as-a-receiver) for why, and for the things about it that are not like the other radios.
 
 The VSG60's and the BB60D's own details - limits, locking, gain, and
 what each does that the other radios do not - are in

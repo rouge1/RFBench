@@ -1935,6 +1935,7 @@ class RFbenchToolkit(QMainWindow):
                 # Validate the Signal Hound BB60D is present before launching
                 elif config_values.get('radio_type') == 'bb60':
                     from apps.bb60_source import (find_devices as find_bb60,
+                                                  holders as bb60_holders,
                                                   is_available as bb60_software)
                     if not bb60_software():
                         QMessageBox.warning(
@@ -1951,8 +1952,18 @@ class RFbenchToolkit(QMainWindow):
                         QMessageBox.warning(
                             self, "Signal Hound BB60D Not Found",
                             "No Signal Hound BB60D was detected on USB.\n\n"
-                            "Check it is connected, and that no other "
-                            "application already has it open."
+                            "Check it is connected."
+                        )
+                        return
+                    # A BB60D another program has open is still listed, and
+                    # the open that then fails is inside the flowgraph.
+                    busy = bb60_holders()
+                    if busy:
+                        QMessageBox.warning(
+                            self, "Signal Hound BB60D In Use",
+                            "The Signal Hound BB60D is already open in another "
+                            "program:\n\n" + "\n".join(busy) + "\n\n"
+                            "Close it first, then try again."
                         )
                         return
 
