@@ -73,6 +73,7 @@ fixed.
 | [atsc.md](devnotes/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record - and why the analog receivers' Watch writes from a thread of its own |
 | [ntsc.md](devnotes/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
 | [fm-video.md](devnotes/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
+| [ism.md](devnotes/ism.md) | anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, and the RTL-SDR's limits |
 | [media.md](devnotes/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
 | [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
 | [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
@@ -95,6 +96,17 @@ damage something. Each links to the why.
   [radios](devnotes/radios.md#vsg60-notes)
 - **0 % power is not off.** A HackRF at its minimum still decoded at 100 %
   several feet away. [rds](devnotes/rds.md#fm--rds-transmitter)
+- **Amplitude zero is not RF off either.** All three transmitters are
+  direct-conversion, so I=Q=0 still leaks the LO; an OOK receiver then sees
+  carrier against carrier and every envelope slicer stops working. The
+  HackRF cannot be nulled at all - there is no DC-offset call in
+  `libhackrf` - and its leak *rises* with TX gain. Tune off-frequency and
+  put the signal back with a baseband tone.
+  [ism](devnotes/ism.md#the-carrier-never-turns-off)
+- **A HackRF's maximum receive input is −5 dBm**, and it transmits +10 to
+  +15 dBm below 2170 MHz. A bare cable from its TX to any receiver here is
+  15-20 dB over the damage threshold: 20-30 dB of pad goes in first.
+  [ism](devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna)
 - **Keep a Python reference to every Python block** in a running flowgraph,
   or the process segfaults with no Python frame to say why.
   [rds](devnotes/rds.md#fm--rds-transmitter)
