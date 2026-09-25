@@ -755,6 +755,35 @@ In normal trigger mode the plot draws nothing until the first burst, and
 until then its time axis says 16 ms: only a capture corrects it, and
 setting the sample rate again does not.
 
+**Over a cable to a BB60D, all four decode, and every field is right.**
+The VSG60 here, a cable to the BB60D on `worklaptop1`, and rtl_433 there
+inside fm-receiver (a separate app, in its rtl_433 mode, logging each decode
+as JSON). `scripts/test_ism_loop.py --transmit-only` stepped each device
+from −20 to −110 dBm, 8 s a level, and the log was graded against its
+timetable - the two clocks agree to a few tens of milliseconds. 150 decodes,
+every one the right model, id and reading; no other model appeared. Bursts
+decoded, of about six a level (four for Nexus), and rtl_433's best SNR:
+
+| VSG | Acurite | EV1527 | LaCrosse | Nexus |
+|---|---|---|---|---|
+| −20 dBm | 6, 33 dB | 6, 41 dB | 5, 41 dB | 4, 41 dB |
+| −30 dBm | 7, 33 dB | 7, 40 dB | 6, 40 dB | 4, 38 dB |
+| −40 dBm | 0 | 6, 20 dB | 6, 28 dB | 4, 29 dB |
+| −50 dBm | 0 | 1, 19 dB | 1, 18 dB | 1, 20 dB |
+| −60 and below | 0 | 0 | 0 | 0 |
+
+Decoding stops at about **19 dB of rtl_433's SNR**, −74 dBFS at that
+receiver, where one burst in six gets through - the same edge for all four
+protocols. The dBm it falls at is the receiver's, not the transmitter's:
+the BB60D's gain moved 10 dB during the run (EV1527 at −40 dBm arrived at
+−74 dBFS, LaCrosse and Nexus at −64), which is why Acurite, sent first,
+failed at −40 while the others decoded; at −20 and −30 dBm the level sat at
+−53 dBFS both times, and below that it tracked the VSG dB for dB. At the
+BB60D's full sensitivity −50 dBm would be 40-50 dB clear of the noise, not
+19, so either the cable carried a pad or the receiver was set for FM
+broadcast; neither was recorded. It is the first measurement of the VSG's
+RF output in this work, and it proves the transmitter end to end.
+
 **Over the air, −60 dBm from the VSG60 is not there at all.** Two
 antennas on one bench, the VSG at −60 to −100 dBm, the HackRF at 30 %:
 nothing decoded, and a capture during the burst shows neither the signal at

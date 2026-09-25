@@ -4,6 +4,7 @@
     python scripts/test_ism_loop.py
     python scripts/test_ism_loop.py nexus_th --levels -60,-90,-100,-110
     python scripts/test_ism_loop.py --seconds 10
+    python scripts/test_ism_loop.py nexus_th --transmit-only --seconds 10
 
 Both apps, built as the launcher builds them, in one process: ``ismXmitter``
 on the VSG60 and ``ismReceiver`` on a HackRF, joined by a cable. For each
@@ -16,6 +17,12 @@ the HackRF's antenna port. The VSG's calibrated level is what makes this a
 measurement, and even so this refuses anything above ``MAX_LEVEL_DBM`` - a
 HackRF's receive input is damaged above -5 dBm and the VSG60 reaches +10. See
 [ism](../devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).
+
+**With the receiver on another machine**, ``--transmit-only`` runs just the
+VSG half and prints the clock time each level starts; the receiver's Heard
+column says which levels got through. That is how a BB60D is used, since it
+cannot stream beside a VSG60 on one host: ``ismReceiver`` on TVAdemo with the
+BB60D, the cable from the VSG here.
 
 A VSG60 and a HackRF stream together on one host; it is a VSG60 and a BB60D
 that do not. Close any running launcher first: it holds the HackRF. The
@@ -39,10 +46,11 @@ from PyQt5 import Qt  # noqa: E402
 #: timeout would otherwise say nothing at all about what it had measured.
 print = functools.partial(print, flush=True)  # noqa: A001
 
-#: The most the VSG is ever asked for. With no pad at all this is still 25 dB
-#: under the HackRF's damage threshold.
-MAX_LEVEL_DBM = -30.0
-DEFAULT_LEVELS = (-40, -60, -80, -90, -100, -105, -110, -115, -120)
+#: The most the VSG is ever asked for. With no pad at all this is still 15 dB
+#: under the HackRF's damage threshold. -30 was the first ceiling, and on a
+#: cable the burst was visible there but small.
+MAX_LEVEL_DBM = -20.0
+DEFAULT_LEVELS = (-20, -30, -40, -60, -80, -90, -100, -110, -120)
 #: Short, so a level takes seconds; a burst is at most about a second.
 INTERVAL_S = 1.0
 #: Decodes further apart than this are separate bursts.
@@ -93,6 +101,35 @@ def count(rows, model, ident):
     return bursts, (max(snrs) if snrs else None), others
 
 
+def transmit_only(app, args, levels):
+    """The VSG half, with a timetable for whoever is watching the receiver."""
+    import apps.ismXmitter as tx
+    from apps import vsg_sink
+    if not vsg_sink.is_available() or not vsg_sink.find_devices():
+        print("Cannot transmit: no VSG60 found.")
+        return 2
+    print("VSG60 at %.2f MHz, %g s per level. Match these times to the "
+          "receiver's Heard column.\n" % (args.freq, args.seconds))
+    for name in args.profiles or sorted(EXPECTED):
+        transmitter = tx.ismXmitter(config_values={
+            'radio_type': 'vsg', 'cf': args.freq, 'pwr': 0, 'profile': name,
+            'fields': tx.default_fields(name), 'interval_s': INTERVAL_S,
+            'offset_khz': tx.DEFAULT_OFFSET_KHZ})
+        print("%s (%s %s):" % ((name,) + EXPECTED[name]))
+        try:
+            transmitter.start()
+            for level in levels:
+                transmitter.radio_sink.set_level(level)
+                print("  %s  %7.1f dBm" % (time.strftime('%H:%M:%S'), level))
+                pump(app, args.seconds)
+        finally:
+            transmitter.stop()
+            transmitter.wait()
+            del transmitter
+        print("  %s  off" % time.strftime('%H:%M:%S'))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('profiles', nargs='*', choices=sorted(EXPECTED) + [])
@@ -103,6 +140,9 @@ def main():
     ap.add_argument('--freq', type=float, default=433.92, help="MHz")
     ap.add_argument('--gain', type=float, default=30.0,
                     help="the receiver's RF gain, percent")
+    ap.add_argument('--transmit-only', action='store_true',
+                    help="the VSG half only, for a receiver on another "
+                         "machine; prints when each level starts")
     args = ap.parse_args()
 
     levels = [float(x) for x in args.levels.split(',') if x.strip()]
@@ -120,6 +160,8 @@ def main():
     signal.signal(signal.SIGTERM, stop)
 
     app = Qt.QApplication(sys.argv[:1])
+    if args.transmit_only:
+        return transmit_only(app, args, levels)
     why = radios_present()
     if why:
         print("Cannot run the loop: %s." % why)

@@ -322,7 +322,7 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 | `atscXmitter.py` | ATSC digital TV transmitter | ✅ |
 | `atscReceiver.py` | ATSC digital TV receiver - decodes the transport stream | ✅ |
 | `rdsReceiver.py` | RDS/RBDS receiver - decodes FM station data | ✅ |
-| `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ offline; streams on the VSG60, RF not yet received |
+| `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ VSG60 over a cable to a BB60D: all four devices decode |
 | `ismReceiver.py` | ISM receiver - any radio in Settings, decoded by rtl_433 on a pipe | ✅ offline; no radio yet |
 | `fmRdsTransmitter.py` | FM broadcast transmitter with RDS | ✅ |
 
