@@ -7,8 +7,7 @@ This is the research that came before any code, written down on
 2026-09-24 so the next person does not have to find it again. Nothing
 here has been on the air yet: everything marked **measured** was
 measured in software, against files, and everything else is sourced or
-flagged. The open bench questions are collected at the end and in
-[todo.md](todo.md).
+flagged. The open bench questions are collected at the end.
 
 ## The shape of the job
 
@@ -906,7 +905,7 @@ already has for RDS and ATSC.
 ## Not measured yet
 
 Everything above is from source, documentation, or software-only tests.
-These need a bench, and are listed in [todo.md](todo.md):
+These need a bench:
 
 - Whether a VSG60 and an RTL-SDR will stream at the same time on one
   host. A VSG60 and a BB60D will not - see
