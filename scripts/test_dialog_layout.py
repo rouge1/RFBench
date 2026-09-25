@@ -55,6 +55,7 @@ MODULES = [
     'fmVideoXmitter', 'fmVideoReceiver', 'ntscAnalogVideoRecorded',
     'ntscReceiver',
     'atscXmitter', 'atscReceiver', 'fmRdsTransmitter', 'rdsReceiver',
+    'ismXmitter', 'ismReceiver',
 ]
 
 RADIOS = ['hackrf', 'usrp', 'vsg', 'bb60']

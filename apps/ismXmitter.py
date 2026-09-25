@@ -164,6 +164,10 @@ class ConfigDialog(Qt.QDialog):
         """
         self.field_box = Qt.QGroupBox("Reading to send")
         self.field_form = Qt.QFormLayout(self.field_box)
+        # Its own height and no more: a taller dialog puts the slack in the
+        # stretch above the buttons, not between these rows.
+        self.field_box.setSizePolicy(Qt.QSizePolicy.Preferred,
+                                     Qt.QSizePolicy.Fixed)
         self.layout.addWidget(self.field_box)
         self.frame_label = Qt.QLabel("")
         self.frame_label.setWordWrap(True)
@@ -175,11 +179,12 @@ class ConfigDialog(Qt.QDialog):
     def apply_profile(self, key):
         """Rebuild the field rows, and move to this device's own band."""
         info = ism_frame.PROFILE_INFO[key]
-        while self.field_form.count():
-            item = self.field_form.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        # removeRow, not takeAt: takeAt empties a row's items but leaves the
+        # row itself behind, so every device picked added empty rows to the
+        # form, and deleteLater left the old spin boxes drawn, unlabelled,
+        # over the new ones until the event loop got round to them.
+        while self.field_form.rowCount():
+            self.field_form.removeRow(0)
         self._spins = {}
         saved = self._fields[key]
         for name, label, kind, low, high, default in info['fields']:

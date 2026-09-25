@@ -427,6 +427,13 @@ of them visible in a screenshot, all measured across all fifteen:
   out uneven. There is no minimum height now, and a stretch before the
   button box collects any slack in one place.
 
+A dialog that rebuilds its own rows - the ISM transmitter's "Reading to
+send" box, which changes with the device - empties its `QFormLayout` with
+`removeRow`, never `takeAt` and `deleteLater`. `takeAt` leaves the empty
+row behind, so the form grew with every device picked, and the old spin
+boxes stayed drawn over the new ones until the event loop deleted them:
+numbers in the box with no label beside them.
+
 Two things about doing it centrally:
 
 - **A group box is entered for its nested layouts but not for its rows.**
