@@ -117,6 +117,10 @@ APP_TILES = [
     # sends; this one is what an analog FPV drone puts out on 5.8 GHz.
     (3, 2, [("FM Video Transmitter", "fmVideoXmitter", "fmVideo.jpg", "tx"),
             ("FM Video Receiver", "fmVideoReceiver", "fmVideoRx.jpg", "rx")]),
+    # The icon is a real Nexus-TH frame drawn as its envelope: the gaps
+    # between those pulses are what carries the bits.
+    (4, 0, [("ISM Transmitter", "ismXmitter", "ism.png", "tx"),
+            ("ISM Receiver", "ismReceiver", "ismRx.png", "rx")]),
 ]
 
 
@@ -124,7 +128,8 @@ APP_TILES = [
 #: old title bar and no longer exists: the wordmark and the gear are in
 #: the rail now. ``scripts/test_theme.py`` reads this table out of here
 #: with ``ast``, as it reads APP_TILES, so keep it a plain literal.
-BANK_NAMES = {1: 'Signal generators', 2: 'Audio', 3: 'Video'}
+BANK_NAMES = {1: 'Signal generators', 2: 'Audio', 3: 'Video',
+              4: 'Short range'}
 
 #: The word a tile shows above its name, which is the direction it goes.
 DIRECTION_KICKER = {'tx': 'TRANSMIT', 'rx': 'RECEIVE'}

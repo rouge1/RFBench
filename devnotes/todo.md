@@ -18,3 +18,14 @@ not here.
   receiver, and how much baseband offset it takes to hide the LO leak.
 - Measure the FSK deviation of a real 868 MHz device with the BB60D;
   rtl_433 does not record it and no published table turned up.
+- Work out why exactly four repeated LaCrosse rows decode as
+  `TFA-303221` rather than `LaCrosse-TX141THBv2`, when three, five and
+  twelve all decode correctly. Needs no hardware - it is reading
+  rtl_433's decoder dispatch. See
+  [ism](ism.md#the-encoder-appsism_framepy).
+- Find out why a VSG60 opened after a HackRF in one process transmits
+  nothing, and whether a HackRF app closed earlier in a launcher session
+  is enough to cause it. See [radios](radios.md#vsg60-notes).
+- Put the ISM loop on a cable with a known pad, so the level where each
+  device stops decoding means something about the radios rather than about
+  two antennas on a bench. See [ism](ism.md#the-receiver-appsismreceiverpy).

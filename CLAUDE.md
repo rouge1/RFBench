@@ -73,7 +73,7 @@ fixed.
 | [atsc.md](devnotes/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record - and why the analog receivers' Watch writes from a thread of its own |
 | [ntsc.md](devnotes/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
 | [fm-video.md](devnotes/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
-| [ism.md](devnotes/ism.md) | anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, and the RTL-SDR's limits |
+| [ism.md](devnotes/ism.md) | `ism_frame`, `ismXmitter`, `ismReceiver`, anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, what the encoder turned out to need, rtl_433 as the receiver's decoder, and the RTL-SDR's limits |
 | [media.md](devnotes/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
 | [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
 | [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
@@ -103,6 +103,14 @@ damage something. Each links to the why.
   `libhackrf` - and its leak *rises* with TX gain. Tune off-frequency and
   put the signal back with a baseband tone.
   [ism](devnotes/ism.md#the-carrier-never-turns-off)
+- **Once the VSG60's library is loaded, the RTL-SDR is gone from that
+  process**: `libvsg_api.so` brings an older libusb that everything after it
+  binds to, and SoapySDR's RTL module fails with a printed `undefined
+  symbol` and no exception. [ism](devnotes/ism.md#the-rtl-sdr-as-a-receiver)
+- **A VSG60 opened in a process where a HackRF is already streaming
+  transmits nothing**, while taking every sample and reporting no error.
+  Give the VSG a process of its own, or open it first.
+  [radios](devnotes/radios.md#vsg60-notes)
 - **A HackRF's maximum receive input is −5 dBm**, and it transmits +10 to
   +15 dBm below 2170 MHz. A bare cable from its TX to any receiver here is
   15-20 dB over the damage threshold: 20-30 dB of pad goes in first.
@@ -318,6 +326,8 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 | `atscXmitter.py` | ATSC digital TV transmitter | ✅ |
 | `atscReceiver.py` | ATSC digital TV receiver - decodes the transport stream | ✅ |
 | `rdsReceiver.py` | RDS/RBDS receiver - decodes FM station data | ✅ |
+| `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ VSG60 over the air into a BB60D and into `ismReceiver`: all four devices decode |
+| `ismReceiver.py` | ISM receiver - any radio in Settings, decoded by rtl_433 on a pipe | ✅ HackRF, over the air from the VSG60 |
 | `fmRdsTransmitter.py` | FM broadcast transmitter with RDS | ✅ |
 
 ### Adding a New Application
@@ -346,6 +356,6 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 ## Environment
 
 - Conda environment name: `gnu` (defined in `linux/environment.yml`, prefix: `/home/user/miniconda3/envs/gnu`; on Windows `windows/environment.yml`)
-- `linux/environment.yml` pins conda-forge builds only, the HackRF's SoapySDR module included - see [machines](devnotes/machines.md#building-the-environment-on-a-new-linux-machine).
+- `linux/environment.yml` pins conda-forge builds only, the HackRF's and the RTL-SDR's SoapySDR modules included - see [machines](devnotes/machines.md#building-the-environment-on-a-new-linux-machine).
 - Python 3.12, GNU Radio 3.10.12, PyQt5 5.15, UHD 4.8
 - `linux/start_app.sh` activates `gnu` from `~/miniconda3`; edit its `source` line if conda lives elsewhere.

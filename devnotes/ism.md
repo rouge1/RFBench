@@ -239,13 +239,18 @@ decoding stops, and given the legal limits here are in microwatts, you
 can be deliberately, knowably small instead of guessing. Neither the
 HackRF nor the USRP can tell you their output power without a meter.
 
-**`vsgRepeatWaveform` is not bound yet.** `vsg_sink.py` binds fifteen
-calls and that is not one of them (nor is `vsgOutputWaveform`). It hands
-the repeating waveform to the device, which then loops it itself - no
-host jitter, no underrun risk. For an ISM frame that repeats forever it
-is the right call, and it is the single best upgrade for this work.
-Note that submitting I/Q or a trigger through `vsgSubmitIQ` *stops* a
-waveform on repeat, so the two paths do not mix.
+**`vsgRepeatWaveform` is bound now.** `vsg_sink.py` had fifteen calls and
+that was not one of them; it, `vsgOutputWaveform` and
+`vsgIsWaveformActive` are the three this work wants, and they are there
+as `repeat_waveform()`, `send_waveform()`, `waveform_active()` and
+`stop_waveform()`. The device loops the buffer out of its own memory -
+no host jitter, no underrun risk - which for an ISM frame that repeats
+forever is the right call, and was the single best upgrade available
+here. One thing written down first turned out to be wrong: a plain
+`vsgSubmitIQ` does **not** stop a running repeat. Only `vsgAbort` and the
+two waveform calls do, which is why `start()` ends a repeat before it
+streams. The signatures, read out of the library for want of a header,
+are in [radios](radios.md#vsg60-notes).
 
 **A HackRF's TX underruns are completely silent through gr-soapy.**
 SoapyHackRF's `writeStream` never returns `SOAPY_SDR_UNDERFLOW`, and
@@ -282,14 +287,32 @@ environment has `rtl-sdr 2.0.2` and `soapysdr-module-rtlsdr 0.3.3`, and
 the path inside the environment. Nothing needs installing for the
 receive path.
 
-**But neither package is pinned.** `linux/environment.yml` is supposed
-to be a full solve and does not mention `rtl-sdr` or
-`soapysdr-module-rtlsdr`; `windows/environment.yml` does not either.
-They arrived in this environment without being recorded, so a fresh
-machine built from those files has no RTL support and no sign of why.
-Both need adding - `soapysdr-module-rtlsdr` 0.3.3 depends on
-`soapysdr >=0.8.1,<0.9.0a0`, which is exactly what is pinned, and a
-win-64 build exists, so neither file is disturbed by it.
+**Neither package was pinned, and both are now.** They had arrived in
+this environment without ever being recorded: `linux/environment.yml` is
+meant to be a full solve and named neither, and `windows/environment.yml`
+named neither, so a machine built from either file got no RTL support and
+no sign of why. `rtl-sdr=2.0.2=hb9d3cd8_3` and
+`soapysdr-module-rtlsdr=0.3.3=h403070d_3` are in the Linux solve now, and
+`soapysdr-module-rtlsdr` in the Windows list, which pulls `rtl-sdr` in
+with it. Nothing else had to move: the module depends on
+`soapysdr >=0.8.1,<0.9.0a0`, which is exactly what was already pinned, and
+conda-forge carries a win-64 build of it.
+
+**It will not load in a process that has already loaded the VSG60's
+library.** `libvsg_api.so` links the libusb in its own install folder
+(`/opt/sceptre/lib/libusb-1.0.so.0`), older than the environment's 1.0.28,
+and once that is loaded it answers for `libusb-1.0.so.0` for everything
+loaded after it. `librtlsdr` then needs `libusb_wrap_sys_device`, which the
+old one lacks, and SoapySDR prints `dlopen() failed ... undefined symbol:
+libusb_wrap_sys_device` and carries on with no RTL-SDR - no exception,
+just a device that is not there. SoapySDR alone loads the module fine;
+`vsg_sink.find_devices()` first, and it fails. Every app the launcher
+opens runs inside the launcher's one process, so a single VSG app earlier
+in a session is enough. The
+HackRF is not affected: every libusb call `libhackrf` makes is in the old
+library too, so a VSG60 into a HackRF on one host is fine. Loading the
+environment's libusb before the VSG's, `RTLD_GLOBAL`, is the obvious fix and
+is not yet tried - it would put the VSG on a libusb its vendor did not ship.
 
 It constructs exactly like the HackRF - every app here already writes
 `soapy.source('driver=hackrf', 'fc32', 1, '', '', [''], [''])`, and
@@ -542,6 +565,256 @@ Synthesising from timings is cheaper and parameterisable, and once the
 clean-up needed to make replay reliable is done, it has become
 regeneration anyway.
 
+## The encoder: `apps/ism_frame.py`
+
+Written against `rtl_433` 23.11 from Ubuntu noble, and every claim below is
+something the referee said, not something that was reasoned out. Run
+`python scripts/test_ism_frame.py` to repeat the lot; it needs no radio.
+
+**All four protocols reproduce here**, both through `-y` and rendered to
+`.cu8` and read back through the real pulse detector:
+
+| profile | `-y` code | comes back as |
+|---|---|---|
+| `nexus_th` | `{36}b580bef47` x4 | `Nexus-TH  id 181  Ch 1  19.00 C  71 %` |
+| `acurite_609txc` | `{40}ca21064c3d` x3 | `Acurite-609TXC  id 202  26.2 C  76 %  CHECKSUM` |
+| `lacrosse_tx141th_bv2` | `{40}18fed3f559` x6 | `LaCrosse-TX141THBv2  id 231  -20.00 C  10 %  CRC` |
+| `ev1527` | `{25}edcbf78` | `Generic-Remote  House Code 4660  Command 8` |
+
+Two corrections to what was written down before any of it was run. The
+Generic-Remote decoder in 23.11 takes a **16-bit house code and an 8-bit
+command**, not a 20-bit ID and a 4-bit button, and it inverts the whole
+bitbuffer, so the wire carries their complement. And LaCrosse's channel
+field reads back as `0`, not `1`.
+
+**A row gap of zero must not overwrite the row's own trailing gap.** The
+helper that lays out repeats first *replaced* the last element's gap with the
+row gap, which is right for the two PPM profiles, whose rows end on a
+trailing pulse with no gap of its own. LaCrosse's rows are broken by their
+own sync pulses and want no added gap at all, so it got zero - and the last
+data pulse ran straight into the next row's sync pulse. The two merged into
+one 1041 us pulse, the row came out **39 bits instead of 40**, and that
+length matched `LaCrosse-TX141Bv2`, a different sensor in the same family.
+It decoded. It reported the right id and the right temperature and no
+humidity at all. Nothing anywhere said it was wrong. The helper adds now.
+
+**Exactly four repeated rows is the one count that fails.** Three decode,
+five decode, twelve - what the real sensor sends - decode. At four, the
+frame comes back as `TFA-303221` and `LaCrosse-TX141THBv2` never appears.
+The bits are identical in every case; only the row count changes. This
+turned up because a test trimmed the repeats to keep the file small, which
+is the sort of thing one does without thinking. Why four is special is not
+explained - see [not measured yet](#not-measured-yet).
+
+**The Rubicson collision is real and measured at 1 in 234.** Swept 703 Nexus
+frames across ids and temperatures: 3 of them satisfy Rubicson's CRC-8
+(poly 0x31, init 0x6c, over `b0 b1 b2 b3&0xf0 (b3&0x0f)<<4|(b4&0xf0)>>4`),
+and Rubicson is tried first, so Nexus-TH never sees them. The reading is not
+garbled and no error is reported - a different model simply comes out, which
+is much harder to notice than a failure. `rubicson_collides()` implements the
+check and agrees with rtl_433 on all 703, so anything choosing a sensor id
+can step past a bad one instead of shipping it.
+
+**Nexus with humidity 0 is reported as `Nexus-T`,** the temperature-only
+model, not `Nexus-TH`. That accounted for 19 of the 22 sweep frames that did
+not come back as Nexus-TH, and it is correct behaviour rather than a
+collision - but it will look like one.
+
+**A PCM/NRZ row always comes back long.** Nothing distinguishes a trailing
+zero from silence, so the slicer keeps counting bit periods into the frame
+gap and adds about `reset_limit / long_width` zero bits. A 32-bit
+`{32}aaaa1234` comes back as `{40}aaaa123400`. Either end the frame on a 1
+or have the decoder take the length it wants from the front.
+
+**Manchester comes back one bit longer than it went in**, always, because
+the zero bit rtl_433 hardcodes onto the front cannot be turned off:
+`{16}1234` in gives `{17}091a0` out.
+
+**The LO offset survives the decode**, which is the point of it. Nexus
+rendered at 1 MS/s with +100 kHz and at 8 MS/s with +400 kHz - the real
+transmit configuration - both decode unchanged. 400 kHz is well outside
+rtl_433's 250 kHz capture, so the leaked carrier is nowhere near the slicer.
+
+**Rendering does not need a whole number of samples per microsecond.** It
+helps - 8 MS/s places every edge exactly - but edges are laid down by
+accumulating the position in whole microseconds and rounding only at each
+boundary, so the error is half a sample at worst and never accumulates. At
+250 kS/s, which is 0.25 samples per microsecond, LaCrosse's 417 us pulse
+cannot land exactly and decodes anyway. What the renderer does refuse is a
+frame whose shortest interval falls under ten samples, because the pulse
+detector cannot see one and says nothing about it.
+
+## The transmitter: `apps/ismXmitter.py`
+
+A device from `ism_frame`, put on a radio. `scripts/test_ism_transmit.py`
+runs the app exactly as the launcher builds it with the radio swapped for a
+file sink, then hands what it wrote to rtl_433; all four profiles decode,
+which is what proves the flowgraph and not just the encoder.
+
+**The whole burst is rendered up front and looped out of a vector source.**
+Nothing is modulated live. Every timing is then exact and none of it depends
+on when the scheduler ran - which matters here more than in most apps,
+because the gaps between the pulses *are* the bits. SoapyHackRF's MTU alone
+is 131072 samples, about 16 ms at 8 MS/s, so a gate toggled from the Qt
+thread could not place an edge inside a frame if it tried.
+
+**The silence between bursts comes from a null source, not from the
+vector.** A `stream_mux` splices `[len(burst), interval * fs]` between the
+looping vector source and a `null_source`, so the idle costs no memory at
+all. In the vector it would: a minute at 8 MS/s is 3.8 GB.
+
+**The radio is tuned `offset` below the frequency asked for** and the signal
+is put back as a baseband tone by `ism_frame.render`, 400 kHz by default.
+The test measures where the energy actually lands - +200.0 kHz from the
+radio's centre, on a file named at the radio's centre - so the arithmetic is
+checked in both directions rather than assumed.
+
+**Standby is a baseband gate, and that is enough only because of the
+offset.** With the radio 400 kHz low, the carrier it leaks at I=Q=0 sits
+outside a 433.92 MHz receiver's window instead of on top of the signal. The
+gate is useless between bits - the edges it can place are milliseconds wide
+- and perfectly good between bursts, which is all it is asked for. Measured
+with the gate off: peak exactly 0, nothing decodes.
+
+**The display that matters is the envelope in time, and it shows one repeat,
+not the burst.** At a whole burst's span twelve repeats of a 496 us pulse
+are a solid block and the gaps - the entire message - are invisible. It
+triggers in normal mode rather than auto, so the last frame stays on screen
+through the minute of silence before the next one instead of the trace going
+flat. The spectrum display below it is honest about being nearly useless
+here, for the reason in [atsc](atsc.md#atsc-transmitter): an average cannot
+see a transmitter that is off almost all the time.
+
+**Measuring the offset needs a *contiguous* block.** Gathering only the loud
+samples splices across the gaps, breaks the tone's phase and shifts the
+measured peak by about a kilohertz - the first version of that check read
++199.1 kHz for a tone that is exactly +200. The keying is amplitude on a
+phase-continuous tone, so one contiguous window puts the carrier in a single
+bin with the keying sidebands either side.
+
+**A HackRF gets 8 MS/s and the other two get 2.** Great Scott Gadgets say
+not to run a HackRF below 8, and 8 MS/s is exactly 8 samples per
+microsecond; 2 MS/s is still a whole 2 and costs a quarter of the memory,
+which is worth having when the burst is held in RAM. A Nexus burst at
+twelve repeats is 941 ms - 60 MB of `complex64` at 8 MS/s.
+
+**The dialog builds itself out of `PROFILE_INFO`,** so a fifth protocol is
+one edit in the module that knows about protocols and none in the app. It
+also builds the frame as the fields are typed, which is cheap and catches
+the two hazards that would otherwise only appear as a decode under the wrong
+model name: a Nexus id that collides with Rubicson, and a humidity of zero.
+`lacrosse_tx141th_bv2` refuses four repeats outright for the same reason.
+
+**Measured on the VSG60** (serial 26050377, at −120 dBm): the app streams
+at 1.99-2.01 MS/s, keeps streaming through power, frequency and standby
+changes, releases the device lock on stop and opens it again cleanly. That
+proves the sink path and not the RF - there was nothing to receive with.
+
+## The receiver: `apps/ismReceiver.py`
+
+**rtl_433 is the decoder, and it never touches a radio.** The app runs it
+as `rtl_433 -F json -M level -s 250k -r cf32:-` and writes the channel into
+its stdin through a `file_descriptor_sink`; a thread reads the JSON lines
+back and the window shows them in a table. So it works with whichever radio
+Settings name - HackRF, USRP or BB60D - and needs no RTL-SDR at all, which
+is what let it be built and tested before one arrived. Fed a live stream,
+rtl_433 prints a decode within about half a second of the burst ending: it
+reads its stdin in 262144-byte blocks, 0.13 s of `cf32` at 250 kS/s.
+
+**250 kS/s is what it is handed**, rtl_433's own default and the rate every
+decoder is tested at. The radio runs at 2 MS/s (2.5 on a BB60D) and a
+`freq_xlating_fir_filter` shifts, filters to ±110 kHz and decimates by a
+whole number, as the RDS receiver's front end does.
+
+**The radio is tuned 300 kHz low** and the channel is shifted back, so the
+radio's own DC spike lands outside the filter. The transmitter's leak, at
+its 400 kHz default, then sits 100 kHz below this radio's centre - 400 kHz
+from the channel after the shift, and filtered out too. The two offsets are
+independent and neither app needs to know the other's.
+
+**A carrier inside the channel is fatal, and a decode alone does not prove
+there isn't one.** `scripts/test_ism_receive.py` runs the real app on
+synthetic samples carrying both carriers at 0.6, louder than the 0.4 signal.
+All four profiles decode at about 46 dB SNR, and noise with the carriers
+decodes as nothing. Moved inside the channel, the leak did two different
+things: 20 kHz from the signal, where it beats against it, nothing decoded
+at all; exactly on the signal, one burst of two still decoded - at 4 dB. So
+the test also demands 30 dB of SNR, which is why `-M level` is on.
+
+**Copies of one frame are one row.** A sensor sends its frame several times
+and some decoders report every copy - EV1527 came back eight times from two
+bursts, Acurite six. The same reading within 2 s of the last is counted in
+the row's Copies column rather than added as a row. Two transmissions less
+than 2 s apart count as one too; a sensor sends once a minute, so that is
+the right way round to be wrong.
+
+**The envelope's trigger follows the noise floor**: four times the lowest
+slow average of the envelope in the last few seconds, which a burst cannot
+raise. A fixed level would be right at one gain and wrong at every other.
+In normal trigger mode the plot draws nothing until the first burst, and
+until then its time axis says 16 ms: only a capture corrects it, and
+setting the sample rate again does not.
+
+**Over the air, into a BB60D and into a HackRF, all four decode and every
+field is right.** Antenna to antenna on one bench, not a cable - the level
+where decoding stops is therefore the path between two antennas as much as
+either radio, and is only worth comparing within a run.
+
+*Into the BB60D* on `worklaptop1`, with rtl_433 there inside fm-receiver (a
+separate app, in its rtl_433 mode, logging each decode as JSON).
+`scripts/test_ism_loop.py --transmit-only` stepped each device from −20 to
+−110 dBm, 8 s a level, and the log was graded against its timetable - the
+two clocks agree to a few tens of milliseconds. 150 decodes, every one the
+right model, id and reading; no other model appeared. Bursts decoded, of
+about six a level (four for Nexus), and rtl_433's best SNR:
+
+| VSG | Acurite | EV1527 | LaCrosse | Nexus |
+|---|---|---|---|---|
+| −20 dBm | 6, 33 dB | 6, 41 dB | 5, 41 dB | 4, 41 dB |
+| −30 dBm | 7, 33 dB | 7, 40 dB | 6, 40 dB | 4, 38 dB |
+| −40 dBm | 0 | 6, 20 dB | 6, 28 dB | 4, 29 dB |
+| −50 dBm | 0 | 1, 19 dB | 1, 18 dB | 1, 20 dB |
+| −60 and below | 0 | 0 | 0 | 0 |
+
+Decoding stops at about 19 dB of rtl_433's SNR, −74 dBFS at that receiver.
+The BB60D's gain moved 10 dB during the run (EV1527 at −40 dBm arrived at
+−74 dBFS, LaCrosse and Nexus at −64), which is why Acurite, sent first,
+failed at −40 while the others decoded; at −20 and −30 dBm the level sat at
+−53 dBFS both times, and below that it tracked the VSG dB for dB.
+
+*Into the HackRF* on this machine, `ismReceiver` itself at 40 % gain - the
+most this antenna allows at 433 MHz: 50 % peaks at half scale on noise and
+broadcast FM alone, 70 % clips. `scripts/test_ism_loop.py`:
+
+| VSG | Acurite | EV1527 | LaCrosse | Nexus |
+|---|---|---|---|---|
+| −20 dBm | 4, 37 dB | 5, 37 dB | 3, 37 dB | 3, 35 dB |
+| −30 dBm | 3, 27 dB | 5, 36 dB | 5, 27 dB | 3, 35 dB |
+| −40 dBm | 0 | 0 | 0 | 1, 26 dB |
+| −50 and below | 0 | 0 | 0 | 0 |
+
+**Only with the VSG60 in a process of its own.** Every first attempt at the
+HackRF loop decoded nothing, at any level and any gain, and the reason was
+not RF: a VSG60 opened in a process where a HackRF is already streaming
+takes every sample at its full 2 MS/s and transmits none of them - not the
+signal, not even its own LO leak. The HackRF carries on receiving
+normally. Opened the other way round, VSG first, a −20 dBm carrier came in
+64 dB over the noise; with the VSG in a second process, both orders work.
+So the loop script runs its transmitter as a subprocess. Why is not known;
+the VSG's library bringing its own libusb (see the RTL-SDR section) is the
+obvious suspect, and nothing more than that. See
+[radios](radios.md#vsg60-notes).
+
+**The two radios disagree about frequency by 5.8 kHz** at 433.92 MHz, about
+13 ppm, the HackRF's crystal almost certainly. It is nothing to rtl_433's
+±110 kHz channel, but it cost an afternoon: a check that looked for the
+carrier within ±5 kHz of where it should be read the sidelobe beside it and
+called a 64 dB carrier absent.
+
+**Tables had no place in the flowgraph theme**, since no flowgraph had one;
+`QTableView` and `QHeaderView` are now in `_FLOWGRAPH_BASE_QSS`, a well
+with a panel-coloured header.
+
 ## Prior art
 
 **Synthesise; do not replay, and do not go looking for a module.**
@@ -594,3 +867,10 @@ These need a bench, and are listed in [todo.md](todo.md):
   record deviation per device, and no published table turned up. The
   BB60D can measure one.
 - Whether the `.ook` text path can be made to work, per the note above.
+- Why **exactly four** repeated LaCrosse rows decode as `TFA-303221`
+  while three, five and twelve all give `LaCrosse-TX141THBv2`. Both
+  decoders invert the shared bitbuffer and both run
+  `bitbuffer_find_repeated_row` with a threshold that steps at five
+  rows, so an interaction between the two is the obvious suspect - but
+  that is a guess, and it needs reading the dispatch order rather than
+  more experiments. Software only; no bench needed.
