@@ -134,7 +134,7 @@ def main():
         print("rtl_433 is not on the path. Skipping.")
         return 0
 
-    print("VSG60 -> cable -> HackRF at %.2f MHz, receiver gain %g%%, "
+    print("VSG60 -> HackRF at %.2f MHz, receiver gain %g%%, "
           "%g s per level\n" % (args.freq, args.gain, args.seconds))
     receiver = rx.ismReceiver(config_values={
         'radio_type': 'hackrf', 'frequency_mhz': args.freq,

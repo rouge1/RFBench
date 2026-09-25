@@ -755,6 +755,18 @@ In normal trigger mode the plot draws nothing until the first burst, and
 until then its time axis says 16 ms: only a capture corrects it, and
 setting the sample rate again does not.
 
+**Over the air, −60 dBm from the VSG60 is not there at all.** Two
+antennas on one bench, the VSG at −60 to −100 dBm, the HackRF at 30 %:
+nothing decoded, and a capture during the burst shows neither the signal at
++300 kHz nor the transmitter's leak at −100 kHz - only the HackRF's own DC
+spike, 39 dB up. At 70 % the HackRF clips on noise alone (peak 1.42, both
+rails at full scale) and still shows nothing. That fits a link budget -
+25 dB of free-space loss at a metre, more for two small antennas, leaves
+−60 dBm at or under the noise in 250 kHz - and it means nothing about the
+software. It also leaves the VSG's RF output itself unproven. The cable
+this note starts with is what the loop needs, and at −60 dBm or less it
+needs no pad.
+
 **Tables had no place in the flowgraph theme**, since no flowgraph had one;
 `QTableView` and `QHeaderView` are now in `_FLOWGRAPH_BASE_QSS`, a well
 with a panel-coloured header.
