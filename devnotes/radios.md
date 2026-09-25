@@ -88,6 +88,12 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   −120 dBm: repeat starts, `waveform_active()` reads True, `stop_waveform()`
   clears it, `send_waveform()` returns only when the burst has gone.
 
+- **Its library brings its own libusb, and it wins.** `libvsg_api.so`
+  links `/opt/sceptre/lib/libusb-1.0.so.0`, older than the environment's,
+  and whatever loads after it in the same process gets that one. The
+  RTL-SDR's module then fails to load - see
+  [ism](ism.md#the-rtl-sdr-as-a-receiver). The HackRF is unaffected.
+
 ## Signal Hound BB60D as a receiver
 
 The BB60D works well for RDS (0.0 % block errors on a strong station) but is

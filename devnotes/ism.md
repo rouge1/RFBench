@@ -298,6 +298,22 @@ with it. Nothing else had to move: the module depends on
 `soapysdr >=0.8.1,<0.9.0a0`, which is exactly what was already pinned, and
 conda-forge carries a win-64 build of it.
 
+**It will not load in a process that has already loaded the VSG60's
+library.** `libvsg_api.so` links the libusb in its own install folder
+(`/opt/sceptre/lib/libusb-1.0.so.0`), older than the environment's 1.0.28,
+and once that is loaded it answers for `libusb-1.0.so.0` for everything
+loaded after it. `librtlsdr` then needs `libusb_wrap_sys_device`, which the
+old one lacks, and SoapySDR prints `dlopen() failed ... undefined symbol:
+libusb_wrap_sys_device` and carries on with no RTL-SDR - no exception,
+just a device that is not there. SoapySDR alone loads the module fine;
+`vsg_sink.find_devices()` first, and it fails. Every app the launcher
+opens runs inside the launcher's one process, so a single VSG app earlier
+in a session is enough. The
+HackRF is not affected: every libusb call `libhackrf` makes is in the old
+library too, so a VSG60 into a HackRF on one host is fine. Loading the
+environment's libusb before the VSG's, `RTLD_GLOBAL`, is the obvious fix and
+is not yet tried - it would put the VSG on a libusb its vendor did not ship.
+
 It constructs exactly like the HackRF - every app here already writes
 `soapy.source('driver=hackrf', 'fc32', 1, '', '', [''], [''])`, and
 `'driver=rtlsdr'` is a drop-in. The `driver=` prefix is not optional:
@@ -688,6 +704,60 @@ also builds the frame as the fields are typed, which is cheap and catches
 the two hazards that would otherwise only appear as a decode under the wrong
 model name: a Nexus id that collides with Rubicson, and a humidity of zero.
 `lacrosse_tx141th_bv2` refuses four repeats outright for the same reason.
+
+**Measured on the VSG60** (serial 26050377, at −120 dBm): the app streams
+at 1.99-2.01 MS/s, keeps streaming through power, frequency and standby
+changes, releases the device lock on stop and opens it again cleanly. That
+proves the sink path and not the RF - there was nothing to receive with.
+
+## The receiver: `apps/ismReceiver.py`
+
+**rtl_433 is the decoder, and it never touches a radio.** The app runs it
+as `rtl_433 -F json -M level -s 250k -r cf32:-` and writes the channel into
+its stdin through a `file_descriptor_sink`; a thread reads the JSON lines
+back and the window shows them in a table. So it works with whichever radio
+Settings name - HackRF, USRP or BB60D - and needs no RTL-SDR at all, which
+is what let it be built and tested before one arrived. Fed a live stream,
+rtl_433 prints a decode within about half a second of the burst ending: it
+reads its stdin in 262144-byte blocks, 0.13 s of `cf32` at 250 kS/s.
+
+**250 kS/s is what it is handed**, rtl_433's own default and the rate every
+decoder is tested at. The radio runs at 2 MS/s (2.5 on a BB60D) and a
+`freq_xlating_fir_filter` shifts, filters to ±110 kHz and decimates by a
+whole number, as the RDS receiver's front end does.
+
+**The radio is tuned 300 kHz low** and the channel is shifted back, so the
+radio's own DC spike lands outside the filter. The transmitter's leak, at
+its 400 kHz default, then sits 100 kHz below this radio's centre - 400 kHz
+from the channel after the shift, and filtered out too. The two offsets are
+independent and neither app needs to know the other's.
+
+**A carrier inside the channel is fatal, and a decode alone does not prove
+there isn't one.** `scripts/test_ism_receive.py` runs the real app on
+synthetic samples carrying both carriers at 0.6, louder than the 0.4 signal.
+All four profiles decode at about 46 dB SNR, and noise with the carriers
+decodes as nothing. Moved inside the channel, the leak did two different
+things: 20 kHz from the signal, where it beats against it, nothing decoded
+at all; exactly on the signal, one burst of two still decoded - at 4 dB. So
+the test also demands 30 dB of SNR, which is why `-M level` is on.
+
+**Copies of one frame are one row.** A sensor sends its frame several times
+and some decoders report every copy - EV1527 came back eight times from two
+bursts, Acurite six. The same reading within 2 s of the last is counted in
+the row's Copies column rather than added as a row. Two transmissions less
+than 2 s apart count as one too; a sensor sends once a minute, so that is
+the right way round to be wrong.
+
+**The envelope's trigger follows the noise floor**: four times the lowest
+slow average of the envelope in the last few seconds, which a burst cannot
+raise. A fixed level would be right at one gain and wrong at every other.
+In normal trigger mode the plot draws nothing until the first burst, and
+until then its time axis says 16 ms: only a capture corrects it, and
+setting the sample rate again does not.
+
+**Tables had no place in the flowgraph theme**, since no flowgraph had one;
+`QTableView` and `QHeaderView` are now in `_FLOWGRAPH_BASE_QSS`, a well
+with a panel-coloured header.
 
 ## Prior art
 

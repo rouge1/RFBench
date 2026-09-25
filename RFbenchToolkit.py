@@ -119,7 +119,8 @@ APP_TILES = [
             ("FM Video Receiver", "fmVideoReceiver", "fmVideoRx.jpg", "rx")]),
     # The icon is a real Nexus-TH frame drawn as its envelope: the gaps
     # between those pulses are what carries the bits.
-    (4, 0, [("ISM Transmitter", "ismXmitter", "ism.png", "tx")]),
+    (4, 0, [("ISM Transmitter", "ismXmitter", "ism.png", "tx"),
+            ("ISM Receiver", "ismReceiver", "ismRx.png", "rx")]),
 ]
 
 

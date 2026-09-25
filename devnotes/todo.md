@@ -23,3 +23,7 @@ not here.
   twelve all decode correctly. Needs no hardware - it is reading
   rtl_433's decoder dispatch. See
   [ism](ism.md#the-encoder-appsism_framepy).
+- Close the ISM loop on a cable: the VSG60's `ismXmitter` into a HackRF
+  running `ismReceiver`, all four profiles, and sweep the VSG's level down
+  to find where each stops decoding. Nothing here has been received off a
+  real radio yet. See [ism](ism.md#the-receiver-appsismreceiverpy).

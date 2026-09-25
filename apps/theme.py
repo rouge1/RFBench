@@ -585,6 +585,16 @@ QMenu::item:selected { background: %(rule)s; }
 QMenu::separator { height: 1px; background: %(rule_soft)s; margin: 4px 0; }
 QDialog { background: %(panel)s; }
 
+/* A receiver's log of what it decoded is a well of rows, like a plot. */
+QTableView { background: %(well)s; color: %(ink)s; border: 1px solid %(rule)s;
+    border-radius: 2px; gridline-color: %(rule_soft)s;
+    selection-background-color: %(rule)s; selection-color: %(ink)s; }
+QHeaderView { background: %(panel)s; }
+QHeaderView::section { background: %(panel)s; color: %(ink_2)s;
+    border: none; border-bottom: 1px solid %(rule)s; padding: 4px 6px;
+    font-size: %(s_sm)spx; }
+QTableCornerButton::section { background: %(panel)s; border: none; }
+
 /* A plot is a well with a rule round it. */
 DisplayPlot { background: %(well)s; border: 1px solid %(rule)s;
     border-radius: 2px;
