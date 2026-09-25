@@ -199,3 +199,11 @@ wrong in a way only a fresh machine shows. Both were found on 2026-09-18.
   that it is fixed. `windows/environment.yml` always had the module. The
   system one under `/usr/lib/x86_64-linux-gnu/SoapySDR` is no substitute:
   it links the system `libSoapySDR` and `libhackrf`, not the environment's.
+- **An RTL-SDR needs `soapysdr-module-rtlsdr`, and it went unpinned for
+  months.** Both it and `rtl-sdr` were installed in the `gnu` environment
+  here and named in neither `environment.yml`, so a machine built from
+  those files had no RTL support at all and nothing to say why - the same
+  failure as the HackRF one above, and just as quiet. Both are pinned now.
+  The lesson is the general one: a package installed by hand into `gnu`
+  and not written back into the file is invisible until a new machine is
+  built. See [ism](ism.md#the-rtl-sdr-as-a-receiver).

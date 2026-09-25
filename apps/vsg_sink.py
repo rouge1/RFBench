@@ -140,6 +140,25 @@ def _load_library():
         lib.vsgSubmitIQ.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_float),
                                     ctypes.c_int]
         lib.vsgFlushAndWait.argtypes = [ctypes.c_int]
+        # Waveform mode - see the section of that name below. Bound in a
+        # try, unlike everything above it, because an older vendor library
+        # need not export these three, and an AttributeError here would
+        # take the whole VSG down rather than just this one feature.
+        try:
+            # The length is in complex samples, as vsgSubmitIQ's is, and
+            # both calls copy the buffer before returning.
+            lib.vsgRepeatWaveform.argtypes = [ctypes.c_int,
+                                              ctypes.POINTER(ctypes.c_float),
+                                              ctypes.c_int]
+            lib.vsgOutputWaveform.argtypes = [ctypes.c_int,
+                                              ctypes.POINTER(ctypes.c_float),
+                                              ctypes.c_int]
+            # This one writes a 4-byte int, not a C++ bool: a ctypes.c_bool
+            # would leave three of those bytes in whatever sits after it.
+            lib.vsgIsWaveformActive.argtypes = [ctypes.c_int,
+                                                ctypes.POINTER(ctypes.c_int)]
+        except AttributeError:
+            pass
         _lib = lib
         return _lib
 
@@ -352,6 +371,12 @@ class vsg_sink(gr.sync_block):
         # reported done, and the whole broadcast ended with no error at all.
         if self._closed:
             self._open()
+        elif self.waveform_active():
+            # vsgSubmitIQ does not stop a repeating waveform - only
+            # vsgAbort and the two waveform calls do - so a flowgraph
+            # started over one left playing would have both feeding the
+            # modulator at once.
+            self.stop_waveform()
         return True
 
     def work(self, input_items, output_items):
@@ -397,6 +422,83 @@ class vsg_sink(gr.sync_block):
             yield
         finally:
             self._hold -= 1
+
+    # --- waveform mode ---------------------------------------------------
+    # Streaming through work() is the normal path and needs a flowgraph
+    # feeding it. A short burst - a 433 MHz frame and the silence after it -
+    # is better handed over whole instead: the device plays it out of its own
+    # memory, so the timing between the pulses is the VSG's clock rather than
+    # whatever USB and the host scheduler did that second, and there is
+    # nothing left to underrun. Build the block on its own for this, with no
+    # top block around it; work() never runs. The two modes do not mix, and
+    # start() ends a repeat rather than stream on top of it.
+
+    def _waveform_call(self, name, samples):
+        """Hand one complex64 buffer to whichever waveform call `name` is."""
+        func = getattr(self._lib, name, None)
+        if func is None:
+            raise RuntimeError(
+                "This libvsg_api does not export %s. The installed Signal "
+                "Hound software is too old for waveform mode." % name)
+        iq = np.ascontiguousarray(samples, dtype=np.complex64)
+        if iq.size == 0:
+            raise ValueError("waveform is empty")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Signal Hound VSG is closed")
+            # complex64 is already interleaved float32 I/Q, so the view is
+            # free; the length stays a count of complex samples. The library
+            # copies into its own buffer before it returns, so iq does not
+            # have to outlive the call.
+            buf = iq.view(np.float32)
+            status = func(self._device,
+                          buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                          iq.size)
+        if status < 0:
+            raise RuntimeError("%s failed: %s"
+                               % (name, _err(self._lib, status)))
+
+    def send_waveform(self, samples):
+        """Play one buffer once, and return when the device has sent it."""
+        self._waveform_call('vsgOutputWaveform', samples)
+
+    def repeat_waveform(self, samples):
+        """Play one buffer over and over, and return straight away.
+
+        The gap between repeats is whatever silence the buffer ends with, so
+        a frame and its own inter-frame gap in one array loops at exactly the
+        interval the real remote sends at, with no host in the loop at all.
+        stop_waveform() ends it; so does closing the block, starting a
+        flowgraph on it, or handing over another waveform.
+        """
+        self._waveform_call('vsgRepeatWaveform', samples)
+
+    def waveform_active(self):
+        """True while a repeat_waveform() is still playing."""
+        func = getattr(self._lib, 'vsgIsWaveformActive', None)
+        if func is None:
+            return False
+        active = ctypes.c_int(0)
+        with self._lock:
+            if self._closed:
+                return False
+            if func(self._device, ctypes.byref(active)) < 0:
+                return False
+        return bool(active.value)
+
+    def stop_waveform(self):
+        """End a repeating waveform.
+
+        vsgAbort is the only exported way to stop one - the library's
+        StopWaveform is internal - and it is what _shutdown() already uses,
+        so closing the block stops a repeat too.
+        """
+        if self._closed:
+            return
+        # Outside _lock for the same reason _shutdown()'s abort is: its job
+        # is to unblock the driver, so waiting on a call parked inside the
+        # driver would deadlock.
+        self._lib.vsgAbort(self._device)
 
     def _shutdown(self):
         if self._closed:

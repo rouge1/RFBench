@@ -239,13 +239,18 @@ decoding stops, and given the legal limits here are in microwatts, you
 can be deliberately, knowably small instead of guessing. Neither the
 HackRF nor the USRP can tell you their output power without a meter.
 
-**`vsgRepeatWaveform` is not bound yet.** `vsg_sink.py` binds fifteen
-calls and that is not one of them (nor is `vsgOutputWaveform`). It hands
-the repeating waveform to the device, which then loops it itself - no
-host jitter, no underrun risk. For an ISM frame that repeats forever it
-is the right call, and it is the single best upgrade for this work.
-Note that submitting I/Q or a trigger through `vsgSubmitIQ` *stops* a
-waveform on repeat, so the two paths do not mix.
+**`vsgRepeatWaveform` is bound now.** `vsg_sink.py` had fifteen calls and
+that was not one of them; it, `vsgOutputWaveform` and
+`vsgIsWaveformActive` are the three this work wants, and they are there
+as `repeat_waveform()`, `send_waveform()`, `waveform_active()` and
+`stop_waveform()`. The device loops the buffer out of its own memory -
+no host jitter, no underrun risk - which for an ISM frame that repeats
+forever is the right call, and was the single best upgrade available
+here. One thing written down first turned out to be wrong: a plain
+`vsgSubmitIQ` does **not** stop a running repeat. Only `vsgAbort` and the
+two waveform calls do, which is why `start()` ends a repeat before it
+streams. The signatures, read out of the library for want of a header,
+are in [radios](radios.md#vsg60-notes).
 
 **A HackRF's TX underruns are completely silent through gr-soapy.**
 SoapyHackRF's `writeStream` never returns `SOAPY_SDR_UNDERFLOW`, and
@@ -282,14 +287,16 @@ environment has `rtl-sdr 2.0.2` and `soapysdr-module-rtlsdr 0.3.3`, and
 the path inside the environment. Nothing needs installing for the
 receive path.
 
-**But neither package is pinned.** `linux/environment.yml` is supposed
-to be a full solve and does not mention `rtl-sdr` or
-`soapysdr-module-rtlsdr`; `windows/environment.yml` does not either.
-They arrived in this environment without being recorded, so a fresh
-machine built from those files has no RTL support and no sign of why.
-Both need adding - `soapysdr-module-rtlsdr` 0.3.3 depends on
-`soapysdr >=0.8.1,<0.9.0a0`, which is exactly what is pinned, and a
-win-64 build exists, so neither file is disturbed by it.
+**Neither package was pinned, and both are now.** They had arrived in
+this environment without ever being recorded: `linux/environment.yml` is
+meant to be a full solve and named neither, and `windows/environment.yml`
+named neither, so a machine built from either file got no RTL support and
+no sign of why. `rtl-sdr=2.0.2=hb9d3cd8_3` and
+`soapysdr-module-rtlsdr=0.3.3=h403070d_3` are in the Linux solve now, and
+`soapysdr-module-rtlsdr` in the Windows list, which pulls `rtl-sdr` in
+with it. Nothing else had to move: the module depends on
+`soapysdr >=0.8.1,<0.9.0a0`, which is exactly what was already pinned, and
+conda-forge carries a win-64 build of it.
 
 It constructs exactly like the HackRF - every app here already writes
 `soapy.source('driver=hackrf', 'fc32', 1, '', '', [''], [''])`, and

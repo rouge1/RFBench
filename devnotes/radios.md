@@ -56,6 +56,37 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   Track now swaps files in place, because a rebuild glitches the pilot and RDS
   whatever the radio (see the [FM + RDS notes](rds.md#fm--rds-transmitter)) - so this is the rule for
   anything that does.
+- **Waveform mode: hand the device one buffer and let it play it.**
+  `vsgRepeatWaveform` loops a buffer out of device memory with nothing
+  streaming over USB, which is what a short burst wants - a 433 MHz frame
+  and the silence after it in one array repeats at the VSG's own clock
+  rather than at whatever USB and the host scheduler did that second, and
+  there is nothing left to underrun. `vsg_sink` exposes it as
+  `repeat_waveform()`, with `send_waveform()` for one shot,
+  `waveform_active()` and `stop_waveform()`. Build the block on its own for
+  this, with no top block around it; `work()` never runs.
+
+  The vendor ships no header, so the three signatures were read out of
+  `libvsg_api.so.1` itself, and two of them are not what a guess would give.
+  `vsgRepeatWaveform(device, iq, len)` takes **three** arguments, not a
+  fourth repeat count - the repeat is unbounded until something stops it -
+  and `len` counts complex samples, as `vsgSubmitIQ`'s does; the call
+  `ippsCopy_32fc`s the buffer into its own storage before returning, so the
+  caller's array need not outlive it. `vsgIsWaveformActive` writes a
+  **4-byte int**, not a C++ `bool`: a `ctypes.c_bool` there leaves three of
+  those bytes in whatever sits after it. `vsgOutputWaveform` is only
+  `vsgSubmitIQ` followed by `vsgFlushAndWait`.
+
+  **Only `vsgAbort` and the two waveform calls stop a running repeat** -
+  a plain `vsgSubmitIQ` does not, so a flowgraph started over one left
+  playing would have both feeding the modulator. `vsg_sink.start()`
+  therefore ends a repeat before streaming, and `_shutdown()` already
+  aborts, so closing the block stops it too. The three calls are bound in a
+  `try`, unlike the other fifteen, because an older vendor library need not
+  export them and an `AttributeError` at bind time would take the whole VSG
+  down rather than just this feature. Verified on the unit here at
+  −120 dBm: repeat starts, `waveform_active()` reads True, `stop_waveform()`
+  clears it, `send_waveform()` returns only when the burst has gone.
 
 ## Signal Hound BB60D as a receiver
 

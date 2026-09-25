@@ -22,6 +22,7 @@ dependencies:
   - gnuradio=3.10.12          # metapackage: core, qtgui, soapy, uhd, audio
   - soapysdr
   - soapysdr-module-hackrf    # the HackRF backend gr-soapy talks to
+  - soapysdr-module-rtlsdr    # the RTL-SDR backend; it pulls rtl-sdr in with it
   - pyqt=5.15
   - numpy
   - scipy

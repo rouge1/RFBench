@@ -346,6 +346,6 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 ## Environment
 
 - Conda environment name: `gnu` (defined in `linux/environment.yml`, prefix: `/home/user/miniconda3/envs/gnu`; on Windows `windows/environment.yml`)
-- `linux/environment.yml` pins conda-forge builds only, the HackRF's SoapySDR module included - see [machines](devnotes/machines.md#building-the-environment-on-a-new-linux-machine).
+- `linux/environment.yml` pins conda-forge builds only, the HackRF's and the RTL-SDR's SoapySDR modules included - see [machines](devnotes/machines.md#building-the-environment-on-a-new-linux-machine).
 - Python 3.12, GNU Radio 3.10.12, PyQt5 5.15, UHD 4.8
 - `linux/start_app.sh` activates `gnu` from `~/miniconda3`; edit its `source` line if conda lives elsewhere.
