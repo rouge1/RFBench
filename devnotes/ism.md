@@ -549,6 +549,85 @@ Synthesising from timings is cheaper and parameterisable, and once the
 clean-up needed to make replay reliable is done, it has become
 regeneration anyway.
 
+## The encoder: `apps/ism_frame.py`
+
+Written against `rtl_433` 23.11 from Ubuntu noble, and every claim below is
+something the referee said, not something that was reasoned out. Run
+`python scripts/test_ism_frame.py` to repeat the lot; it needs no radio.
+
+**All four protocols reproduce here**, both through `-y` and rendered to
+`.cu8` and read back through the real pulse detector:
+
+| profile | `-y` code | comes back as |
+|---|---|---|
+| `nexus_th` | `{36}b580bef47` x4 | `Nexus-TH  id 181  Ch 1  19.00 C  71 %` |
+| `acurite_609txc` | `{40}ca21064c3d` x3 | `Acurite-609TXC  id 202  26.2 C  76 %  CHECKSUM` |
+| `lacrosse_tx141th_bv2` | `{40}18fed3f559` x6 | `LaCrosse-TX141THBv2  id 231  -20.00 C  10 %  CRC` |
+| `ev1527` | `{25}edcbf78` | `Generic-Remote  House Code 4660  Command 8` |
+
+Two corrections to what was written down before any of it was run. The
+Generic-Remote decoder in 23.11 takes a **16-bit house code and an 8-bit
+command**, not a 20-bit ID and a 4-bit button, and it inverts the whole
+bitbuffer, so the wire carries their complement. And LaCrosse's channel
+field reads back as `0`, not `1`.
+
+**A row gap of zero must not overwrite the row's own trailing gap.** The
+helper that lays out repeats first *replaced* the last element's gap with the
+row gap, which is right for the two PPM profiles, whose rows end on a
+trailing pulse with no gap of its own. LaCrosse's rows are broken by their
+own sync pulses and want no added gap at all, so it got zero - and the last
+data pulse ran straight into the next row's sync pulse. The two merged into
+one 1041 us pulse, the row came out **39 bits instead of 40**, and that
+length matched `LaCrosse-TX141Bv2`, a different sensor in the same family.
+It decoded. It reported the right id and the right temperature and no
+humidity at all. Nothing anywhere said it was wrong. The helper adds now.
+
+**Exactly four repeated rows is the one count that fails.** Three decode,
+five decode, twelve - what the real sensor sends - decode. At four, the
+frame comes back as `TFA-303221` and `LaCrosse-TX141THBv2` never appears.
+The bits are identical in every case; only the row count changes. This
+turned up because a test trimmed the repeats to keep the file small, which
+is the sort of thing one does without thinking. Why four is special is not
+explained - see [not measured yet](#not-measured-yet).
+
+**The Rubicson collision is real and measured at 1 in 234.** Swept 703 Nexus
+frames across ids and temperatures: 3 of them satisfy Rubicson's CRC-8
+(poly 0x31, init 0x6c, over `b0 b1 b2 b3&0xf0 (b3&0x0f)<<4|(b4&0xf0)>>4`),
+and Rubicson is tried first, so Nexus-TH never sees them. The reading is not
+garbled and no error is reported - a different model simply comes out, which
+is much harder to notice than a failure. `rubicson_collides()` implements the
+check and agrees with rtl_433 on all 703, so anything choosing a sensor id
+can step past a bad one instead of shipping it.
+
+**Nexus with humidity 0 is reported as `Nexus-T`,** the temperature-only
+model, not `Nexus-TH`. That accounted for 19 of the 22 sweep frames that did
+not come back as Nexus-TH, and it is correct behaviour rather than a
+collision - but it will look like one.
+
+**A PCM/NRZ row always comes back long.** Nothing distinguishes a trailing
+zero from silence, so the slicer keeps counting bit periods into the frame
+gap and adds about `reset_limit / long_width` zero bits. A 32-bit
+`{32}aaaa1234` comes back as `{40}aaaa123400`. Either end the frame on a 1
+or have the decoder take the length it wants from the front.
+
+**Manchester comes back one bit longer than it went in**, always, because
+the zero bit rtl_433 hardcodes onto the front cannot be turned off:
+`{16}1234` in gives `{17}091a0` out.
+
+**The LO offset survives the decode**, which is the point of it. Nexus
+rendered at 1 MS/s with +100 kHz and at 8 MS/s with +400 kHz - the real
+transmit configuration - both decode unchanged. 400 kHz is well outside
+rtl_433's 250 kHz capture, so the leaked carrier is nowhere near the slicer.
+
+**Rendering does not need a whole number of samples per microsecond.** It
+helps - 8 MS/s places every edge exactly - but edges are laid down by
+accumulating the position in whole microseconds and rounding only at each
+boundary, so the error is half a sample at worst and never accumulates. At
+250 kS/s, which is 0.25 samples per microsecond, LaCrosse's 417 us pulse
+cannot land exactly and decodes anyway. What the renderer does refuse is a
+frame whose shortest interval falls under ten samples, because the pulse
+detector cannot see one and says nothing about it.
+
 ## Prior art
 
 **Synthesise; do not replay, and do not go looking for a module.**
@@ -601,3 +680,10 @@ These need a bench, and are listed in [todo.md](todo.md):
   record deviation per device, and no published table turned up. The
   BB60D can measure one.
 - Whether the `.ook` text path can be made to work, per the note above.
+- Why **exactly four** repeated LaCrosse rows decode as `TFA-303221`
+  while three, five and twelve all give `LaCrosse-TX141THBv2`. Both
+  decoders invert the shared bitbuffer and both run
+  `bitbuffer_find_repeated_row` with a threshold that steps at five
+  rows, so an interaction between the two is the obvious suspect - but
+  that is a guess, and it needs reading the dispatch order rather than
+  more experiments. Software only; no bench needed.
