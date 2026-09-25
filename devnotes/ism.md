@@ -628,6 +628,67 @@ cannot land exactly and decodes anyway. What the renderer does refuse is a
 frame whose shortest interval falls under ten samples, because the pulse
 detector cannot see one and says nothing about it.
 
+## The transmitter: `apps/ismXmitter.py`
+
+A device from `ism_frame`, put on a radio. `scripts/test_ism_transmit.py`
+runs the app exactly as the launcher builds it with the radio swapped for a
+file sink, then hands what it wrote to rtl_433; all four profiles decode,
+which is what proves the flowgraph and not just the encoder.
+
+**The whole burst is rendered up front and looped out of a vector source.**
+Nothing is modulated live. Every timing is then exact and none of it depends
+on when the scheduler ran - which matters here more than in most apps,
+because the gaps between the pulses *are* the bits. SoapyHackRF's MTU alone
+is 131072 samples, about 16 ms at 8 MS/s, so a gate toggled from the Qt
+thread could not place an edge inside a frame if it tried.
+
+**The silence between bursts comes from a null source, not from the
+vector.** A `stream_mux` splices `[len(burst), interval * fs]` between the
+looping vector source and a `null_source`, so the idle costs no memory at
+all. In the vector it would: a minute at 8 MS/s is 3.8 GB.
+
+**The radio is tuned `offset` below the frequency asked for** and the signal
+is put back as a baseband tone by `ism_frame.render`, 400 kHz by default.
+The test measures where the energy actually lands - +200.0 kHz from the
+radio's centre, on a file named at the radio's centre - so the arithmetic is
+checked in both directions rather than assumed.
+
+**Standby is a baseband gate, and that is enough only because of the
+offset.** With the radio 400 kHz low, the carrier it leaks at I=Q=0 sits
+outside a 433.92 MHz receiver's window instead of on top of the signal. The
+gate is useless between bits - the edges it can place are milliseconds wide
+- and perfectly good between bursts, which is all it is asked for. Measured
+with the gate off: peak exactly 0, nothing decodes.
+
+**The display that matters is the envelope in time, and it shows one repeat,
+not the burst.** At a whole burst's span twelve repeats of a 496 us pulse
+are a solid block and the gaps - the entire message - are invisible. It
+triggers in normal mode rather than auto, so the last frame stays on screen
+through the minute of silence before the next one instead of the trace going
+flat. The spectrum display below it is honest about being nearly useless
+here, for the reason in [atsc](atsc.md#atsc-transmitter): an average cannot
+see a transmitter that is off almost all the time.
+
+**Measuring the offset needs a *contiguous* block.** Gathering only the loud
+samples splices across the gaps, breaks the tone's phase and shifts the
+measured peak by about a kilohertz - the first version of that check read
++199.1 kHz for a tone that is exactly +200. The keying is amplitude on a
+phase-continuous tone, so one contiguous window puts the carrier in a single
+bin with the keying sidebands either side.
+
+**A HackRF gets 8 MS/s and the other two get 2.** Great Scott Gadgets say
+not to run a HackRF below 8, and 8 MS/s is exactly 8 samples per
+microsecond; 2 MS/s is still a whole 2 and costs a quarter of the memory,
+which is worth having when the burst is held in RAM. A Nexus burst at
+twelve repeats is 941 ms - 60 MB of `complex64` at 8 MS/s.
+
+**The dialog builds itself out of `PROFILE_INFO`,** so a fifth protocol is
+one edit in the module that knows about protocols and none in the app. It
+also builds the frame as the fields are typed, which is cheap and catches
+the two hazards that would otherwise only appear as a decode under the wrong
+model name: a Nexus id that collides with Rubicson, and a humidity of zero.
+`lacrosse_tx141th_bv2` refuses four repeats outright for the same reason.
+
 ## Prior art
 
 **Synthesise; do not replay, and do not go looking for a module.**

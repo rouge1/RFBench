@@ -257,13 +257,20 @@ class Frame:
     between them, so ``render()`` has no protocol knowledge in it at all.
     """
 
-    def __init__(self, name, bits, train, rows, expect, freq_hz=433.92e6):
+    def __init__(self, name, bits, train, rows, expect, freq_hz=433.92e6,
+                 row_us=None):
         self.name = name
         self.bits = bits
         self.train = train
         self.rows = rows
         self.expect = expect          # the model rtl_433 should name
         self.freq_hz = freq_hz
+        # One repeat, for anything that wants to show or measure a single
+        # frame rather than the whole burst. EV1527 has to say so: its
+        # repeats are packages rather than rows, so ``rows`` is 1 however
+        # many go out.
+        self.row_us = (float(row_us) if row_us is not None
+                       else self.duration_us / max(1, rows))
 
     @property
     def code(self):
@@ -396,6 +403,15 @@ def lacrosse_tx141th_bv2(sensor_id=0xE7, channel=0, battery_low=False,
     raw = int(round(temp_c * 10)) + 500
     if not 0 <= raw < 4096:
         raise ValueError("temperature is out of the 12-bit range")
+    if rows == 4:
+        # Measured, and not explained: at exactly four rows this comes back
+        # as TFA-303221 and LaCrosse-TX141THBv2 never appears. Three, five
+        # and twelve are all fine. Refusing beats returning a frame that
+        # decodes under the wrong model with a plausible reading.
+        raise ValueError(
+            "exactly four rows decodes as TFA-303221 rather than "
+            "LaCrosse-TX141THBv2 - use three, or five or more; the real "
+            "sensor sends twelve. See devnotes/ism.md.")
     body = [sensor_id & 0xFF,
             ((1 if battery_low else 0) << 7) | ((channel & 0x3) << 4) | (raw >> 8),
             raw & 0xFF,
@@ -431,7 +447,9 @@ def ev1527(house_code=4660, command=8, frames=4):
         train.append(sync)
         train += pwm(wire, 464, 1404, period_us=1868)
     train.append((464, 25000))        # the sync pulse that closes the last one
-    return Frame("ev1527", bits, train, 1, "Generic-Remote")
+    one = sync[0] + sync[1] + sum(m + s for m, s in pwm(wire, 464, 1404,
+                                                        period_us=1868))
+    return Frame("ev1527", bits, train, 1, "Generic-Remote", row_us=one)
 
 
 #: Every profile, by the name its frames carry.
@@ -440,6 +458,78 @@ PROFILES = {
     'acurite_609txc': acurite_609txc,
     'lacrosse_tx141th_bv2': lacrosse_tx141th_bv2,
     'ev1527': ev1527,
+}
+
+#: The bands these devices use, as a channel plan for a frequency picker.
+#: Only two of the four are ISM in the region that uses them - 433.92 MHz in
+#: the United States is not, and is legal there only under the periodic
+#: operation rule. What that means for a bench is in
+#: [ism](../devnotes/ism.md#the-bands-and-what-is-actually-legal).
+#: The caption is what a frequency picker shows, so it leads with the number.
+BANDS = [
+    ("315", 315.0, "315 MHz - US remotes and TPMS; FCC 15.231, not ISM"),
+    ("433.92", 433.92, "433.92 MHz - ISM in Region 1; in the US, 15.231 only"),
+    ("868.35", 868.35, "868.35 MHz - European SRD, ERC REC 70-03"),
+    ("915", 915.0, "915 MHz - US ISM, FCC 15.249 or 15.247"),
+]
+
+#: What each profile takes, so a dialog can build itself out of this rather
+#: than keep its own copy of every protocol's fields. A field is
+#: ``(keyword, label, kind, low, high, default)`` with ``kind`` 'int' or
+#: 'float'. ``interval_s`` is how often the real device sends, which is also
+#: the only duty cycle any of these bands would tolerate on the air.
+PROFILE_INFO = {
+    'nexus_th': {
+        'label': "Nexus-TH thermo-hygrometer (and FreeTec clones)",
+        'freq_mhz': 433.92,
+        'interval_s': 60,
+        'fields': [
+            ('sensor_id', "Sensor ID", 'int', 0, 255, 181),
+            ('channel', "Sensor channel", 'int', 1, 4, 1),
+            ('temp_c', "Temperature (C)", 'float', -50.0, 70.0, 19.0),
+            # Humidity starts at 1: a Nexus frame with humidity 0 is reported
+            # as Nexus-T, the temperature-only model, which looks exactly like
+            # a decode failure and is not one.
+            ('humidity', "Humidity (%)", 'int', 1, 99, 71),
+            ('rows', "Repeats", 'int', 3, 24, 12),
+        ],
+    },
+    'acurite_609txc': {
+        'label': "Acurite 609TXC thermo-hygrometer",
+        'freq_mhz': 433.92,
+        'interval_s': 30,
+        'fields': [
+            ('sensor_id', "Sensor ID", 'int', 0, 255, 202),
+            ('temp_c', "Temperature (C)", 'float', -40.0, 70.0, 26.2),
+            ('humidity', "Humidity (%)", 'int', 0, 99, 76),
+            ('rows', "Repeats", 'int', 1, 24, 3),
+        ],
+    },
+    'lacrosse_tx141th_bv2': {
+        'label': "LaCrosse TX141TH-Bv2 thermo-hygrometer",
+        'freq_mhz': 433.92,
+        'interval_s': 50,
+        'fields': [
+            ('sensor_id', "Sensor ID", 'int', 0, 255, 0xE7),
+            ('channel', "Sensor channel", 'int', 0, 3, 0),
+            ('temp_c', "Temperature (C)", 'float', -50.0, 70.0, 20.0),
+            ('humidity', "Humidity (%)", 'int', 0, 99, 45),
+            # Not 4 - see the guard in lacrosse_tx141th_bv2().
+            ('rows', "Repeats", 'int', 5, 24, 12),
+        ],
+    },
+    'ev1527': {
+        'label': "EV1527 / PT2262 remote - a button press",
+        'freq_mhz': 433.92,
+        'interval_s': 5,
+        'fields': [
+            ('house_code', "House code", 'int', 0, 65535, 4660),
+            ('command', "Command", 'int', 0, 255, 8),
+            # One frame never decodes: the package rtl_433 assembles is this
+            # frame's bits plus the *next* frame's sync pulse.
+            ('frames', "Frames", 'int', 2, 24, 4),
+        ],
+    },
 }
 
 

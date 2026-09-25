@@ -78,6 +78,7 @@ MODULES = [
     'fmRdsTransmitter', 'rdsReceiver',
     'atscXmitter', 'atscReceiver', 'ntscAnalogVideoRecorded', 'ntscReceiver',
     'fmVideoXmitter', 'fmVideoReceiver',
+    'ismXmitter',
 ]
 
 #: How long each flowgraph runs before it is looked at, so the plots have

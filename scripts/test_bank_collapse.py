@@ -217,6 +217,12 @@ def main():
             pump(module.BANK_TOGGLE_MS + 150)
             check("Space on the focused heading opens it",
                   launcher._bodies[2].reveal == 1.0)
+            # Any bank past the third, opened the way the first was. The
+            # three above are there to exercise the three ways in; this is
+            # so that adding a fourth bank does not fail the check below.
+            for header in launcher._headers[3:]:
+                QTest.mouseClick(header.label, QtCore.Qt.LeftButton)
+                pump(module.BANK_TOGGLE_MS + 150)
             check("every bank open is every bank saved open",
                   saved(folder).get('collapsed_banks') == [])
             check("open again, every tile is its old height",
@@ -383,8 +389,12 @@ def main():
         os.makedirs(prepare_workspace_again)
         prepare_workspace(prepare_workspace_again, 'slate', collapsed=[2, 9])
         module, launcher = open_launcher(prepare_workspace_again)
+        # Read the bank table rather than counting: row 2 is the one
+        # collapsed above, row 9 does not exist, and every other bank -
+        # however many there are now - stays open.
+        expected = [row != 2 for row in sorted(module.BANK_NAMES)]
         check("a row with no bank is ignored, a real one kept",
-              [b.isVisible() for b in launcher._bodies] == [True, False, True])
+              [b.isVisible() for b in launcher._bodies] == expected)
         close_launcher(launcher, prepare_workspace_again)
 
     if raised:
