@@ -23,13 +23,22 @@ What it pins down:
 - **Copies of one frame are one row.** A sensor sends its frame several times
   and some decoders report each; the table counts them instead.
 - **Noise alone decodes as nothing.**
+- **A weak burst still decodes.** rtl_433 judges its samples on an 8-bit
+  RTL-SDR's scale, and at the noise level a HackRF gives, a burst 17 dB over
+  the noise decoded nothing until the app raised the samples to that scale.
+- **Nothing is dropped** on the way to rtl_433 at twice real time.
+- **The log gets every decode, labelled with the frequency tuned** - 868.3
+  MHz included, which is where a ``-f`` after the ``-s`` on rtl_433's
+  command line silently breaks the rate.
 
 It needs `rtl_433` on the path and no radio at all.
 """
 import argparse
+import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -45,16 +54,24 @@ from apps import ism_frame  # noqa: E402
 
 RTL_433 = shutil.which('rtl_433')
 RATE = 2e6
+#: Twice real time. Flat out, the pipe to rtl_433 would rightly drop
+#: samples rather than hold up a radio; paced, nothing should be dropped.
+PACE = 2 * RATE
+#: A burst this far over the channel's noise - its peak, 0.016 of full scale
+#: at a HackRF's noise - decoded nothing before the samples were raised.
+WEAK_AMPLITUDE = 0.016
 NOISE = 0.005                  # per rail; the signal is ism_frame's 0.4
 #: The two carriers, each louder than the signal is: a HackRF's DC spike
 #: and the transmitter's leak through a cable are both easily that.
 DC_SPIKE = 0.6
 TX_LEAK = 0.6
-#: What a clean decode measures, well clear of what a carrier inside the
-#: channel leaves. A leak 20 kHz from the signal decodes as nothing at all; one
-#: exactly on it still decodes, but at 4 dB rather than the 46 this gets - so a
-#: decode alone does not prove the carriers were kept out, and this does.
-MIN_SNR_DB = 30.0
+#: Well clear of what a carrier inside the channel leaves. A leak 20 kHz from
+#: the signal decodes as nothing at all; one exactly on it still decodes, but
+#: at 4 dB - so a decode alone does not prove the carriers were kept out, and
+#: this does. Clean decodes measure 32-47 dB: EV1527 is the lowest, since its
+#: rows are shorter than the blocks the level into rtl_433 is set on, and the
+#: quiet blocks between them are raised more than the ones with pulses in.
+MIN_SNR_DB = 20.0
 
 EXPECTED = {
     'nexus_th': {'model': 'Nexus-TH', 'id': '181', 'reading': '19.0 °C'},
@@ -66,19 +83,21 @@ EXPECTED = {
 }
 
 
-def samples(profile, bursts=2):
+def samples(profile, bursts=2, amplitude=0.4):
     """What a HackRF tuned for the receiver would hand it, ``bursts`` times.
 
-    ``profile`` None is noise and the two carriers alone.
+    ``profile`` None is noise and the two carriers alone. The first gap is
+    long enough for the level into rtl_433 to have settled on the noise.
     """
     from apps.ismReceiver import LO_OFFSET
     from apps.ismXmitter import DEFAULT_OFFSET_KHZ, build_frame, default_fields
     gap = np.zeros(int(0.3 * RATE), np.complex64)
-    parts = [gap]
+    parts = [np.zeros(int(1.5 * RATE), np.complex64)]
     for _ in range(bursts if profile else 1):
         if profile:
             frame = build_frame(profile, default_fields(profile))
             parts.append(ism_frame.render(frame, fs=RATE,
+                                          amplitude=amplitude,
                                           offset_hz=LO_OFFSET)
                          .astype(np.complex64))
         parts.append(gap)
@@ -104,7 +123,8 @@ def install_source(iq):
                 gr.io_signature(0, 0, 0),
                 gr.io_signature(1, 1, gr.sizeof_gr_complex))
             self.src = blocks.vector_source_c(iq, False)
-            self.connect(self.src, self)
+            self.pace = blocks.throttle(gr.sizeof_gr_complex, PACE)
+            self.connect(self.src, self.pace, self)
 
         def __getattr__(self, attr):
             if attr.startswith('_'):
@@ -119,13 +139,15 @@ def install_source(iq):
     soapy.source = Source
 
 
-def run(app, profile):
+def run(app, profile, amplitude=0.4, freq_mhz=433.92, log_path=None):
     """Build the app on these samples, run them through, and return the
-    table's rows once rtl_433 has had its say."""
+    table's rows once rtl_433 has had its say, how many decodes there were,
+    and how many samples the pipe dropped."""
     import apps.ismReceiver as rx
-    install_source(samples(profile))
+    install_source(samples(profile, amplitude=amplitude))
     tb = rx.ismReceiver(config_values={
-        'radio_type': 'hackrf', 'frequency_mhz': 433.92, 'gain_percent': 30})
+        'radio_type': 'hackrf', 'frequency_mhz': freq_mhz, 'gain_percent': 30,
+        'log_path': log_path})
     tb.start()
     tb.wait()                          # the samples end, and so does this
     end = time.time() + 8
@@ -145,11 +167,11 @@ def run(app, profile):
                     for r in range(tb.table.rowCount())]
             break
         time.sleep(0.1)
-    decodes = tb.decodes
+    decodes, dropped = tb.decodes, tb.to_rtl_433.pipe.dropped
     tb.stop()
     tb.wait()
-    tb.decoder.close()
-    return rows, decodes
+    tb.shutdown()
+    return rows, decodes, dropped
 
 
 def main():
@@ -171,7 +193,11 @@ def main():
     names = args.profiles or sorted(EXPECTED)
     for name in names:
         want = EXPECTED[name]
-        rows, decodes = run(app, name)
+        rows, decodes, dropped = run(app, name)
+        if dropped:
+            print("  %-22s FAIL  %d samples dropped on the way to rtl_433"
+                  % (name, dropped))
+            ok = False
         hits = [r for r in rows if r[col['Device']] == want['model']
                 and r[col['ID']] == want['id']
                 and want['reading'] in r[col['Reading']]]
@@ -193,11 +219,37 @@ def main():
 
     if not args.profiles:
         print("\nNoise and the two carriers alone:")
-        rows, decodes = run(app, None)
+        rows, decodes, _dropped = run(app, None)
         quiet = not rows and decodes == 0
         print("  %-22s %-4s %d decode(s)"
               % ('nothing sent', "ok" if quiet else "FAIL", decodes))
         ok = ok and quiet
+
+        print("\nA weak burst, raised to rtl_433's level on the way in:")
+        rows, decodes, _dropped = run(app, 'nexus_th',
+                                      amplitude=WEAK_AMPLITUDE)
+        weak = any(r[col['Device']] == 'Nexus-TH' for r in rows)
+        print("  %-22s %-4s peak %.3f, %d decode(s)%s"
+              % ('nexus_th', "ok" if weak else "FAIL", WEAK_AMPLITUDE,
+                 decodes, '; SNR ' + ', '.join(sorted({r[col['SNR']]
+                                                       for r in rows}))
+                 if rows else ''))
+        ok = ok and weak
+
+        print("\nThe log, at 868.3 MHz:")
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, 'ism.jsonl')
+            run(app, 'nexus_th', freq_mhz=868.3, log_path=path)
+            with open(path) as fh:
+                logged = [json.loads(line) for line in fh]
+        freqs = sorted({round(float(r.get('freq', 0)), 1) for r in logged})
+        good = (bool(logged) and all('heard' in r for r in logged)
+                and all(r.get('model') == 'Nexus-TH' for r in logged)
+                and freqs == [868.3])
+        print("  %-22s %-4s %d line(s), labelled %s MHz"
+              % ('nexus_th', "ok" if good else "FAIL", len(logged),
+                 ', '.join('%g' % f for f in freqs) or '-'))
+        ok = ok and good
 
     print()
     print("RESULT:", "PASS" if ok else "FAIL")

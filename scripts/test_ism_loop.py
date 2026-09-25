@@ -266,7 +266,7 @@ def main():
                 proc.kill()
         receiver.stop()
         receiver.wait()
-        receiver.decoder.close()
+        receiver.shutdown()
 
     print("RESULT:", "PASS" if ok else "FAIL",
           "(every profile decoded at one level or more)" if ok else "")

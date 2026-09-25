@@ -713,13 +713,56 @@ proves the sink path and not the RF - there was nothing to receive with.
 ## The receiver: `apps/ismReceiver.py`
 
 **rtl_433 is the decoder, and it never touches a radio.** The app runs it
-as `rtl_433 -F json -M level -s 250k -r cf32:-` and writes the channel into
-its stdin through a `file_descriptor_sink`; a thread reads the JSON lines
-back and the window shows them in a table. So it works with whichever radio
-Settings name - HackRF, USRP or BB60D - and needs no RTL-SDR at all, which
-is what let it be built and tested before one arrived. Fed a live stream,
-rtl_433 prints a decode within about half a second of the burst ending: it
-reads its stdin in 262144-byte blocks, 0.13 s of `cf32` at 250 kS/s.
+as `rtl_433 -r cf32:- -f <freq> -s 250k -F json -M level -M protocol` and
+writes the channel into its stdin; a thread reads the JSON lines back and
+the window shows them in a table. So it works with whichever radio Settings
+name - HackRF, USRP or BB60D - and needs no RTL-SDR at all, which is what
+let it be built and tested before one arrived. Fed a live stream, rtl_433
+prints a decode within about half a second of the burst ending: it reads
+its stdin in 262144-byte blocks, 0.13 s of `cf32` at 250 kS/s.
+
+**What it is fed is raised to an RTL-SDR's level, and that is worth 10 dB.**
+rtl_433 judges its samples on an 8-bit RTL-SDR's scale, where the noise is a
+few steps of 8 bits. At the noise level a HackRF at 40 % gives the channel,
+0.003 of full scale, a burst needed a peak of 0.05 to decode at all however
+clean it was - the same samples decoded at their own scale and gave nothing
+at a third of it. With the noise raised to 0.03 the same burst decodes down
+to 14 dB SNR rather than 24. Over the air the loop went from decoding to
+−30 dBm (Nexus once at −40) to decoding all four at −40 and two at −50, at
+13-15 dB SNR. The gain puts the noise - the 20th percentile of the last two
+seconds, so bursts do not count - at 0.03, moves a fifth of the way there
+each 8192 samples, never turns anything down, and holds each block's peak
+under 0.9: rtl_433 lost an on-off burst driven past full scale, too. Found
+in fm-receiver, and ported from its `rtl433.py`, as is the next paragraph.
+The test's weak burst - peak 0.016, 17 dB over the noise - decodes with it
+and not without.
+
+**Raised marginal bursts also decode as the wrong model, sometimes.** At the
+edge the loop gave `Secplus-v1` once beside EV1527's own decodes, and
+`TFA-303221` once beside LaCrosse's - the model the four-repeat puzzle below
+produces. The right model was decoded at every level where either
+appeared, but near the limit the table can carry a stray row. Each decode's
+SNR is in the table for exactly this.
+
+**The pipe never holds up the radio.** rtl_433's stdin is non-blocking and
+1 MB deep, half a second. A write that would block is left pending, and
+while it is, whole blocks of samples are dropped and counted - never part
+of one, so what rtl_433 does get keeps its timing. A blocking write would
+stall the flowgraph instead and overflow the radio. The status line says
+how much was dropped; the offline test, at twice real time, drops nothing.
+
+**`-f` comes before `-s`, and a retune starts a new rtl_433.** The frequency
+only labels what is decoded - rtl_433 tunes nothing here - but without it
+every decode said 433.92 MHz wherever it came from. Above 800 MHz a `-f`
+*after* `-s` puts the rate back to rtl_433's own default there and nothing
+decodes (found in fm-receiver); rtl_433 then prints "New defaults active",
+which is harmless with the `-s` after it. rtl_433 cannot be told a new
+frequency, so a retune starts another on it and points the pipe there.
+
+**It can log every decode**, as a line of JSON with the time it was heard,
+to `ism-<date>-<time>.jsonl` in the media folder - a box in the dialog. A
+level sweep can then be graded from the file rather than read off a
+screen.
 
 **250 kS/s is what it is handed**, rtl_433's own default and the rate every
 decoder is tested at. The radio runs at 2 MS/s (2.5 on a BB60D) and a
@@ -739,7 +782,9 @@ All four profiles decode at about 46 dB SNR, and noise with the carriers
 decodes as nothing. Moved inside the channel, the leak did two different
 things: 20 kHz from the signal, where it beats against it, nothing decoded
 at all; exactly on the signal, one burst of two still decoded - at 4 dB. So
-the test also demands 30 dB of SNR, which is why `-M level` is on.
+the test also demands 20 dB of SNR, which is why `-M level` is on. Clean
+decodes measure 32-47 dB; EV1527 is lowest, since its rows are shorter than
+the blocks the level into rtl_433 is set on.
 
 **Copies of one frame are one row.** A sensor sends its frame several times
 and some decoders report every copy - EV1527 came back eight times from two
@@ -792,6 +837,17 @@ broadcast FM alone, 70 % clips. `scripts/test_ism_loop.py`:
 | −30 dBm | 3, 27 dB | 5, 36 dB | 5, 27 dB | 3, 35 dB |
 | −40 dBm | 0 | 0 | 0 | 1, 26 dB |
 | −50 and below | 0 | 0 | 0 | 0 |
+
+That is before the samples were raised to rtl_433's level. After, the same
+bench, antennas and gain:
+
+| VSG | Acurite | EV1527 | LaCrosse | Nexus |
+|---|---|---|---|---|
+| −20 dBm | 4, 36 dB | 5, 36 dB | 3, 35 dB | 3, 36 dB |
+| −30 dBm | 3, 26 dB | 5, 36 dB | 4, 35 dB | 2, 33 dB |
+| −40 dBm | 4, 15 dB | 3, 15 dB | 1, 14 dB | 2, 24 dB |
+| −50 dBm | 1, 14 dB | 1, 15 dB | 0 | 0 |
+| −60 and below | 0 | 0 | 0 | 0 |
 
 **Only with the VSG60 in a process of its own.** Every first attempt at the
 HackRF loop decoded nothing, at any level and any gain, and the reason was

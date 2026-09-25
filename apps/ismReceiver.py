@@ -24,6 +24,7 @@ if __name__ == '__main__':
             print("Warning: failed to XInitThreads()")
 
 import collections
+import fcntl
 import json
 import os
 import shutil
@@ -33,6 +34,7 @@ import sys
 import threading
 import time
 
+import numpy as np  # type: ignore
 from gnuradio import blocks, filter, gr, qtgui, soapy, uhd  # type: ignore
 from gnuradio.fft import window  # type: ignore
 from gnuradio.filter import firdes  # type: ignore
@@ -83,12 +85,36 @@ TRIGGER_OVER_FLOOR = 4.0
 
 RTL_433 = shutil.which('rtl_433')
 
+#: The level rtl_433 is fed at. It judges its samples on an 8-bit RTL-SDR's
+#: scale, where the noise is a few steps of 8 bits: the same HackRF samples
+#: that decoded at their own scale - noise 0.003 of full scale - decoded
+#: nothing at a third of it, and a clean burst needed a peak of 0.05 there
+#: however far it stood over the noise. With the noise raised to 0.03 the
+#: same burst decoded down to 14 dB SNR rather than 24. So the samples are
+#: raised until the noise is ``NOISE_LEVEL``, never turned down, and never
+#: past ``PEAK``: rtl_433 lost an on-off burst driven past full scale too.
+#: Found in, and ported from, fm-receiver's rtl433.py.
+NOISE_LEVEL = 0.03
+MAX_GAIN = 1e5
+PEAK = 0.9
+#: The noise is the 20th percentile of the RMS of the last ``NOISE_CHUNKS``
+#: chunks of ``NOISE_CHUNK`` samples - two seconds at 250 kS/s - judged from
+#: every ``LEVEL_STRIDE``-th sample, so a burst counts only if it fills most
+#: of that. The gain moves a fifth of the way there, in dB, each chunk.
+NOISE_CHUNK = 8192
+NOISE_CHUNKS = 64
+NOISE_PERCENTILE = 20
+LEVEL_STRIDE = 16
+#: What may wait in the pipe to rtl_433 before samples are dropped: 1 MB,
+#: half a second at 250 kS/s, rather than Linux's 64 kB.
+PIPE_BYTES = 1 << 20
+
 #: What the table shows in a column of its own, and what it leaves out of the
 #: reading because rtl_433 adds it to every row rather than the device
 #: sending it.
 _OWN_COLUMN = ('model', 'id', 'channel')
 _NOT_THE_READING = ('time', 'mod', 'freq', 'freq1', 'freq2', 'rssi', 'snr',
-                    'noise', 'mic')
+                    'noise', 'mic', 'protocol')
 _UNITS = {'temperature_C': ('%.1f °C', 'temperature'),
           'temperature_F': ('%.1f °F', 'temperature'),
           'humidity': ('%g %%', 'humidity'),
@@ -130,11 +156,129 @@ def reading_text(row):
     return ', '.join(parts)
 
 
+def log_path(folder):
+    """A new decode log's path in ``folder``, named for when it began."""
+    return os.path.join(folder, time.strftime('ism-%Y%m%d-%H%M%S.jsonl'))
+
+
 def same_transmission(row):
     """The part of a decode that is the device's, for spotting repeats: two
     copies of one frame differ only in rtl_433's timing and level."""
     return json.dumps({k: v for k, v in row.items()
                        if k not in _NOT_THE_READING}, sort_keys=True)
+
+
+class Pipe:
+    """The channel's samples, raised to rtl_433's level, into its stdin
+    without ever holding up the radio.
+
+    A write that would block is left pending; while one is, whole blocks are
+    dropped and counted rather than part of one, so what rtl_433 does get
+    keeps its timing - which, for OOK, is the message. A blocking write
+    would instead stall the flowgraph, and the radio would overflow. Ported
+    from fm-receiver's ``rtl433.Pipe``; see ``NOISE_LEVEL`` for why the
+    level matters.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._fd = None
+        self._pending = b''
+        self._rms = collections.deque(maxlen=NOISE_CHUNKS)
+        self._power = 0.0
+        self._counted = 0
+        self.gain = None          # what puts the noise at NOISE_LEVEL
+        self.applied = None       # what the last block got, PEAK-limited
+        self.noise = None         # the noise's RMS, before any gain
+        self.sent = 0
+        self.dropped = 0
+
+    def level(self, x):
+        sub = x[::LEVEL_STRIDE]
+        self._power += float(np.vdot(sub, sub).real)
+        self._counted += len(sub)
+        if self._counted * LEVEL_STRIDE >= NOISE_CHUNK:
+            rms = float(np.sqrt(self._power / self._counted))
+            self._power, self._counted = 0.0, 0
+            if rms > 0:
+                self._rms.append(rms)
+            if self._rms:
+                ranked = sorted(self._rms)
+                noise = self.noise = ranked[len(ranked) * NOISE_PERCENTILE // 100]
+                want = (min(max(NOISE_LEVEL / noise, 1.0), MAX_GAIN)
+                        if noise > 0 else 1.0)
+                self.gain = (want if self.gain is None
+                             else self.gain * (want / self.gain) ** 0.2)
+        gain = self.gain or 1.0
+        iq = x.view(np.float32)
+        peak = max(float(iq.max()), -float(iq.min())) if len(iq) else 0.0
+        if peak * gain > PEAK:
+            gain = max(1.0, PEAK / peak)
+        self.applied = gain
+        y = x * np.float32(gain)
+        if peak * gain > 1.0:                  # a radio at full scale: as it is
+            view = y.view(np.float32)
+            np.clip(view, -1.0, 1.0, out=view)
+        return y
+
+    def set_fd(self, fd):
+        """Where the samples go from now on - a new rtl_433 after a retune.
+        What was pending for the last one is dropped."""
+        with self._lock:
+            self._fd = fd
+            self._pending = b''
+
+    def _flush(self):
+        try:
+            while self._pending:
+                n = os.write(self._fd, self._pending)
+                self._pending = self._pending[n:]
+        except BlockingIOError:
+            pass
+        except OSError:                        # rtl_433 has gone
+            self._fd = None
+            self._pending = b''
+
+    def feed(self, x):
+        n = len(x)
+        with self._lock:
+            if self._fd is None or not n:
+                return
+            if self._pending:
+                self._flush()
+            if self._pending:
+                self.dropped += n
+            else:
+                self._pending = memoryview(self.level(x)).cast('B')
+                self.sent += n
+                self._flush()
+
+
+class rtl433_pipe(gr.sync_block):
+    """The flowgraph's end: every block of the channel into a :class:`Pipe`."""
+
+    def __init__(self):
+        gr.sync_block.__init__(self, name='rtl433_pipe',
+                               in_sig=[np.complex64], out_sig=None)
+        self.pipe = Pipe()
+        # Bigger blocks, fewer calls: each costs about the same whatever its
+        # size. 4096 samples is 16 ms at 250 kS/s.
+        self.set_min_noutput_items(4096)
+
+    def work(self, input_items, output_items):
+        self.pipe.feed(input_items[0])
+        return len(input_items[0])
+
+
+def rtl_433_command(rate, freq_hz):
+    """rtl_433 on a pipe of ``cf32``. **-f before -s**: over 800 MHz a -f
+    after it puts the rate back to rtl_433's own default there, and nothing
+    at 868 or 915 MHz decodes (found in fm-receiver). The frequency only
+    labels what is decoded - rtl_433 tunes nothing here - but without it
+    every decode says 433.92 MHz wherever it came from."""
+    return [RTL_433, '-r', 'cf32:-', '-f', str(int(round(freq_hz))),
+            '-s', str(int(round(rate))), '-F', 'json',
+            '-M', 'level', '-M', 'protocol']
 
 
 class Rtl433:
@@ -143,12 +287,15 @@ class Rtl433:
     It is given ``cf32`` on stdin and prints one JSON object per decode. A
     thread reads those as they come and queues them for the Qt thread; the
     window never waits on it. Nothing else of rtl_433's is used - no device,
-    no tuning - so it runs the same with any radio in Settings.
+    no tuning - so it runs the same with any radio in Settings. ``log``, an
+    open file, gets every decode as a line of JSON with the time it was
+    heard; it is the caller's, and outlives this rtl_433 across a retune.
     """
 
-    def __init__(self, rate):
+    def __init__(self, rate, freq_hz, log=None):
         self.rows = collections.deque(maxlen=MAX_ROWS)
         self.lock = threading.Lock()
+        self.log = log
         self.proc = None
         self.fd = None
         self.error = None
@@ -160,13 +307,16 @@ class Rtl433:
         # table of readings cannot say by itself: whether it was close to
         # missing it.
         self.proc = subprocess.Popen(
-            [RTL_433, '-F', 'json', '-M', 'level', '-s', str(int(rate)),
-             '-r', 'cf32:-'],
+            rtl_433_command(rate, freq_hz),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, bufsize=0)
-        # A duplicate for the flowgraph's file sink, which closes whatever it
-        # is handed; the pipe's own descriptor stays this object's to close.
-        self.fd = os.dup(self.proc.stdin.fileno())
+        self.fd = self.proc.stdin.fileno()
+        os.set_blocking(self.fd, False)          # see Pipe
+        if hasattr(fcntl, 'F_SETPIPE_SZ'):
+            try:
+                fcntl.fcntl(self.fd, fcntl.F_SETPIPE_SZ, PIPE_BYTES)
+            except OSError:
+                pass
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
 
@@ -175,16 +325,29 @@ class Rtl433:
         for raw in proc.stdout:
             line = raw.decode('utf-8', 'replace').strip()
             if not line.startswith('{'):
+                # Its banner, and a notice that -f above 800 MHz changes
+                # its defaults - the -s after it puts the rate back.
                 if line and not line.startswith(('rtl_433 version',
-                                                 'Use "-F log"')):
+                                                 'Use "-F log"',
+                                                 'New defaults active')):
                     print("rtl_433: " + line, file=sys.stderr)
                 continue
             try:
                 row = json.loads(line)
             except ValueError:
                 continue
+            heard = time.time()
             with self.lock:
-                self.rows.append((time.time(), row))
+                self.rows.append((heard, row))
+                if self.log is not None:
+                    try:
+                        self.log.write(json.dumps(
+                            {'heard': round(heard, 3), **row}) + '\n')
+                        self.log.flush()
+                    except (OSError, ValueError) as exc:
+                        print("ISM receiver: stopped logging: %s" % exc,
+                              file=sys.stderr)
+                        self.log = None
         code = proc.wait()
         if not self._closing and code != 0:
             self.error = "rtl_433 stopped (exit %s)" % code
@@ -311,6 +474,16 @@ class ConfigDialog(Qt.QDialog):
         note.setWordWrap(True)
         self.layout.addWidget(note)
 
+        self.media_dir = read_settings().get('media_directory', '')
+        self.log_check = Qt.QCheckBox(
+            "Log every decode to a file in the media folder")
+        self.log_check.setToolTip(
+            "One line of JSON per decode, with the time it was heard: "
+            "ism-<date>-<time>.jsonl in %s"
+            % (self.media_dir or "the media folder, once Settings names one"))
+        self.log_check.setEnabled(bool(self.media_dir))
+        self.layout.addWidget(self.log_check)
+
     def update_ok_state(self):
         ok = self.button_box.button(Qt.QDialogButtonBox.Ok)
         enabled = self.radio_type != 'usrp' or bool(self.usrp_ip)
@@ -336,6 +509,7 @@ class ConfigDialog(Qt.QDialog):
         restore = [
             ('frequency_mhz', lambda v: self.cf_chooser.setValue(float(v))),
             ('gain_percent', lambda v: self.gain_slider.setValue(int(v))),
+            ('log_decodes', lambda v: self.log_check.setChecked(bool(v))),
         ]
         for key, apply in restore:
             if key in config:
@@ -350,6 +524,7 @@ class ConfigDialog(Qt.QDialog):
             'radio_type': self.radio_type,
             'frequency_mhz': self.cf_chooser.value(),
             'gain_percent': self.gain_slider.value(),
+            'log_decodes': self.log_check.isChecked(),
         })
 
     def accept(self):
@@ -362,6 +537,9 @@ class ConfigDialog(Qt.QDialog):
             'ipXmitAddr': self.usrp_ip if self.radio_type == 'usrp' else '',
             'frequency_mhz': self.cf_chooser.value(),
             'gain_percent': self.gain_slider.value(),
+            'log_path': (log_path(self.media_dir)
+                         if self.log_check.isChecked() and self.media_dir
+                         else None),
         }
 
 
@@ -416,7 +594,18 @@ class ismReceiver(gr.top_block, Qt.QWidget):
         self.gain_percent = float(values.get('gain_percent', 30))
         self.usrp_ip = values.get('ipXmitAddr', '')
         self.samp_rate = SAMPLE_RATES.get(self.radio_type, 2e6)
-        self.decoder = Rtl433(DECODE_RATE)
+        self.log_path = values.get('log_path') or None
+        self.log = None
+        if self.log_path:
+            try:
+                os.makedirs(os.path.dirname(self.log_path) or '.',
+                            exist_ok=True)
+                self.log = open(self.log_path, 'a')
+            except OSError as exc:
+                print("ISM receiver: cannot log to %s: %s"
+                      % (self.log_path, exc), file=sys.stderr)
+                self.log_path = None
+        self.decoder = Rtl433(DECODE_RATE, self.freq_mhz * 1e6, self.log)
         self.decodes = 0
         self._floors = collections.deque(maxlen=20)
         self._trigger = None
@@ -521,13 +710,11 @@ class ismReceiver(gr.top_block, Qt.QWidget):
             firdes.low_pass(1.0, samp_rate, CHANNEL_HZ, 30e3),
             LO_OFFSET, samp_rate)
         self.connect(self.radio_source, self.channel)
-        if self.decoder.fd is not None:
-            self.to_rtl_433 = blocks.file_descriptor_sink(
-                gr.sizeof_gr_complex, self.decoder.fd)
-            self.connect(self.channel, self.to_rtl_433)
-        else:
-            self.to_rtl_433 = blocks.null_sink(gr.sizeof_gr_complex)
-            self.connect(self.channel, self.to_rtl_433)
+        # Into rtl_433 raised to its level, and never waiting on it - see
+        # Pipe. With no rtl_433 the samples simply go nowhere.
+        self.to_rtl_433 = rtl433_pipe()
+        self.to_rtl_433.pipe.set_fd(self.decoder.fd)
+        self.connect(self.channel, self.to_rtl_433)
 
         self._build_envelope()
         self._build_spectrum(lo_hz)
@@ -623,6 +810,16 @@ class ismReceiver(gr.top_block, Qt.QWidget):
             self.radio_source.set_frequency(0, lo_hz)
         self.spectrum.set_frequency_range(lo_hz, self.samp_rate)
         self._floors.clear()
+        # rtl_433 labels every decode with the frequency it was started on,
+        # and has no way to be told another: start one on the new frequency
+        # and point the pipe at it. What the old one had not yet reported
+        # still comes out of take() below, from its own queue.
+        old = self.decoder
+        self.decoder = Rtl433(DECODE_RATE, self.freq_mhz * 1e6, self.log)
+        self.to_rtl_433.pipe.set_fd(self.decoder.fd)
+        for heard, row in old.take():
+            self._add_row(heard, row)
+        old.close()
 
     def clear(self):
         self.table.setRowCount(0)
@@ -641,6 +838,12 @@ class ismReceiver(gr.top_block, Qt.QWidget):
             text = ("Listening at %.2f MHz.  %d decode%s."
                     % (self.freq_mhz, self.decodes,
                        '' if self.decodes == 1 else 's'))
+            pipe = self.to_rtl_433.pipe
+            if pipe.dropped:
+                text += ("  %.1f s of samples dropped: rtl_433 fell behind."
+                         % (pipe.dropped / DECODE_RATE))
+            if self.log_path:
+                text += "  Logging to %s." % self.log_path
         self.status.setText(text)
 
     def _follow_floor(self):
@@ -689,8 +892,16 @@ class ismReceiver(gr.top_block, Qt.QWidget):
         self.status_timer.stop()
         self.stop()
         self.wait()
-        self.decoder.close()
+        self.shutdown()
         event.accept()
+
+    def shutdown(self):
+        """rtl_433 ended and the log closed, once the flowgraph has stopped."""
+        self.decoder.close()
+        if self.log is not None:
+            self.decoder.log = None
+            self.log.close()
+            self.log = None
 
 
 def main(top_block_cls=ismReceiver, options=None, app=None, config_values=None):
@@ -708,7 +919,7 @@ def main(top_block_cls=ismReceiver, options=None, app=None, config_values=None):
     def sig_handler(sig=None, frame=None):
         tb.stop()
         tb.wait()
-        tb.decoder.close()
+        tb.shutdown()
         Qt.QApplication.quit()
 
     signal.signal(signal.SIGINT, sig_handler)
