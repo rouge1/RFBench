@@ -870,6 +870,76 @@ called a 64 dB carrier absent.
 `QTableView` and `QHeaderView` are now in `_FLOWGRAPH_BASE_QSS`, a well
 with a panel-coloured header.
 
+## Across frequency: fm-receiver's decoder at 315, 433.92 and 915 MHz
+
+**Above 800 MHz rtl_433 23.11 needs `-Y classic`, and `-s` alone is not
+enough.** A `-f` over 800 MHz turns on what rtl_433 calls its new defaults
+("New defaults active, use "-Y classic -s 250k" if you need the old
+defaults"). `-f` before `-s` puts the sample rate right - `-s` first
+decodes nothing at all - but the rest stays on, and on-off frames decode
+badly. Same samples, same command line, only `-f` changed: EV1527 8 of 8
+at 433.92 MHz, 2 of 8 at 915; Acurite 6, then 5. `-Y classic` gives back
+all eight at 868 and 915 and changes nothing at 315 or 433.92, where the
+new defaults never come on. A file named `_915M_250k.cf32` and read
+without `-f` is not affected, which is why the file tests never saw it.
+
+**`ismReceiver` has this too, and is not fixed yet**: its command line
+(`rtl_433_command`) is fm-receiver's, `-f` then `-s` and no `-Y classic`.
+It has only been run on the air at 433.92 MHz.
+
+**The sweep.** The VSG60 here, `scripts/test_ism_loop.py --transmit-only
+--timetable`, into a BB60D on `worklaptop1` running fm-receiver (commit
+`0b003b7`) headless in its rtl_433 mode, logging every decode as JSON;
+`--grade` read the logs against the timetable. Antenna to antenna, all
+four devices, −20 to −80 dBm, 8 s a level, three frequencies and fm-receiver's
+three Widths - Whole band (slices of 250 kHz, each rtl_433 at 500 kS/s),
+250 kHz at the tuner, 1 MHz at the tuner. 1110 decodes over both runs,
+every one the right model, id and reading. The lowest level all four
+decoded at, and rtl_433's SNR there:
+
+| | Whole band | 250 kHz at the tuner | 1 MHz at the tuner |
+|---|---|---|---|
+| 315 MHz | −40 dBm, 16-17 dB | −40 dBm, 19-20 dB | −30 dBm (Acurite −40); Nexus at 8 dB |
+| 433.92 MHz | −30 dBm, 17 dB (Nexus 12) | −30 dBm, 19-20 dB | −20 dBm (Acurite, Nexus −30); Nexus at 7-8 dB |
+| 915 MHz | Acurite and EV1527 never; Nexus once | −40 dBm, 14-15 dB | nothing at any level |
+| 915 MHz, `-Y classic` | −30 dBm, 22 dB (Nexus 15) | - | −30 dBm, 18-19 dB; Nexus at 8 dB |
+
+The last row was run with a control - Whole band without `-Y classic`,
+straight after - which failed as the first sweep had, so the recovery is
+the option and not the bench.
+
+- **Compare frequencies in SNR and dBFS, not in the VSG's dBm.** The two
+  antennas couple about 10 dB differently at each of these, and at 2.4 GHz
+  so badly that −20 dBm arrived at the noise floor: nothing decoded, and
+  the receiver was set up right. Where decoding stopped, 14-20 dB of
+  rtl_433's SNR, is the same at every frequency once the options are.
+- **1 MHz at the tuner costs about 10 dB for these sensors** at every
+  frequency, and Nexus reads 7-9 dB of SNR even when it is strong. The
+  width is there for the wide FSK sensors of 868 and 915; for a narrow
+  on-off one, 250 kHz is the setting.
+- **A decode is logged when its burst ends**, a second after it began and
+  later through the pipe, so the first moments of each level hold the
+  last level's bursts - at a level 10 dB below the limit, exactly one
+  decode at exactly the previous level's dBFS. `--grade` leaves out the
+  first `--guard` seconds, 1.5 by default.
+- **One sweep:** receiver first, then the transmitter, then grade.
+
+```sh
+# worklaptop1, in the fm-receiver checkout, with a config of its own:
+FMRX_CONFIG=/tmp/sweep/config.json QT_QPA_PLATFORM=offscreen timeout -k 10 305 \
+    ./fm-receiver --radio bb60 --rtl433-freq 915 --no-audio --no-save --quit-after 275
+# here, 15 s later:
+timeout -k 10 260 python scripts/test_ism_loop.py --transmit-only --freq 915 \
+    --levels=-20,-30,-40,-50,-60,-70,-80 --seconds 8 \
+    --timetable sweep.jsonl --label whole
+python scripts/test_ism_loop.py --grade rtl_433-*.jsonl --timetable sweep.jsonl
+```
+
+The config is the user's own with `rtl433_log` true, `recording_dir` a
+throwaway folder, `rtl433_width_khz` 0, 250 or 1000, and `rtl433_args` for
+anything extra - `FMRX_CONFIG` is how fm-receiver's tests keep off the
+user's file. The two machines' clocks, both on NTP, agreed to 0.2 s.
+
 ## Prior art
 
 **Synthesise; do not replay, and do not go looking for a module.**

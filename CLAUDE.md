@@ -114,6 +114,11 @@ damage something. Each links to the why.
   +15 dBm below 2170 MHz. A bare cable from its TX to any receiver here is
   15-20 dB over the damage threshold: 20-30 dB of pad goes in first.
   [ism](devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna)
+- **rtl_433 above 800 MHz needs `-Y classic`** as well as `-f` before
+  `-s`: a `-f` there turns on its new defaults, which `-s` does not undo,
+  and on-off sensors at 868 and 915 MHz mostly stop decoding.
+  `ismReceiver` does not pass it yet.
+  [ism](devnotes/ism.md#across-frequency-fm-receivers-decoder-at-315-43392-and-915-mhz)
 - **Keep a Python reference to every Python block** in a running flowgraph,
   or the process segfaults with no Python frame to say why.
   [rds](devnotes/rds.md#fm--rds-transmitter)
