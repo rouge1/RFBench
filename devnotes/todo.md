@@ -23,9 +23,9 @@ not here.
   twelve all decode correctly. Needs no hardware - it is reading
   rtl_433's decoder dispatch. See
   [ism](ism.md#the-encoder-appsism_framepy).
-- Run `ismReceiver` itself on a real radio: the transmitter is proven over
-  a cable into a BB60D, but through another app's rtl_433. Either the
-  HackRF here (the cable goes to its ANTENNA port) or `ismReceiver` on
-  `worklaptop1` with the BB60D - and repeat the level sweep there with the
-  gain fixed and the pad written down. See
-  [ism](ism.md#the-receiver-appsismreceiverpy).
+- Find out why a VSG60 opened after a HackRF in one process transmits
+  nothing, and whether a HackRF app closed earlier in a launcher session
+  is enough to cause it. See [radios](radios.md#vsg60-notes).
+- Put the ISM loop on a cable with a known pad, so the level where each
+  device stops decoding means something about the radios rather than about
+  two antennas on a bench. See [ism](ism.md#the-receiver-appsismreceiverpy).

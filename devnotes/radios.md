@@ -88,13 +88,18 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   −120 dBm: repeat starts, `waveform_active()` reads True, `stop_waveform()`
   clears it, `send_waveform()` returns only when the burst has gone.
 
-- **A VSG60 and a HackRF do stream together on one host**, unlike a VSG60
-  and a BB60D - measured on one powered hub, the HackRF on its USB 2 side
-  and the VSG on its USB 3 side. The HackRF received 99.1 FM at 1.999 MS/s
-  with the VSG streaming 2.00 MS/s beside it, and at the same rate
-  without; RDS groups came at 8-10 a second either way, the pilot stayed
-  locked at 38-40 dB, and no overflow was reported. RDS quality did vary
-  over the run, but its worst stretch was after the VSG had stopped.
+- **A VSG60 and a HackRF stream together on one host - in two processes.**
+  Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
+  its USB 3 side: the HackRF received 99.1 FM at 1.999 MS/s with the VSG
+  streaming 2.00 MS/s beside it, RDS groups at 8-10 a second either way,
+  the pilot locked at 38-40 dB, no overflow. **In one process the VSG goes
+  silent if the HackRF was opened first**: it still takes every sample at
+  full rate and reports nothing wrong, but transmits nothing - not even its
+  own LO leak. Opened VSG first, a −20 dBm carrier arrived 64 dB over the
+  noise. Not understood; the libusb below is the suspect. The launcher runs
+  one app at a time, so it is only a test script that meets this - and
+  whether a HackRF app closed earlier in a launcher session leaves enough
+  behind to do it is not known. [ism](ism.md#the-receiver-appsismreceiverpy)
 
 - **Its library brings its own libusb, and it wins.** `libvsg_api.so`
   links `/opt/sceptre/lib/libusb-1.0.so.0`, older than the environment's,

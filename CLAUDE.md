@@ -107,6 +107,10 @@ damage something. Each links to the why.
   process**: `libvsg_api.so` brings an older libusb that everything after it
   binds to, and SoapySDR's RTL module fails with a printed `undefined
   symbol` and no exception. [ism](devnotes/ism.md#the-rtl-sdr-as-a-receiver)
+- **A VSG60 opened in a process where a HackRF is already streaming
+  transmits nothing**, while taking every sample and reporting no error.
+  Give the VSG a process of its own, or open it first.
+  [radios](devnotes/radios.md#vsg60-notes)
 - **A HackRF's maximum receive input is −5 dBm**, and it transmits +10 to
   +15 dBm below 2170 MHz. A bare cable from its TX to any receiver here is
   15-20 dB over the damage threshold: 20-30 dB of pad goes in first.
@@ -322,8 +326,8 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 | `atscXmitter.py` | ATSC digital TV transmitter | ✅ |
 | `atscReceiver.py` | ATSC digital TV receiver - decodes the transport stream | ✅ |
 | `rdsReceiver.py` | RDS/RBDS receiver - decodes FM station data | ✅ |
-| `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ VSG60 over a cable to a BB60D: all four devices decode |
-| `ismReceiver.py` | ISM receiver - any radio in Settings, decoded by rtl_433 on a pipe | ✅ offline; no radio yet |
+| `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ VSG60 over the air into a BB60D and into `ismReceiver`: all four devices decode |
+| `ismReceiver.py` | ISM receiver - any radio in Settings, decoded by rtl_433 on a pipe | ✅ HackRF, over the air from the VSG60 |
 | `fmRdsTransmitter.py` | FM broadcast transmitter with RDS | ✅ |
 
 ### Adding a New Application

@@ -6,15 +6,18 @@
     python scripts/test_ism_loop.py --seconds 10
     python scripts/test_ism_loop.py nexus_th --transmit-only --seconds 10
 
-Both apps, built as the launcher builds them, in one process: ``ismXmitter``
-on the VSG60 and ``ismReceiver`` on a HackRF, joined by a cable. For each
+Both apps, built as the launcher builds them: ``ismReceiver`` on a HackRF in
+this process, and ``ismXmitter`` on the VSG60 in a second one - this script
+again, with ``--transmit-only``. Not one process: a VSG60 opened after a
+HackRF in the same process transmits nothing at all. For each
 profile the VSG steps down through ``--levels`` and the receiver counts how
 many bursts rtl_433 decoded as the right device, with what SNR - so it says
 both that the loop works and where it stops working.
 
-**Cable it before running it**: VSG60 RF out, through 20-30 dB of pad, into
-the HackRF's antenna port. The VSG's calibrated level is what makes this a
-measurement, and even so this refuses anything above ``MAX_LEVEL_DBM`` - a
+**Connect the two first**: VSG60 RF out into the HackRF's antenna port
+through 20-30 dB of pad, or an antenna on each. It has been run on two
+antennas, which decoded to about −40 dBm; a cable is what makes the levels a
+measurement. Either way this refuses anything above ``MAX_LEVEL_DBM`` - a
 HackRF's receive input is damaged above -5 dBm and the VSG60 reaches +10. See
 [ism](../devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).
 
@@ -32,8 +35,12 @@ for that, and it will still turn the VSG off if it fires.
 import argparse
 import functools
 import os
+import queue
+import re
 import signal
+import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,13 +79,12 @@ def pump(app, seconds):
 
 
 def radios_present():
-    """Why the loop cannot run, or None."""
-    from apps import vsg_sink
+    """Why the receiving half cannot run, or None.
+
+    Only the HackRF: the VSG60's library is never loaded in this process,
+    since the transmitter runs in a process of its own - see main().
+    """
     problems = []
-    if not vsg_sink.is_available() or not vsg_sink.find_devices():
-        problems.append("no VSG60 found")
-    elif vsg_sink.in_use():
-        problems.append("the VSG60 is in use by another process")
     try:
         import SoapySDR
         if not SoapySDR.Device.enumerate('driver=hackrf'):
@@ -86,6 +92,19 @@ def radios_present():
     except Exception as exc:
         problems.append("SoapySDR cannot look for a HackRF: %s" % exc)
     return '; '.join(problems) or None
+
+
+def transmit(args, name, levels):
+    """This script again, as the VSG half alone, for one profile."""
+    return subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), name, '--transmit-only',
+         '--seconds', str(args.seconds), '--freq', str(args.freq),
+         '--levels=' + ','.join('%g' % level for level in levels)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        bufsize=1)
+
+
+_LEVEL_LINE = re.compile(r'^\s+\d\d:\d\d:\d\d\s+(-?[\d.]+) dBm')
 
 
 def count(rows, model, ident):
@@ -185,44 +204,66 @@ def main():
     receiver.apply_gain()
     pump(app, 1.0)
 
+    # The VSG runs in a process of its own. Opened in this one after the
+    # HackRF is streaming, it takes every sample and transmits none of them
+    # - measured, and not understood; see devnotes/radios.md. Its timetable
+    # comes back on its stdout, and each line is stamped as it arrives.
     ok = True
+    proc = None
     try:
         for name in args.profiles or sorted(EXPECTED):
             model, ident = EXPECTED[name]
-            fields = tx.default_fields(name)
-            transmitter = tx.ismXmitter(config_values={
-                'radio_type': 'vsg', 'cf': args.freq, 'pwr': 0,
-                'profile': name, 'fields': fields,
-                'interval_s': INTERVAL_S,
-                'offset_khz': tx.DEFAULT_OFFSET_KHZ})
-            burst_s = transmitter.frame.duration_us * 1e-6
-            expected = args.seconds / (burst_s + INTERVAL_S + 0.005)
-            transmitter.start()
+            burst_s = tx.build_frame(name, tx.default_fields(name)) \
+                .duration_us * 1e-6
             print("%s (%s), a %.0f ms burst every %.1f s - about %.0f per "
                   "level:" % (name, model, burst_s * 1e3, INTERVAL_S,
-                              expected))
+                              args.seconds / (burst_s + INTERVAL_S + 0.005)))
+            lines = queue.Queue()
+            proc = transmit(args, name, levels)
+            threading.Thread(
+                target=lambda p=proc: [lines.put((time.time(), line))
+                                       for line in p.stdout],
+                daemon=True).start()
+            receiver.decoder.take()                  # nothing from before
+            marks, rows = [], []
+            while proc.poll() is None or not lines.empty():
+                pump(app, 0.1)
+                rows += receiver.decoder.take()
+                while not lines.empty():
+                    at, line = lines.get()
+                    match = _LEVEL_LINE.match(line)
+                    if match:
+                        marks.append((at, float(match.group(1))))
+                    elif line.strip().endswith(' off'):
+                        marks.append((at, None))
+                    elif line.startswith('Cannot'):
+                        print("  " + line.strip())
+            pump(app, 1.0)                           # the last package's end
+            rows += receiver.decoder.take()
+            proc = None
             heard_any = False
-            try:
-                for level in levels:
-                    transmitter.radio_sink.set_level(level)
-                    pump(app, 0.3)
-                    receiver.decoder.take()          # nothing from before
-                    pump(app, args.seconds)
-                    bursts, snr, others = count(receiver.decoder.take(),
-                                                model, ident)
-                    heard_any = heard_any or bursts > 0
-                    print("  %7.1f dBm  %2d burst(s) decoded%s%s"
-                          % (level, bursts,
-                             "  best SNR %.1f dB" % snr if snr is not None
-                             else "",
-                             "  also: " + ", ".join(others) if others else ""))
-            finally:
-                transmitter.stop()
-                transmitter.wait()
-                del transmitter
+            for i, (start, level) in enumerate(marks):
+                if level is None:
+                    continue
+                end = marks[i + 1][0] if i + 1 < len(marks) else float('inf')
+                bursts, snr, others = count(
+                    [(t, r) for t, r in rows if start <= t < end],
+                    model, ident)
+                heard_any = heard_any or bursts > 0
+                print("  %7.1f dBm  %2d burst(s) decoded%s%s"
+                      % (level, bursts,
+                         "  best SNR %.1f dB" % snr if snr is not None
+                         else "",
+                         "  also: " + ", ".join(others) if others else ""))
             ok = ok and heard_any
             print()
     finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()                         # it turns the VSG off
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         receiver.stop()
         receiver.wait()
         receiver.decoder.close()

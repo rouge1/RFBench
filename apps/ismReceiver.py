@@ -152,6 +152,7 @@ class Rtl433:
         self.proc = None
         self.fd = None
         self.error = None
+        self._closing = False
         if not RTL_433:
             self.error = "rtl_433 is not installed"
             return
@@ -185,7 +186,7 @@ class Rtl433:
             with self.lock:
                 self.rows.append((time.time(), row))
         code = proc.wait()
-        if self.proc is not None and code != 0:
+        if not self._closing and code != 0:
             self.error = "rtl_433 stopped (exit %s)" % code
 
     def take(self):
@@ -201,6 +202,7 @@ class Rtl433:
     def close(self):
         if self.proc is None:
             return
+        self._closing = True              # what follows is not a failure
         try:
             self.proc.stdin.close()
         except Exception:

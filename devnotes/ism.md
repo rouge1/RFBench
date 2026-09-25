@@ -755,14 +755,18 @@ In normal trigger mode the plot draws nothing until the first burst, and
 until then its time axis says 16 ms: only a capture corrects it, and
 setting the sample rate again does not.
 
-**Over a cable to a BB60D, all four decode, and every field is right.**
-The VSG60 here, a cable to the BB60D on `worklaptop1`, and rtl_433 there
-inside fm-receiver (a separate app, in its rtl_433 mode, logging each decode
-as JSON). `scripts/test_ism_loop.py --transmit-only` stepped each device
-from −20 to −110 dBm, 8 s a level, and the log was graded against its
-timetable - the two clocks agree to a few tens of milliseconds. 150 decodes,
-every one the right model, id and reading; no other model appeared. Bursts
-decoded, of about six a level (four for Nexus), and rtl_433's best SNR:
+**Over the air, into a BB60D and into a HackRF, all four decode and every
+field is right.** Antenna to antenna on one bench, not a cable - the level
+where decoding stops is therefore the path between two antennas as much as
+either radio, and is only worth comparing within a run.
+
+*Into the BB60D* on `worklaptop1`, with rtl_433 there inside fm-receiver (a
+separate app, in its rtl_433 mode, logging each decode as JSON).
+`scripts/test_ism_loop.py --transmit-only` stepped each device from −20 to
+−110 dBm, 8 s a level, and the log was graded against its timetable - the
+two clocks agree to a few tens of milliseconds. 150 decodes, every one the
+right model, id and reading; no other model appeared. Bursts decoded, of
+about six a level (four for Nexus), and rtl_433's best SNR:
 
 | VSG | Acurite | EV1527 | LaCrosse | Nexus |
 |---|---|---|---|---|
@@ -772,29 +776,40 @@ decoded, of about six a level (four for Nexus), and rtl_433's best SNR:
 | −50 dBm | 0 | 1, 19 dB | 1, 18 dB | 1, 20 dB |
 | −60 and below | 0 | 0 | 0 | 0 |
 
-Decoding stops at about **19 dB of rtl_433's SNR**, −74 dBFS at that
-receiver, where one burst in six gets through - the same edge for all four
-protocols. The dBm it falls at is the receiver's, not the transmitter's:
-the BB60D's gain moved 10 dB during the run (EV1527 at −40 dBm arrived at
+Decoding stops at about 19 dB of rtl_433's SNR, −74 dBFS at that receiver.
+The BB60D's gain moved 10 dB during the run (EV1527 at −40 dBm arrived at
 −74 dBFS, LaCrosse and Nexus at −64), which is why Acurite, sent first,
 failed at −40 while the others decoded; at −20 and −30 dBm the level sat at
-−53 dBFS both times, and below that it tracked the VSG dB for dB. At the
-BB60D's full sensitivity −50 dBm would be 40-50 dB clear of the noise, not
-19, so either the cable carried a pad or the receiver was set for FM
-broadcast; neither was recorded. It is the first measurement of the VSG's
-RF output in this work, and it proves the transmitter end to end.
+−53 dBFS both times, and below that it tracked the VSG dB for dB.
 
-**Over the air, −60 dBm from the VSG60 is not there at all.** Two
-antennas on one bench, the VSG at −60 to −100 dBm, the HackRF at 30 %:
-nothing decoded, and a capture during the burst shows neither the signal at
-+300 kHz nor the transmitter's leak at −100 kHz - only the HackRF's own DC
-spike, 39 dB up. At 70 % the HackRF clips on noise alone (peak 1.42, both
-rails at full scale) and still shows nothing. That fits a link budget -
-25 dB of free-space loss at a metre, more for two small antennas, leaves
-−60 dBm at or under the noise in 250 kHz - and it means nothing about the
-software. It also leaves the VSG's RF output itself unproven. The cable
-this note starts with is what the loop needs, and at −60 dBm or less it
-needs no pad.
+*Into the HackRF* on this machine, `ismReceiver` itself at 40 % gain - the
+most this antenna allows at 433 MHz: 50 % peaks at half scale on noise and
+broadcast FM alone, 70 % clips. `scripts/test_ism_loop.py`:
+
+| VSG | Acurite | EV1527 | LaCrosse | Nexus |
+|---|---|---|---|---|
+| −20 dBm | 4, 37 dB | 5, 37 dB | 3, 37 dB | 3, 35 dB |
+| −30 dBm | 3, 27 dB | 5, 36 dB | 5, 27 dB | 3, 35 dB |
+| −40 dBm | 0 | 0 | 0 | 1, 26 dB |
+| −50 and below | 0 | 0 | 0 | 0 |
+
+**Only with the VSG60 in a process of its own.** Every first attempt at the
+HackRF loop decoded nothing, at any level and any gain, and the reason was
+not RF: a VSG60 opened in a process where a HackRF is already streaming
+takes every sample at its full 2 MS/s and transmits none of them - not the
+signal, not even its own LO leak. The HackRF carries on receiving
+normally. Opened the other way round, VSG first, a −20 dBm carrier came in
+64 dB over the noise; with the VSG in a second process, both orders work.
+So the loop script runs its transmitter as a subprocess. Why is not known;
+the VSG's library bringing its own libusb (see the RTL-SDR section) is the
+obvious suspect, and nothing more than that. See
+[radios](radios.md#vsg60-notes).
+
+**The two radios disagree about frequency by 5.8 kHz** at 433.92 MHz, about
+13 ppm, the HackRF's crystal almost certainly. It is nothing to rtl_433's
+±110 kHz channel, but it cost an afternoon: a check that looked for the
+carrier within ±5 kHz of where it should be read the sidelobe beside it and
+called a 64 dB carrier absent.
 
 **Tables had no place in the flowgraph theme**, since no flowgraph had one;
 `QTableView` and `QHeaderView` are now in `_FLOWGRAPH_BASE_QSS`, a well
