@@ -47,7 +47,8 @@ from apps.fm_video_core import (DEFAULT_PROFILE, PREEMPHASIS_CHOICES,
 from apps.ntsc_encode import NTSC, STANDARDS
 from apps.ntsc_source import (AudioTrack, TestPattern, VideoFile, has_audio,
                               have_ffmpeg, ntsc_source, video_files)
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
                         FrequencyChooser, TrimmedSpinBox, frequency_range)
@@ -204,7 +205,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("FM Video Transmitter Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir,
                                         "fmVideoXmitter_config.json")
 

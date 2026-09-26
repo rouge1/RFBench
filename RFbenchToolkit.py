@@ -45,7 +45,8 @@ import numpy as np # type: ignore
 
 # Local imports 
 from apps import theme
-from apps.utils import (apply_launcher_theme, apply_dark_theme,
+from apps.utils import (CONFIG_DIR, ICON_DIR, ROOT_DIR, apply_launcher_theme,
+                        apply_dark_theme,
                         centre_on, DialogGeometryTracker,
                         geometry_is_reachable, maximize_when_shown,
                         flowgraph_settings, normal_geometry, read_settings,
@@ -833,7 +834,7 @@ class FlipTile(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        self._crops = [cover_crop(f"icons/{face[2]}", PICTURE_REF)
+        self._crops = [cover_crop(os.path.join(ICON_DIR, face[2]), PICTURE_REF)
                        for face in self.faces]
         self._pixmaps = self._lit = []
         self._fraction = 1.0
@@ -1221,7 +1222,7 @@ class RFbenchToolkit(QMainWindow):
         self.setMinimumSize(800, 600)
         
         # Create config directory if it doesn't exist
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.settings_file = os.path.join(self.config_dir, "window_settings.json")
         os.makedirs(self.config_dir, exist_ok=True)
         
@@ -1867,7 +1868,7 @@ class RFbenchToolkit(QMainWindow):
                 return
 
             # Import the module
-            module_path = os.path.join('apps', f"{module_name}.py")
+            module_path = os.path.join(ROOT_DIR, 'apps', f"{module_name}.py")
             spec = importlib.util.spec_from_file_location(module_name, module_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

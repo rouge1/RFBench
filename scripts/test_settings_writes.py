@@ -99,11 +99,11 @@ def main():
         check(result == {'theme': 'walnut', 'usrp_ip': '192.168.10.2'},
               "a retired setting is dropped without taking another window's")
 
-        old_cwd = os.getcwd()
+        real_config = utils.CONFIG_DIR
         try:
-            os.chdir(folder)
-            os.makedirs('config')
-            settings_path = os.path.join('config', 'window_settings.json')
+            utils.CONFIG_DIR = os.path.join(folder, 'config')
+            os.makedirs(utils.CONFIG_DIR)
+            settings_path = os.path.join(utils.CONFIG_DIR, 'window_settings.json')
             with open(settings_path, 'w', encoding='utf-8') as fh:
                 json.dump({}, fh)
             before = os.stat(settings_path).st_mtime_ns
@@ -122,7 +122,7 @@ def main():
             check('ip_addresses' not in settings and 'radio_mode' not in settings,
                   "the retired keys are not passed on to callers")
         finally:
-            os.chdir(old_cwd)
+            utils.CONFIG_DIR = real_config
 
     if FAILURES:
         print(f"\n{len(FAILURES)} checks failed")

@@ -63,7 +63,8 @@ from apps.fmVideoXmitter import (DEVIATION_MAX_MHZ, DEVIATION_MIN_MHZ,
 # plan come from the NTSC receiver, which is where they were written.
 from apps.ntscReceiver import CompositeFrameSink, find_player, rx_gain_plan
 from apps.theme import TOKENS
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
                         FrequencyChooser, FREQ_DECIMALS)
 
@@ -539,7 +540,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("FM Video Receiver Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir,
                                         "fmVideoReceiver_config.json")
 

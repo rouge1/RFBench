@@ -257,6 +257,13 @@ def child(name, save, no_media=False, theme_name='slate'):
     problems = [] if no_media else (inspect(Qt, tb, name, save)
                                     + click_to_move(Qt, tb)
                                     + settings_round_trip(Qt, module, tb, name))
+    # A Record button with no media folder has nowhere to write.
+    import apps.utils as utils
+    record = getattr(tb, 'record_btn', None)
+    has_media = os.path.isdir(utils.read_settings()['media_directory'])
+    if record is not None and record.isEnabled() != has_media:
+        problems.append(f"Record is {'en' if record.isEnabled() else 'dis'}"
+                        f"abled with{'' if has_media else ' no'} media folder")
     try:
         tb.stop()
         tb.wait()

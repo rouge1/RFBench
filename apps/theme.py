@@ -21,10 +21,9 @@ moves. Those are done in Python, in ``RFbenchToolkit.py``; everything that
 
 import os
 
-#: Where ``fonts/`` sits, relative to this file rather than to the working
-#: directory - an app can be started from anywhere.
-FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        'fonts')
+#: Where ``apps/fonts/`` sits, beside this file rather than relative to the
+#: working directory - an app can be started from anywhere.
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts')
 
 #: The type: the faces and the sizes. A theme may name faces of its own -
 #: Reading Room and Walnut do - which are laid over these; the sizes are
@@ -313,7 +312,7 @@ _loaded = None
 def load_fonts(directory=None, force=False):
     """Register the vendored faces with Qt, and say which arrived.
 
-    No system install on any machine: ``fonts/`` travels with the repo,
+    No system install on any machine: ``apps/fonts/`` travels with the repo,
     which is what makes Linux and Windows render the same. Returns the
     families actually registered, so a caller can notice rather than
     silently render in something else.
@@ -644,7 +643,7 @@ def flowgraph_qss(up, down, tick):
 
 # --- The faces --------------------------------------------------------------
 
-#: The faces that ship in ``fonts/``, as (family, file). :func:`load_fonts`
+#: The faces that ship in ``apps/fonts/``, as (family, file). :func:`load_fonts`
 #: registers every file there; this says which family each one is, so
 #: ``scripts/test_theme.py`` can check a theme names only faces that ship,
 #: each with its licence.
@@ -672,7 +671,7 @@ FACES = [
 ]
 
 #: The SIL OFL each family is under, with its own copyright line. The
-#: licence has to travel with the fonts, so ``fonts/`` goes everywhere
+#: licence has to travel with the fonts, so ``apps/fonts/`` goes everywhere
 #: whole.
 LICENCES = {
     'Barlow': 'OFL.txt',

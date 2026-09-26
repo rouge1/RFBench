@@ -28,7 +28,8 @@ from gnuradio.filter import firdes  # type: ignore
 from PyQt5 import Qt, QtCore  # type: ignore
 
 from apps.rds_core import RdsDemod, RdsProtocol, clock_text
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
                         FREQ_DECIMALS, FREQ_STEP_MHZ, FrequencyChooser)
 
@@ -93,7 +94,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("FM + RDS Receiver Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir, "rdsReceiver_config.json")
 
         settings = read_settings()

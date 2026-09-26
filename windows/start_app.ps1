@@ -1,8 +1,8 @@
 # Windows equivalent of linux/start_app.sh.
 #
-# Run it from anywhere - the launcher opens icons/ and config/ by relative
-# path, so the working directory has to be the repo root or it dies on a
-# missing icons/settings.png.
+# Run it from anywhere. It steps up to the repo root to find
+# RFbenchToolkit.py; the launcher finds apps/icons/, apps/fonts/ and config/ from its
+# own file, so nothing else depends on the working directory.
 #
 #   powershell -ExecutionPolicy Bypass -File .\windows\start_app.ps1
 

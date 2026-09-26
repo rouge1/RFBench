@@ -36,7 +36,8 @@ from PyQt5.QtCore import QObject, pyqtSlot # type: ignore
 # Local imports
 from apps.audio_file import AudioFileSource
 from apps.media import AUDIO, choices
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, power_percent,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
                         FrequencyChooser, frequency_range)
@@ -56,7 +57,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("PPM-OOK Audio Xmitter Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir, "ppmookAudioXmitter_config.json")
         
         # Read settings from window_settings.json

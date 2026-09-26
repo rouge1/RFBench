@@ -197,7 +197,8 @@ a 6 MHz television channel, demodulates 8VSB, recovers the MPEG-2 transport
 stream and says what it found. It does not decode video itself: **Watch**
 hands the recovered stream to `ffplay` (or `mpv`, or `vlc`) and **Record**
 writes it into the media folder, where `atscXmitter` can pick it up and
-transmit it again.
+transmit it again. With no media folder in Settings, Record is greyed out
+rather than writing wherever the app happened to be started from.
 
 ```sh
 python scripts/test_atsc_receiver.py <stream.ts>            # no radio

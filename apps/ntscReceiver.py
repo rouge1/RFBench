@@ -36,7 +36,8 @@ from apps.ntscAnalogVideoRecorded import (AURAL_CARRIER, AURAL_DEVIATION,
                                           CARRIER_AT_SYNC, CARRIER_AT_WHITE,
                                           LO_OFFSET, VISUAL_CARRIER)
 from apps.theme import TOKENS
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
                         FrequencyChooser, FREQ_DECIMALS)
 
@@ -525,7 +526,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("NTSC Video Receiver Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir,
                                         "ntscReceiver_config.json")
 

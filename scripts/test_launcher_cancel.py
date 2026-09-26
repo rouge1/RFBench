@@ -21,11 +21,10 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PyQt5 import QtCore, QtWidgets  # noqa: E402
 from PyQt5.QtTest import QTest  # noqa: E402
 
-from RFbenchToolkit import RFbenchToolkit  # noqa: E402
 
 
 def prepare_workspace(folder):
-    for name in ('apps', 'fonts', 'icons'):
+    for name in ('apps',):
         shutil.copytree(
             os.path.join(ROOT, name),
             os.path.join(folder, name),
@@ -53,6 +52,18 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         prepare_workspace(folder)
         os.chdir(folder)
+        # The launcher finds config/ from its own file, not the working
+        # directory, so it has to be the copy's launcher that runs - the
+        # repo's would save into the user's config/.
+        sys.path.remove(ROOT)
+        sys.path.insert(0, folder)
+        for name in [m for m in sys.modules
+                     if m == 'RFbenchToolkit' or m.split('.')[0] == 'apps']:
+            del sys.modules[name]
+        from RFbenchToolkit import RFbenchToolkit
+        config_dir = sys.modules['apps.utils'].CONFIG_DIR
+        if not os.path.realpath(config_dir).startswith(os.path.realpath(folder)):
+            raise SystemExit(f"refusing to run: config/ is {config_dir}")
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         launcher = RFbenchToolkit(app)
         launcher.show()

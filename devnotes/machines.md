@@ -96,10 +96,11 @@ re-run it after a pull and it updates in place.
   PATH. Without it the import dies with a bare `DLL load failed` that names
   nothing useful. `windows/start_app.ps1` goes through the conda *shell hook*, so it
   works without `conda init` having been run.
-- `windows/start_app.ps1` also has to `Set-Location` to the repo root, one
-  above its own folder, for the same reason `linux/start_app.sh` does its
-  `cd ..`: the launcher opens `icons/settings.png` and `config/` by relative
-  path.
+- `windows/start_app.ps1` also `Set-Location`s to the repo root, one above
+  its own folder, as `linux/start_app.sh` does its `cd ..`, to find
+  `RFbenchToolkit.py`. It used to be essential - the launcher opened
+  `icons/settings.png` and `config/` by relative path and died without it -
+  but those are now found from `apps/utils.py`'s `ROOT_DIR`.
 - **ffmpeg comes from `windows/environment.yml` unpinned, and a new major
   version broke the ATSC transmitter.** The laptop had none at all until
   2026-09-18, so its video transmitters offered colour bars and nothing

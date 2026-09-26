@@ -32,7 +32,8 @@ from apps.audio_file import PcmReader, audio_channels, is_wav, track_tags
 from apps.media import AUDIO, choices
 from apps.rds_core import PTY_RBDS, clock_text
 from apps.rds_encode import RdsEncoder, RdsSubcarrier, system_clock
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         power_percent, read_settings, update_app_config,
                         resolve_power_range, scale_power, SPECTRUM_Y_AXIS,
                         FREQ_DECIMALS, FREQ_STEP_MHZ, FrequencyChooser)
@@ -121,7 +122,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("FM + RDS Transmitter Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir,
                                         "fmRdsTransmitter_config.json")
         settings = read_settings()

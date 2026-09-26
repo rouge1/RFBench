@@ -36,7 +36,8 @@ from apps.atsc_rx_core import (Afc, SYMBOL_RATE, TsAnalyzer,
                                channels, mer_db, mer_quality, since,
                                tv_channel_items)
 from apps.theme import TOKENS
-from apps.utils import (apply_dark_theme, apply_flowgraph_theme, radio_label,
+from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
+                        radio_label,
                         read_settings, update_app_config, SPECTRUM_Y_AXIS,
                         FrequencyChooser, FREQ_DECIMALS, align_output_buffer)
 
@@ -378,7 +379,7 @@ class ConfigDialog(Qt.QDialog):
         super().__init__(parent)
         self.setWindowTitle("ATSC Video Receiver Configuration")
         self.layout = Qt.QVBoxLayout(self)
-        self.config_dir = "config"
+        self.config_dir = CONFIG_DIR
         self.config_file = os.path.join(self.config_dir,
                                         "atscReceiver_config.json")
 
@@ -687,10 +688,20 @@ class atscReceiver(gr.top_block, Qt.QWidget):
         self.watch_btn.clicked.connect(self.toggle_watch)
         row.addWidget(self.watch_btn)
 
+        # Record has nowhere to go without a media folder, and Settings
+        # cannot change while this window is open, so it is decided here.
         self.record_btn = Qt.QPushButton("Record")
-        self.record_btn.setToolTip(
-            "Write the recovered transport stream into the media folder, "
-            "where the ATSC Transmitter can pick it up again.")
+        media_dir = read_settings().get('media_directory', '')
+        if os.path.isdir(media_dir):
+            self.record_btn.setToolTip(
+                "Write the recovered transport stream into the media folder, "
+                "where the ATSC Transmitter can pick it up again.")
+        else:
+            self.record_btn.setEnabled(False)
+            self.record_btn.setToolTip(
+                "Set a media folder in Settings to record - that is where "
+                "the recording goes, and where the ATSC Transmitter looks "
+                "for transport streams.")
         self.record_btn.clicked.connect(self.toggle_record)
         row.addWidget(self.record_btn)
 
@@ -914,7 +925,7 @@ class atscReceiver(gr.top_block, Qt.QWidget):
             self.record_btn.setText("Record")
             self.action_note.setText(f"Saved {path}")
             return
-        directory = read_settings().get('media_directory', '') or os.getcwd()
+        directory = read_settings().get('media_directory', '')
         if not os.path.isdir(directory):
             Qt.QMessageBox.warning(
                 self, "No Media Directory",

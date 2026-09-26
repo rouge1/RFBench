@@ -10,6 +10,17 @@ from PyQt5.QtCore import (QObject, QEvent, QRect, QTimer,  #type: ignore
 from apps import theme
 
 
+# --- Where things are --------------------------------------------------------
+
+#: The repository's root, found from this file so that it does not matter
+#: which directory an app was started from.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+#: Settings and every app's saved values. Read at call time, never copied
+#: into a default argument, so a test can point it at a throwaway folder.
+CONFIG_DIR = os.path.join(ROOT_DIR, 'config')
+
+
 # --- Buffers ----------------------------------------------------------------
 
 #: GNU Radio allocates stream buffers in whole memory pages.
@@ -352,8 +363,8 @@ def centre_on(dialog, window, app=None):
 FLOWGRAPH_POSITION = 'flowgraph_position'
 
 
-def _app_config_path(module_name, config_dir='config'):
-    return os.path.join(config_dir, f"{module_name}_config.json")
+def _app_config_path(module_name, config_dir=None):
+    return os.path.join(config_dir or CONFIG_DIR, f"{module_name}_config.json")
 
 
 def update_app_config(path, changes, remove=()):
@@ -416,7 +427,7 @@ def flowgraph_settings(window):
     return values
 
 
-def save_flowgraph_settings(window, module_name, config_dir='config',
+def save_flowgraph_settings(window, module_name, config_dir=None,
                             since=None):
     """Keep what a flowgraph window's own controls were left at.
 
@@ -520,7 +531,7 @@ def maximize_when_shown(window):
         window.windowState() | QtNs.WindowMaximized))
 
 
-def save_window_geometry(window, module_name, config_dir='config',
+def save_window_geometry(window, module_name, config_dir=None,
                          key=FLOWGRAPH_POSITION):
     """Remember where a flowgraph window was, beside its dialog's position.
 
@@ -563,7 +574,7 @@ def save_window_geometry(window, module_name, config_dir='config',
 
 
 def restore_window_geometry(window, module_name, app=None,
-                            config_dir='config', key=FLOWGRAPH_POSITION):
+                            config_dir=None, key=FLOWGRAPH_POSITION):
     """Put a flowgraph window back where it was. See `save_window_geometry`.
 
     Call it *after* the window has been shown: that is the whole point of
@@ -868,14 +879,12 @@ def tidy_dialog(dialog):
         top.insertStretch(index, 1)
 
 
-#: The repository's icons, found from this file so that it does not matter
-#: which directory the app was started from.
-ICON_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        'icons')
+#: The tile pictures and interface glyphs, beside this file.
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icons')
 
 
 def icon_url(name):
-    """An icons/ path in the form a Qt stylesheet url() wants.
+    """An apps/icons/ path in the form a Qt stylesheet url() wants.
 
     Forward slashes on every platform - a Windows backslash is an escape
     character to the stylesheet parser, and the rule is dropped silently.
@@ -884,7 +893,7 @@ def icon_url(name):
 
 
 def themed_icon_url(name, colour):
-    """An icons/ picture redrawn in ``colour``, as :func:`icon_url` gives it.
+    """An apps/icons/ picture redrawn in ``colour``, as :func:`icon_url` gives it.
 
     The spin arrows and the tick are pictures, because a stylesheet cannot
     draw them (see ``tidy_dialog``), and a picture has its colour baked
@@ -1142,7 +1151,7 @@ def read_settings(settings_file=None):
     never done; the first address in a file saved then is the one used.
     """
     if settings_file is None:
-        settings_file = os.path.join("config", "window_settings.json")
+        settings_file = os.path.join(CONFIG_DIR, "window_settings.json")
     settings = {'media_directory': '', 'usrp_ip': '', 'radio_type': 'hackrf'}
     try:
         if os.path.exists(settings_file):

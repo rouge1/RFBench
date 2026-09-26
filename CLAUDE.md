@@ -35,10 +35,10 @@ QT_QPA_PLATFORM=offscreen timeout -k 5 120 \
 ## Where things live: linux/ and windows/
 
 Every line of Python runs on both operating systems, so the code is not
-split by OS at all: `RFbenchToolkit.py`, `apps/`, `icons/`, `fonts/` and
-`scripts/` are shared, and a difference between the two is a branch at run
-time in the one place it matters (`vsg_sink.py`'s library search, say),
-never a second copy of a file. Only the edges differ - how the launcher is
+split by OS at all: `RFbenchToolkit.py`, `apps/` (its `icons/` and
+`fonts/` included) and `scripts/` are shared, and a difference between
+the two is a branch at run time in the one place it matters
+(`vsg_sink.py`'s library search, say), never a second copy of a file. Only the edges differ - how the launcher is
 started, what conda installs, and one-time setup - and those, and nothing
 else, go in a folder named for the OS:
 
@@ -50,12 +50,18 @@ else, go in a folder named for the OS:
 
 The same name in both folders is the same job, which is the point of the
 arrangement: a change to one should make you look at the other. Both
-start scripts step up to the repo root before running anything, because
-the launcher opens `icons/` and `config/` by relative path, and both
-setup scripts find the root the same way. So a script moved into or out
-of these folders has to fix that one line. Nothing that runs on both
-belongs in them - a module that only one OS happened to need first is
-still shared code and goes in `apps/`.
+start scripts step up to the repo root before running
+`RFbenchToolkit.py`, and both setup scripts find the root the same way.
+So a script moved into or out of these folders has to fix that one line.
+Nothing that runs on both belongs in them - a module that only one OS
+happened to need first is still shared code and goes in `apps/`.
+
+The code itself never depends on the working directory. What the
+program loads - pictures, fonts, the app modules - lives in `apps/`,
+found from the code's own file (`ICON_DIR`, `theme.FONT_DIR`); `config/`
+stays at the root and is found through `apps/utils.py`'s `ROOT_DIR` and
+`CONFIG_DIR`. Anything new that opens one of the repo's own files goes
+through them.
 
 ## Where the details are: `devnotes/`
 
@@ -345,7 +351,7 @@ frequency and sample-rate callbacks work through the existing HackRF path.
    and `save_config` writing through `update_app_config`.
    Add it to `MODULES` in `scripts/test_flowgraph_windows.py`, which checks
    all three.
-2. Add an icon to `icons/`.
+2. Add an icon to `apps/icons/`.
 3. Add a row to `APP_TILES` in `RFbenchToolkit.py`, saying whether the
    app transmits or receives. To give an existing app a second side instead
    of a square of its own - a receiver for a transmitter, say - add a face

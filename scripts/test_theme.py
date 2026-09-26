@@ -96,7 +96,7 @@ def main():
             check(set(faces) <= {'f_num', 'f_ui', 'qss_bold'} and
                   {faces.get('f_num', 'Barlow Semi Condensed'),
                    faces.get('f_ui', 'Barlow')} <= shipped,
-                  f"{theme.NAMES[key]}'s faces are ones that ship in fonts/")
+                  f"{theme.NAMES[key]}'s faces are ones that ship in apps/fonts/")
 
     print('\ntokens -> Qt')
     for key in theme.THEMES:
@@ -122,7 +122,7 @@ def main():
     print('\nthe faces')
     for _family, filename in theme.FACES:
         path = os.path.join(theme.FONT_DIR, filename)
-        check(os.path.exists(path), f"{filename} is in fonts/")
+        check(os.path.exists(path), f"{filename} is in apps/fonts/")
     for family in sorted({family for family, _f in theme.FACES}):
         licence = theme.LICENCES.get(family)
         check(bool(licence) and

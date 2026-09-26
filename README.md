@@ -250,9 +250,9 @@ SDR/
 │   ├── theme.py                  # Colours, type and fonts for every window
 │   ├── _run.py                   # Runs one app without the launcher
 │   ├── media.py                  # How every picker finds files in the media folder
-│   └── settings_dialog.py        # Global settings UI
-├── fonts/                        # Barlow and each theme's faces, each with its SIL OFL licence
-├── icons/                        # Tile pictures and interface glyphs
+│   ├── settings_dialog.py        # Global settings UI
+│   ├── fonts/                    # Barlow and each theme's faces, each with its SIL OFL licence
+│   └── icons/                    # Tile pictures and interface glyphs
 ├── scripts/
 │   └── test_*.py                 # Tests - most need no radio and no display
 ├── linux/                        # Only what differs on Linux
@@ -314,7 +314,7 @@ Directory** set in Settings.
 1. Create `apps/<module_name>.py` implementing:
    - `ConfigDialog(QDialog)` — configuration UI; must implement `get_values()` returning a dict
    - `main(top_block_cls=..., options=None, app=None, config_values=None)` — creates and starts the GNU Radio flowgraph, returns the `top_block` instance
-2. Add an icon to `icons/`
+2. Add an icon to `apps/icons/`
 3. Add a row to `APP_TILES` near the top of `RFbenchToolkit.py` -
    `(row, column, [(label, module, icon, 'tx' or 'rx')])`. To give an existing
    app its other end, such as a receiver for a transmitter, add a second face

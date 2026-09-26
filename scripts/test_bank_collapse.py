@@ -67,7 +67,7 @@ def record_exception(kind, value, tb):
 
 
 def prepare_workspace(folder, theme_name, collapsed=None):
-    for name in ('apps', 'fonts', 'icons'):
+    for name in ('apps',):
         shutil.copytree(os.path.join(ROOT, name), os.path.join(folder, name),
                         ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copy2(os.path.join(ROOT, 'RFbenchToolkit.py'),
@@ -114,6 +114,10 @@ def main():
                      if m == 'RFbenchToolkit' or m.startswith('apps')]:
             del sys.modules[name]
         import RFbenchToolkit
+        # config/ is found from apps/utils.py, so it must be the copy's.
+        config_dir = sys.modules['apps.utils'].CONFIG_DIR
+        if not os.path.realpath(config_dir).startswith(os.path.realpath(folder)):
+            raise SystemExit(f"refusing to run: config/ is {config_dir}")
         launcher = RFbenchToolkit.RFbenchToolkit(app)
         launcher.resize(1000, 820)
         launcher.show()

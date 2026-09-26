@@ -445,9 +445,9 @@ Two things about doing it centrally:
   that it falls through to the plain `QWidget` rule and comes out as a flat
   dark box - leaves the up and down buttons as empty rectangles. Qt's CSS
   subset will not draw a triangle out of borders either; it renders the
-  four borders as a rectangle. So they are images - `icons/spin-up.png`,
-  `icons/spin-down.png`, which the combo boxes use for their own arrow
-  too, and `icons/check.png` for a ticked box - referenced through
+  four borders as a rectangle. So they are images - `apps/icons/spin-up.png`,
+  `apps/icons/spin-down.png`, which the combo boxes use for their own arrow
+  too, and `apps/icons/check.png` for a ticked box - referenced through
   `icon_url()` by absolute path: a stylesheet resolves `url()` against the
   process's working directory, and forward slashes are required on Windows
   because a backslash is an escape to the stylesheet parser.
@@ -659,7 +659,7 @@ python scripts/test_theme.py    # no radio, no display, no GNU Radio
 
 checks every theme's colours (see [testing them](#testing-them)), that no
 Qt stylesheet has an unsubstituted token, that every theme's faces and
-their licences are in `fonts/`, and that every row of tiles has a heading.
+their licences are in `apps/fonts/`, and that every row of tiles has a heading.
 
 **A Qt stylesheet looks like CSS but is not, and four of the things the
 design needs have no QSS equivalent at all.** They are done to the pixels
@@ -1115,7 +1115,7 @@ are the receivers' lock line), a bank's name 4.5:1, a tile's TRANSMIT line
 3:1, the trace 3:1 on the well, and the OK button's text at rest, under
 the pointer and in `ink_0`. Given Reading Room's first `ink_3` it failed
 at 2.76:1 on the ground, and the colour was darkened. It also checks every
-theme's faces ship in `fonts/` with their licences. Both window tests set
+theme's faces ship in `apps/fonts/` with their licences. Both window tests set
 the theme themselves, Slate unless `--theme` says otherwise, so the user's
 own choice cannot change what they test. On a light theme the window test
 checks for near black rather than near white.
@@ -1148,7 +1148,7 @@ window drawing a title bar of its own.
 
 ## The typefaces
 
-`fonts/` holds Barlow and Barlow Semi Condensed as six static TTFs, beside
+`apps/fonts/` holds Barlow and Barlow Semi Condensed as six static TTFs, beside
 the SIL OFL they are licensed under. They are *vendored* rather than
 installed, for the same reason `vendor/libvsg_api.so.1` is: Google Fonts is
 only where Barlow happens to ship.
@@ -1184,5 +1184,5 @@ modified copy, so every file is shipped exactly as it came.
   there.
 - **The whole directory travels together.** The OFL requires the licence
   alongside the fonts wherever they are passed on, which is the same rule
-  `media/VIDEO-CREDITS.txt` follows for the CC BY clips: copying `fonts/` to
+  `media/VIDEO-CREDITS.txt` follows for the CC BY clips: copying `apps/fonts/` to
   TVAdemo means copying `OFL.txt` with it.
