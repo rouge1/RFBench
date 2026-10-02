@@ -1,6 +1,6 @@
 # The Signal Hound radios: VSG60 and BB60D
 
-One of the notes in `devnotes/`. What applies everywhere, and which
+One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 ## VSG60 notes

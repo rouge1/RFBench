@@ -2,7 +2,7 @@
 
 The transmit half of the 315/433/868/915 MHz work. A sensor reading goes in and
 a ``complex64`` burst comes out, with `rtl_433` as the referee rather than a
-decoder of our own writing. [devnotes/ism.md](../devnotes/ism.md) has the band
+decoder of our own writing. [knowledge/ism.md](../knowledge/ism.md) has the band
 rules, the bench setup and why the carrier never really turns off; this is the
 encoder those notes describe.
 
@@ -411,7 +411,7 @@ def lacrosse_tx141th_bv2(sensor_id=0xE7, channel=0, battery_low=False,
         raise ValueError(
             "exactly four rows decodes as TFA-303221 rather than "
             "LaCrosse-TX141THBv2 - use three, or five or more; the real "
-            "sensor sends twelve. See devnotes/ism.md.")
+            "sensor sends twelve. See knowledge/ism.md.")
     body = [sensor_id & 0xFF,
             ((1 if battery_low else 0) << 7) | ((channel & 0x3) << 4) | (raw >> 8),
             raw & 0xFF,
@@ -464,7 +464,7 @@ PROFILES = {
 #: Only two of the four are ISM in the region that uses them - 433.92 MHz in
 #: the United States is not, and is legal there only under the periodic
 #: operation rule. What that means for a bench is in
-#: [ism](../devnotes/ism.md#the-bands-and-what-is-actually-legal).
+#: [ism](../knowledge/ism.md#the-bands-and-what-is-actually-legal).
 #: The caption is what a frequency picker shows, so it leads with the number.
 BANDS = [
     ("315", 315.0, "315 MHz - US remotes and TPMS; FCC 15.231, not ISM"),

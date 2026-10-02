@@ -1,6 +1,6 @@
 # NTSC and PAL: composite video, the NTSC transmitter and receiver
 
-One of the notes in `devnotes/`. What applies everywhere, and which
+One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 ## NTSC composite video

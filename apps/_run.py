@@ -32,7 +32,7 @@ drawn into nothing, and the flowgraph and the radio run as normal.
 SIGTERM or SIGINT - ``timeout``, ``kill``, Ctrl+C - stops the flowgraph
 and ends the process, and if that stop is stuck, the process ends anyway
 :data:`STOP_GRACE_S` later. Nothing is saved, as it would be had the
-window been closed. See devnotes/ui.md for why this needs doing here.
+window been closed. See knowledge/ui.md for why this needs doing here.
 
 Run it with the ``gnu`` environment's Python - it imports GNU Radio
 through the app module.

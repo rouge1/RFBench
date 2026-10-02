@@ -60,7 +60,7 @@ GUARD_OUTER_HZ = (16e3, 22e3)
 GUARD_INNER_HZ = (18e3, 20e3)
 #: How far the pilot must stand over that noise, in the same bandwidth, to
 #: count as locked; it is let go only below the second. Noise reads within
-#: 2 dB of 0, stations with a pilot 13 dB and up - see devnotes/rds.md.
+#: 2 dB of 0, stations with a pilot 13 dB and up - see knowledge/rds.md.
 PILOT_LOCK_DB = 10.0
 PILOT_UNLOCK_DB = 6.0
 

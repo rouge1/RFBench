@@ -17,13 +17,13 @@ The app requires a display (X11/Wayland) and either a HackRF One (USB) or Ettus 
 
 On Windows it is `windows/start_app.ps1` instead, and the environment comes
 from `windows/environment.yml` rather than `linux/environment.yml` - see
-[Running on Windows](devnotes/machines.md#running-on-windows) and [where things
+[Running on Windows](knowledge/machines.md#running-on-windows) and [where things
 live](#where-things-live-linux-and-windows).
 
 One app can also be run without the launcher - on a bench machine over
 ssh, say - with `apps/_run.py`, which supplies the event loop the launcher
 otherwise would; see [running one app without the
-launcher](devnotes/ui.md#running-one-app-without-the-launcher):
+launcher](knowledge/ui.md#running-one-app-without-the-launcher):
 
 ```sh
 python apps/_run.py amSineGenerator                        # its own dialog first
@@ -63,147 +63,150 @@ stays at the root and is found through `apps/utils.py`'s `ROOT_DIR` and
 `CONFIG_DIR`. Anything new that opens one of the repo's own files goes
 through them.
 
-## Where the details are: `devnotes/`
+## Where the details are: `knowledge/`
 
 This file is read at the start of every session, so it keeps only what
 applies everywhere. What each app, each radio and the launcher have
 taught - the measurements, the traps, and why the code is the way it is -
-is in `devnotes/`, one file per subject, read when that subject comes up.
+is in `knowledge/`, one file per subject, read when that subject comes up.
 **Before changing an app, read its file.** Much of it was found the hard
 way, and several of the fixes look like mistakes until you know what they
 fixed.
 
 | Notes | Read before touching | What is in them |
 |---|---|---|
-| [rds.md](devnotes/rds.md) | `rdsReceiver`, `fmRdsTransmitter`, `rds_core`, `rds_encode` | decoding RDS through errors, RadioText and RT+, the clock, stereo and channel separation, Next Track |
-| [atsc.md](devnotes/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record - and why the analog receivers' Watch writes from a thread of its own |
-| [ntsc.md](devnotes/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
-| [fm-video.md](devnotes/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
-| [ism.md](devnotes/ism.md) | `ism_frame`, `ismXmitter`, `ismReceiver`, anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, what the encoder turned out to need, rtl_433 as the receiver's decoder, and the RTL-SDR's limits |
-| [media.md](devnotes/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
-| [radios.md](devnotes/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
-| [ui.md](devnotes/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
-| [machines.md](devnotes/machines.md) | `windows/`, `linux/environment.yml`, anything run on TVAdemo or the Windows laptop | TVAdemo, running on Windows, and building the environment on a new Linux machine |
+| [rds.md](knowledge/rds.md) | `rdsReceiver`, `fmRdsTransmitter`, `rds_core`, `rds_encode` | decoding RDS through errors, RadioText and RT+, the clock, stereo and channel separation, Next Track |
+| [atsc.md](knowledge/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record - and why the analog receivers' Watch writes from a thread of its own |
+| [ntsc.md](knowledge/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
+| [fm-video.md](knowledge/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
+| [ism.md](knowledge/ism.md) | `ism_frame`, `ismXmitter`, `ismReceiver`, anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, what the encoder turned out to need, rtl_433 as the receiver's decoder, and the RTL-SDR's limits |
+| [bluetooth.md](knowledge/bluetooth.md) | anything on 2.4 GHz, any Bluetooth transmitter or receiver | what a VSG60 can send - LE advertising yes, a Classic link no, Classic packets on one channel for bluey-ox-walker - the LE PHY from the Core spec, and the bench (not built yet) |
+| [ble-packets.md](knowledge/ble-packets.md) | any Bluetooth LE encoder or decoder | the LE advertising packet bit by bit - access address, CRC, whitening, the PDU types and which one needs no reply, the random static address, advertising data, timing - with Python checked against the spec's own worked packet |
+| [bluey-test-signals.md](knowledge/bluey-test-signals.md) | any Bluetooth Classic encoder, anything made for bluey-ox-walker | the plan agreed with bluey-ox-walker: cf32 files, then a fixed-channel DH3/DH5 train on the VSG60, then narrow-AFH hopping; the file and sidecar format, the modulation, and what the encoder must get right |
+| [media.md](knowledge/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
+| [radios.md](knowledge/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
+| [ui.md](knowledge/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
+| [machines.md](knowledge/machines.md) | `windows/`, `linux/environment.yml`, anything run on TVAdemo or the Windows laptop | TVAdemo, running on Windows, and building the environment on a new Linux machine |
 
 Something learned goes into its subject's file. If it could bite anywhere,
 it also gets a line below.
 
 ## Rules that bite
 
-The few things, from all of `devnotes/`, that crash, break silently or
+The few things, from all of `knowledge/`, that crash, break silently or
 damage something. Each links to the why.
 
 - **Opening a VSG60 twice aborts the process**, and its library is not
   thread safe. Go through `vsg_sink`, whose lock and PID file exist for
-  exactly this. [radios](devnotes/radios.md#vsg60-notes)
+  exactly this. [radios](knowledge/radios.md#vsg60-notes)
 - **A VSG60 and a BB60D will not stream at the same time on one host.**
   Anything that needs one of each puts the transmitter on TVAdemo.
-  [radios](devnotes/radios.md#vsg60-notes)
+  [radios](knowledge/radios.md#vsg60-notes)
 - **0 % power is not off.** A HackRF at its minimum still decoded at 100 %
-  several feet away. [rds](devnotes/rds.md#fm--rds-transmitter)
+  several feet away. [rds](knowledge/rds.md#fm--rds-transmitter)
 - **Amplitude zero is not RF off either.** All three transmitters are
   direct-conversion, so I=Q=0 still leaks the LO; an OOK receiver then sees
   carrier against carrier and every envelope slicer stops working. The
   HackRF cannot be nulled at all - there is no DC-offset call in
   `libhackrf` - and its leak *rises* with TX gain. Tune off-frequency and
   put the signal back with a baseband tone.
-  [ism](devnotes/ism.md#the-carrier-never-turns-off)
+  [ism](knowledge/ism.md#the-carrier-never-turns-off)
 - **Once the VSG60's library is loaded, the RTL-SDR is gone from that
   process**: `libvsg_api.so` brings an older libusb that everything after it
   binds to, and SoapySDR's RTL module fails with a printed `undefined
-  symbol` and no exception. [ism](devnotes/ism.md#the-rtl-sdr-as-a-receiver)
+  symbol` and no exception. [ism](knowledge/ism.md#the-rtl-sdr-as-a-receiver)
 - **A VSG60 opened in a process where a HackRF is already streaming
   transmits nothing**, while taking every sample and reporting no error.
   Give the VSG a process of its own, or open it first.
-  [radios](devnotes/radios.md#vsg60-notes)
+  [radios](knowledge/radios.md#vsg60-notes)
 - **A HackRF's maximum receive input is −5 dBm**, and it transmits +10 to
   +15 dBm below 2170 MHz. A bare cable from its TX to any receiver here is
   15-20 dB over the damage threshold: 20-30 dB of pad goes in first.
-  [ism](devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna)
+  [ism](knowledge/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna)
 - **rtl_433 above 800 MHz needs `-Y classic`** as well as `-f` before
   `-s`: a `-f` there turns on its new defaults, which `-s` does not undo,
   and on-off sensors at 868 and 915 MHz mostly stop decoding.
   `ismReceiver` does not pass it yet.
-  [ism](devnotes/ism.md#across-frequency-fm-receivers-decoder-at-315-43392-and-915-mhz)
+  [ism](knowledge/ism.md#across-frequency-fm-receivers-decoder-at-315-43392-and-915-mhz)
 - **Keep a Python reference to every Python block** in a running flowgraph,
   or the process segfaults with no Python frame to say why.
-  [rds](devnotes/rds.md#fm--rds-transmitter)
+  [rds](knowledge/rds.md#fm--rds-transmitter)
 - **Never rebuild a running flowgraph to change what it plays** - Next Track
   swaps files in place, because a rebuild jumps the pilot and RDS phase.
   Anything that must lock one on a VSG60 wraps it in `sink.held_open()`.
-  [rds](devnotes/rds.md#fm--rds-transmitter),
-  [radios](devnotes/radios.md#vsg60-notes)
+  [rds](knowledge/rds.md#fm--rds-transmitter),
+  [radios](knowledge/radios.md#vsg60-notes)
 - **A HackRF's receive gain goes on after `tb.start()`**: SoapyHackRF
-  ignores the AMP stage before it. [rds](devnotes/rds.md#rds-receiver)
+  ignores the AMP stage before it. [rds](knowledge/rds.md#rds-receiver)
 - **Hand `file_descriptor_source` an `os.dup()` of a pipe**, never the
   pipe's own descriptor, or the second launch of the app goes out silent.
-  [ntsc](devnotes/ntsc.md#ntsc-video-sources)
+  [ntsc](knowledge/ntsc.md#ntsc-video-sources)
 - **The BB60D is not driven through gr-soapy**: `setupStream` comes before
   any setting, and it is opened by driver name alone.
-  [radios](devnotes/radios.md#signal-hound-bb60d-as-a-receiver)
+  [radios](knowledge/radios.md#signal-hound-bb60d-as-a-receiver)
 - **A spectrum average cannot see a transmitter that is off half the
-  time.** Look at the envelope in time. [atsc](devnotes/atsc.md#atsc-transmitter)
+  time.** Look at the envelope in time. [atsc](knowledge/atsc.md#atsc-transmitter)
 - **Close any running launcher before a radio test**: it holds the HackRF's
   USB handle even while sitting on a config dialog.
-  [ui](devnotes/ui.md#testing-the-launcher-end-to-end)
+  [ui](knowledge/ui.md#testing-the-launcher-end-to-end)
 - **Tests never write `config/` or the user's `QSettings`**: patch
   `read_settings`, use a throwaway folder, and never close an app's window -
   its `closeEvent` saves.
-  [ui](devnotes/ui.md#how-every-dialog-gets-laid-out),
-  [ui](devnotes/ui.md#the-flowgraph-windows-wear-it-too)
+  [ui](knowledge/ui.md#how-every-dialog-gets-laid-out),
+  [ui](knowledge/ui.md#the-flowgraph-windows-wear-it-too)
 - **Every JSON settings file is written only through `update_app_config`**,
   which merges and atomically replaces it. The dialog, the launcher and the
   flowgraph window each keep something in an app's file, and Settings shares
   the global file with the launcher; a whole-file write can delete another
   window's saved state.
-  [ui](devnotes/ui.md#what-the-windows-own-controls-were-left-at)
+  [ui](knowledge/ui.md#what-the-windows-own-controls-were-left-at)
 - **`apply_flowgraph_theme(self)` comes first in a flowgraph's `__init__`**,
   and no flowgraph stylesheet sets a font on `QWidget` or `QLabel`. It
   also installs `ClickToMove`: the stylesheet turns on mouse tracking, and
   GNU Radio's slider then follows the pointer with no button down - a
   power slider set by the mouse passing over it.
-  [ui](devnotes/ui.md#the-flowgraph-windows-wear-it-too)
+  [ui](knowledge/ui.md#the-flowgraph-windows-wear-it-too)
 - **A colour comes from `TOKENS` when a window is built, never at import
   and never as a literal.** `TOKENS` is whichever theme is in force,
   and it changes under a running launcher. A colour copied at import, or
   written in, is right in one theme and wrong in the others - on Reading
   Room's paper, white goes on white.
-  [ui](devnotes/ui.md#what-a-theme-is)
+  [ui](knowledge/ui.md#what-a-theme-is)
 - **Qt 5 reads a stylesheet's `font-weight` divided by 8**, so `600` asks
   for Bold, and a face with no bold of its own is thickened to fake one.
   A stylesheet weight comes from `qss_bold`, never a number written in.
-  [ui](devnotes/ui.md#each-themes-type)
+  [ui](knowledge/ui.md#each-themes-type)
 - **`APP_TILES` and `BANK_NAMES` stay plain literals**: the GUI test and
   `scripts/test_theme.py` read them out of the launcher's source with
   `ast` rather than importing it.
-  [ui](devnotes/ui.md#testing-the-launcher-end-to-end)
+  [ui](knowledge/ui.md#testing-the-launcher-end-to-end)
 - **Anything run on TVAdemo gets a `timeout -k`**, and a transmitter and
   its receiver are started as two separate commands. A plain `timeout`
   only sends `SIGTERM`, and never ends a process that ignores it.
-  [machines](devnotes/machines.md#the-tvademo-laptop-and-why-there-is-a-second-machine)
+  [machines](knowledge/machines.md#the-tvademo-laptop-and-why-there-is-a-second-machine)
 - **On a conda machine, `which ffmpeg` finding nothing proves nothing** - it
   is inside the environment.
-  [machines](devnotes/machines.md#the-tvademo-laptop-and-why-there-is-a-second-machine)
+  [machines](knowledge/machines.md#the-tvademo-laptop-and-why-there-is-a-second-machine)
 - **On Windows, activate the `gnu` environment; never call its `python.exe`
   directly** (`DLL load failed`). A GUI started there over SSH runs in
-  session 0 and cannot be seen. [machines](devnotes/machines.md#running-on-windows)
+  session 0 and cannot be seen. [machines](knowledge/machines.md#running-on-windows)
 - **An exception in a Qt override - a `paintEvent`, say - aborts the
   whole program**, launcher included, with a core dump. Guard what a
   paint does with a size or a value that can be zero: a 0 px tile's
   shadow took the launcher down on every bank toggle.
-  [ui](devnotes/ui.md#banks-that-collapse)
+  [ui](knowledge/ui.md#banks-that-collapse)
 - **A Python block's `start()` must never raise.** GNU Radio calls it on
   the block's own thread and `tb.start()` waits for it forever; an app's
   `main()` runs on the launcher's thread, so a BB60D left open by another
   program froze the launcher solid. Print why and return `False`, which
-  ends the flowgraph instead. [radios](devnotes/radios.md#signal-hound-bb60d-as-a-receiver)
+  ends the flowgraph instead. [radios](knowledge/radios.md#signal-hound-bb60d-as-a-receiver)
 - **A Python signal handler does not run while Qt's event loop idles.**
   Python runs it only when the main thread next runs Python, so a Qt
   program that must answer `SIGTERM` needs a Python timer ticking, held
   for the life of the loop - a local one is collected. Without one, an
   app run through `apps/_run.py` ignored `SIGTERM` and `timeout` with a
   transmitter on the air; `_run.py` now keeps one.
-  [ui](devnotes/ui.md#running-one-app-without-the-launcher)
+  [ui](knowledge/ui.md#running-one-app-without-the-launcher)
 - **This repository is public.** No IP address, key name or account name of
   a bench machine goes into it; the notes use ssh aliases such as
   `ssh tvademo`.
@@ -230,13 +233,13 @@ The flowgraph class itself (e.g., `amSineGenerator`) extends both `gr.top_block`
 
 - `apply_launcher_theme(widget)` — paints the launcher window from the
   shared tokens in `apps/theme.py` — see [one design for every
-  window](devnotes/ui.md#one-design-for-every-window).
+  window](knowledge/ui.md#one-design-for-every-window).
 - `apply_dark_theme(widget)` — the same tokens for a config dialog, and it
   also straightens the layout — see [how every dialog gets laid
-  out](devnotes/ui.md#how-every-dialog-gets-laid-out).
+  out](knowledge/ui.md#how-every-dialog-gets-laid-out).
 - `apply_flowgraph_theme(window)` — the same tokens for a running
   flowgraph window, called first thing in its `__init__` — see [the
-  flowgraph windows wear it too](devnotes/ui.md#the-flowgraph-windows-wear-it-too).
+  flowgraph windows wear it too](knowledge/ui.md#the-flowgraph-windows-wear-it-too).
 - `read_settings()` — reads `config/window_settings.json`, and only reads it; returns a dict with `media_directory`, `radio_type` and `usrp_ip`.
 - `radio_label(radio_type, usrp_ip)` — the first line of every app's dialog, naming the radio Settings has chosen.
 
@@ -245,11 +248,11 @@ The flowgraph class itself (e.g., `amSineGenerator`) extends both `gr.top_block`
 All settings are stored in `config/window_settings.json`:
 - `window_position` — launcher window geometry (saved/restored on open/close).
 - `dialog_position` — last config dialog position.
-- `usrp_ip` — the Ettus USRP's IP address, the one radio that has one. It replaced `ip_addresses`, a list, whose first entry `read_settings` still takes — see [Settings](devnotes/ui.md#settings-and-the-one-ip-address).
+- `usrp_ip` — the Ettus USRP's IP address, the one radio that has one. It replaced `ip_addresses`, a list, whose first entry `read_settings` still takes — see [Settings](knowledge/ui.md#settings-and-the-one-ip-address).
 - `media_directory` — path for recorded audio/video files.
 - `radio_type` — `"hackrf"`, `"usrp"`, or `"vsg"`.
-- `theme` — `"slate"` (dark, the default), `"reading-room"` (light) or `"walnut"` (brown and tan), set by the disc in the launcher's header and read by every window as it opens — see [the themes](devnotes/ui.md#the-themes-and-the-disc-that-picks-one).
-- `collapsed_banks` — the `APP_TILES` rows whose bank the launcher was left with shut, set by the chevron at the end of each bank's heading — see [banks that collapse](devnotes/ui.md#banks-that-collapse).
+- `theme` — `"slate"` (dark, the default), `"reading-room"` (light) or `"walnut"` (brown and tan), set by the disc in the launcher's header and read by every window as it opens — see [the themes](knowledge/ui.md#the-themes-and-the-disc-that-picks-one).
+- `collapsed_banks` — the `APP_TILES` rows whose bank the launcher was left with shut, set by the chevron at the end of each bank's heading — see [banks that collapse](knowledge/ui.md#banks-that-collapse).
 
 Per-app configs are saved separately as `config/<module_name>_config.json`: the dialog's settings, `dialog_position`, `flowgraph_position`, and whatever the window's `SAVED_SETTINGS` names, all merged in by `update_app_config`.
 
@@ -260,7 +263,7 @@ keys owned by another window and replaces the file atomically.
 
 Four radio backends are supported, selected via `radio_type` in settings.
 Two of them go one way only, and **the launcher grid arranges itself around
-whichever is chosen** — see [flip tiles](devnotes/ui.md#the-launcher-grid-and-tiles-that-flip).
+whichever is chosen** — see [flip tiles](knowledge/ui.md#the-launcher-grid-and-tiles-that-flip).
 Pick the VSG60 and every tile turns to its transmitting side; pick the BB60D
 and they all turn to receive, with the transmit-only tiles dimmed out. This
 replaced a dialog that fired after the click, and before that an app that
@@ -270,11 +273,11 @@ cable that is not the problem.
 - **HackRF One** — USB SDR via SoapySDR (`soapy.sink('driver=hackrf', ...)`). No IP address needed; OK button always enabled. Gain set via `set_gain(0, 'VGA', value)` (0–47 dB) and `set_gain(0, 'AMP', 0)`.
 - **Ettus USRP** — Network SDR via UHD (`gnuradio-uhd`). IP address set in the settings gear dialog; OK button disabled until there is one. Gain set via `set_gain(value, 0)`.
 - **Signal Hound VSG60** — USB vector signal generator (VID:PID `2817:0008`). Transmit only. No SoapySDR module and no stock GNU Radio block exists, so `apps/vsg_sink.py` wraps the vendor C API (`libvsg_api.so`) with ctypes as a `gr.sync_block`. No IP address needed; OK button always enabled. Level set via `set_level(dBm)` — a *calibrated absolute* output power, not a relative gain index.
-- **Signal Hound BB60D** — USB spectrum analyser (VID:PID `2817:0007`). Receive only. It *is* a SoapySDR device, but not one `gr-soapy` can drive, so `apps/bb60_source.py` wraps the raw SoapySDR Python binding as a `gr.sync_block` — see [the BB60D section](devnotes/radios.md#signal-hound-bb60d-as-a-receiver) for why, and for the things about it that are not like the other radios.
+- **Signal Hound BB60D** — USB spectrum analyser (VID:PID `2817:0007`). Receive only. It *is* a SoapySDR device, but not one `gr-soapy` can drive, so `apps/bb60_source.py` wraps the raw SoapySDR Python binding as a `gr.sync_block` — see [the BB60D section](knowledge/radios.md#signal-hound-bb60d-as-a-receiver) for why, and for the things about it that are not like the other radios.
 
 The VSG60's and the BB60D's own details - limits, locking, gain, and
 what each does that the other radios do not - are in
-[devnotes/radios.md](devnotes/radios.md).
+[knowledge/radios.md](knowledge/radios.md).
 
 ### Output Power
 
@@ -360,12 +363,12 @@ frequency and sample-rate callbacks work through the existing HackRF path.
    and `scripts/test_launcher_gui.py` both read that one table, so a row
    added there appears in both.
 4. Once the app has taught something worth keeping, write it into
-   `devnotes/` - a file of its own for a new subject - and add a row to the
-   table under [Where the details are](#where-the-details-are-devnotes).
+   `knowledge/` - a file of its own for a new subject - and add a row to the
+   table under [Where the details are](#where-the-details-are-knowledge).
 
 ## Environment
 
 - Conda environment name: `gnu` (defined in `linux/environment.yml`, prefix: `/home/user/miniconda3/envs/gnu`; on Windows `windows/environment.yml`)
-- `linux/environment.yml` pins conda-forge builds only, the HackRF's and the RTL-SDR's SoapySDR modules included - see [machines](devnotes/machines.md#building-the-environment-on-a-new-linux-machine).
+- `linux/environment.yml` pins conda-forge builds only, the HackRF's and the RTL-SDR's SoapySDR modules included - see [machines](knowledge/machines.md#building-the-environment-on-a-new-linux-machine).
 - Python 3.12, GNU Radio 3.10.12, PyQt5 5.15, UHD 4.8
 - `linux/start_app.sh` activates `gnu` from `~/miniconda3`; edit its `source` line if conda lives elsewhere.

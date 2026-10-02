@@ -803,7 +803,7 @@ def main(top_block_cls=fmVideoXmitter, options=None, app=None, config_values=Non
 
     # Inside the launcher its event loop is already running: hand the window
     # back for it to watch, rather than starting a loop of our own - see the
-    # ATSC transmitter's notes in devnotes/atsc.md for what that did.
+    # ATSC transmitter's notes in knowledge/atsc.md for what that did.
     if not own_app:
         return tb
     return app.exec_()

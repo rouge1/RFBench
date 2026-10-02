@@ -1,6 +1,6 @@
 # FM video: the transmitter and the receiver
 
-One of the notes in `devnotes/`. What applies everywhere, and which
+One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 ## FM Video Transmitter

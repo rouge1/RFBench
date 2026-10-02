@@ -22,7 +22,7 @@ through 20-30 dB of pad, or an antenna on each. It has been run on two
 antennas, which decoded to about −40 dBm; a cable is what makes the levels a
 measurement. Either way this refuses anything above ``MAX_LEVEL_DBM`` - a
 HackRF's receive input is damaged above -5 dBm and the VSG60 reaches +10. See
-[ism](../devnotes/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).
+[ism](../knowledge/ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).
 
 **With the receiver on another machine**, ``--transmit-only`` runs just the
 VSG half and prints the clock time each level starts; the receiver's Heard
@@ -341,7 +341,7 @@ def main():
 
     # The VSG runs in a process of its own. Opened in this one after the
     # HackRF is streaming, it takes every sample and transmits none of them
-    # - measured, and not understood; see devnotes/radios.md. Its timetable
+    # - measured, and not understood; see knowledge/radios.md. Its timetable
     # comes back on its stdout, and each line is stamped as it arrives.
     ok = True
     proc = None

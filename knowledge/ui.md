@@ -1,6 +1,6 @@
 # The desktop launcher, its dialogs and its windows
 
-One of the notes in `devnotes/`. What applies everywhere, and which
+One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 ## The launcher grid, and tiles that flip

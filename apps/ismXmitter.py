@@ -61,7 +61,7 @@ DEFAULT_RATE = 8e6
 #: rtl_433 captures 250 kHz wide, so 400 kHz puts the leak cleanly outside it.
 #: hackrf_ook's 27 kHz and URH's 3.9 kHz are sized to dodge the *receiver's*
 #: DC spike and are an order of magnitude too small for this.
-#: [ism](../devnotes/ism.md#the-carrier-never-turns-off)
+#: [ism](../knowledge/ism.md#the-carrier-never-turns-off)
 DEFAULT_OFFSET_KHZ = 400.0
 OFFSET_MIN_KHZ = 50.0
 OFFSET_MAX_KHZ = 900.0

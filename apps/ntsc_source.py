@@ -590,7 +590,7 @@ class ntsc_source(gr.sync_block):
         a real clip, before the encoder was given more threads: 74 gaps in
         three seconds, the longest 18.6 ms, 25% of the air time missing -
         and the picture still decoded, so only a look at the envelope showed
-        it at all. The same trap as the HackRF ATSC case in devnotes/atsc.md.
+        it at all. The same trap as the HackRF ATSC case in knowledge/atsc.md.
 
         So the wait is two milliseconds, long enough to catch a frame that
         is about to arrive and far too short to take the transmitter off

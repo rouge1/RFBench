@@ -9,7 +9,7 @@ No radio is involved and nothing is transmitted: `rtl_433` decodes files, so
 the whole encoder can be checked with nothing plugged in. That is the point of
 building this half first, and it is why `rtl_433` is worth having on the bench
 even though nothing in the launcher ever calls it - see
-[devnotes/ism.md](../devnotes/ism.md#rtl_433-as-the-referee).
+[knowledge/ism.md](../knowledge/ism.md#rtl_433-as-the-referee).
 
 It grades at three depths, cheapest first, because a failure at one of them
 means something quite different from a failure at the next:

@@ -1,6 +1,6 @@
 # The ISM bands: 433 MHz, and a frame a receiver will believe
 
-One of the notes in `devnotes/`. What applies everywhere, and which
+One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 This is the research that came before any code, written down on
