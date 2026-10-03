@@ -330,6 +330,51 @@ found the hard way:
   repeat the VSG60 plays from its own memory must not outlive the
   script.
 
+## Wrong clocks, wrong UAPs, and what libbtbb passes
+
+bluey asked for an independent check of how a receiver ends up confirming
+a wrong UAP. It had assumed a wrong CLK6-1 leaves the type and length
+alone and the CRC then passes by chance, 2^-16. The encoder here was the
+source and libbtbb the decoder: DM1, DH1 and DH3 at every clock, many
+lengths, 20 random payloads each, 288,000 packets (2026-10-03).
+
+- **One UAP per wrong clock.** At any wrong CLK6-1, exactly one UAP passes
+  the HEC. A full 64 × 256 libbtbb sweep agrees. UAP' XOR UAP depends only
+  on the true and the assumed clock, never on the header's fields or the
+  UAP itself.
+- **A schedule keeps a group of them.** A receiver whose clock is off by a
+  constant shift sees one UAP' throughout only for some shifts. The group
+  of consistent UAP' XOR UAP depends on the schedule:
+
+  | Schedule | Shifts that agree throughout | UAP' XOR UAP |
+  |---|---|---|
+  | every slot | 0, 32 | 00, D6 |
+  | every 2 or 6 slots (master slots, DH5) | 0, 1, 32, 33 | 00, 0B, D6, DD |
+  | every 4 slots (DH3, DM3) | 8 shifts | 00, 0B, 59, 52, D6, DD, 8F, 84 |
+  | every 8, 16, 32 slots | 16, 32, 64 | |
+
+- **A wrong clock always changes the type or the length.** Counted from
+  the whitening sequence: 0 of 4032 (clock, wrong clock) pairs leave both
+  the TYPE bits and the payload length field unchanged, for 1-byte and
+  2-byte payload headers alike. Only 4.8 % even keep the type. So the
+  mechanism assumed above cannot happen at all.
+- **The wrong passes come from libbtbb's types 7 and 13.**
+  - Every wrong-clock payload pass that held for all 20 payloads of a
+    class was one libbtbb had parsed as type 7 or 13. There were 45 of
+    them, about 3e-3 of the (UAP, clock, length) classes.
+  - libbtbb passes those two types about 6e-4 of the time per wrong clock
+    even with random bits after the header, whether or not its transport
+    is set to ACL.
+  - What it does with them is not known here: there is no libbtbb source
+    on this machine.
+  - Another 47 classes had wrong passes for only some of their payloads,
+    which do not repeat from packet to packet.
+- **What bluey did with it.** It now counts CRC evidence only from types
+  that carry a length: FHS, DM1/DH1, DM3/DH3, DM5/DH5. On its real
+  captures, false passes had been only at parsed types 13 and 7. After
+  the change it confirmed none of 4924 wrong claims and 103 of 176 true
+  UAPs, refuting none.
+
 Still open:
 
 - **The FEC 2/3 tail zeros of a DM packet are not whitened.** Whitening
