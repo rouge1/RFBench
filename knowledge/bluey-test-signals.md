@@ -316,6 +316,14 @@ found the hard way:
   - The carrier offset was 70-280 Hz between runs.
   - The sample clocks differed by **-0.37 ppm**, the same in two
     separate runs, with half a sample of jitter left.
+- **At 0 dBm**, the same antennas, about 30 dB in the channel and still
+  no ADC overflow:
+  - 97 % of payloads passed the CRC byte-exact, 498 of 512.
+  - The raw bit error rate was 2e-4.
+  - The clock offset was -0.36 ppm again, with a third of a sample of
+    jitter.
+
+  That is the level for clean over-the-air data at this spacing.
 - **Stopping.** `bt_tx.py` turns SIGTERM, SIGHUP and SIGINT into a flag,
   so a `timeout`, a dropped ssh session or Ctrl-C stops the repeating
   waveform and still writes the sidecar, marked `interrupted_by`. A
