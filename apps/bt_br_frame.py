@@ -251,7 +251,7 @@ class Packet:
     """
 
     def __init__(self, lap, uap, clk, ptype, body=b'', lt_addr=1, flow=1, arqn=0,
-                 seqn=0, llid=0b10, payload_flow=1, whiten=True):
+                 seqn=0, llid=0b10, payload_flow=1, whiten=True, raw_payload=None):
         if ptype not in PACKET_TYPES:
             raise ValueError("no packet type %r; one of %s"
                              % (ptype, ', '.join(PACKET_TYPES)))
@@ -269,15 +269,32 @@ class Packet:
         #: bits 10-17, before whitening and FEC.
         self.header18 = bits_int(header)
 
-        if two_byte is None:                     # NULL and POLL
+        if raw_payload is not None:
+            # What an encrypted link looks like to a sniffer: E0 covers the
+            # whole payload - its header, body and CRC - so the header above
+            # checks out and these bytes, sent as they are, do not.
+            if two_byte is None or body:
+                raise ValueError("raw_payload replaces the body of a packet "
+                                 "that has one")
+            longest_raw = (2 if two_byte else 1) + longest + 2
+            if not 0 < len(raw_payload) <= longest_raw:
+                raise ValueError("%s's payload is 1 to %d bytes, not %d"
+                                 % (ptype, longest_raw, len(raw_payload)))
+            payload = bytes_bits(raw_payload)
+        elif two_byte is None:                   # NULL and POLL
             payload = []
         else:
             payload = (payload_header(llid, payload_flow, len(body), two_byte)
                        + bytes_bits(body))
             payload += crc16(payload, uap)
         #: Payload header, body and CRC as bytes, before whitening; empty for
-        #: a packet with no payload.
+        #: a packet with no payload, and the raw bytes for an encrypted one.
         self.payload_full = bits_bytes(payload)
+        #: Whether the payload's CRC holds under this UAP, as a plaintext
+        #: payload's always does.
+        self.payload_valid = raw_payload is None and two_byte is not None
+        if raw_payload is not None:
+            self.payload_valid = crc16(payload[:-16], uap) == payload[-16:]
 
         if whiten:
             w = whitening(clk, len(header) + len(payload))
@@ -305,6 +322,7 @@ class Packet:
             'header18': self.header18,
             'payload_hex': self.body.hex(),
             'payload_full_hex': self.payload_full.hex(),
+            'payload_valid': self.payload_valid,
             'air_bits': bit_string(self.bits),
         }
 

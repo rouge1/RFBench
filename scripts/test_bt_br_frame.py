@@ -249,6 +249,24 @@ def check_libbtbb():
         check('%s at CLK6-1 %s' % (ptype, ' '.join('%02x' % c for c in clk6s)),
               bad, [])
         check('%s refused one clock tick off' % ptype, refused, len(clk6s))
+    # An encrypted-looking payload: libbtbb takes the header and fails the CRC.
+    for ptype, n in (('DM1', 20), ('DH1', 30), ('DH3', 187)):
+        raw = bytes((i * 37 + 11) & 0xFF for i in range(n))
+        p = br.Packet(0x9E8B33, 0x47, 0x0123400, ptype, raw_payload=raw)
+        pkt = lib.btbb_packet_new()
+        bits = bytes(p.bits[4:])
+        lib.btbb_packet_set_data(pkt, ctypes.cast(ctypes.c_char_p(bits),
+                                 ctypes.POINTER(ctypes.c_char)), len(bits), 0,
+                                 ((p.clk >> 1) & 0x3F) << 1)
+        lib.btbb_packet_set_uap(pkt, p.uap)
+        lib.btbb_packet_set_flag(pkt, BTBB_CLK6_VALID, 1)
+        lib.btbb_packet_set_flag(pkt, BTBB_WHITENED, 1)
+        hdr = lib.btbb_decode_header(pkt)
+        got = (hdr, lib.btbb_packet_get_header_packed(pkt) & 0x3FFFF,
+               lib.btbb_decode_payload(pkt) == 10)
+        lib.btbb_packet_unref(pkt)
+        check('%s encrypted-looking: header taken, CRC fails' % ptype, got,
+              (1, p.header18, False))
 
 
 def discriminate(iq):
@@ -354,6 +372,16 @@ def main():
         p = br.Packet(0x9E8B33, 0x47, 0x0123400, ptype)
         check('%s is 126 bits, no payload (section 6.5.1)' % ptype,
               (len(p.bits), p.payload_full), (126, b''))
+
+    print('encrypted-looking payloads')
+    for ptype, n in (('DM1', 20), ('DH1', 30), ('DH3', 187)):
+        raw = bytes((i * 37 + 11) & 0xFF for i in range(n))
+        p = br.Packet(0x9E8B33, 0x47, 0x0123400, ptype, raw_payload=raw)
+        plain = br.Packet(0x9E8B33, 0x47, 0x0123400, ptype,
+                          br.seq_body(1, n - (4 if ptype == 'DH3' else 3)))
+        check('%s: same header bits as plaintext, raw bytes sent' % ptype,
+              (p.bits[:126], p.payload_full, p.payload_valid),
+              (plain.bits[:126], raw, False))
 
     print('whitened multi-slot packets')
     for ptype, slots in (('DH3', 3), ('DH5', 5)):

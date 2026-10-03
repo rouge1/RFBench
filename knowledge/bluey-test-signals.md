@@ -268,8 +268,29 @@ found the hard way:
   header-only packets, 126 bits, which libbtbb takes at the true clock and
   refuses a tick off.
 
-  A file of the real clock offset between a transmitter and the SDR is
-  still to come. It needs stage 2, or a ppm offset added to the synthesis.
+- **Then the cases a tracker gets wrong.** bluey's tracker never settled
+  on a wrong UAP in any of those files. Its three known wrong ones, on
+  real captures, all came from encrypted links and from devices heard on
+  one channel or rarely. `bt_synth_multi.py hard` writes `hard_a1` to
+  `a3` (tuning) and `hard_b1` and `b2` (hold-out). Every master has a
+  role:
+  - **A strong-weak pair on adjacent channels**, the weak one's bursts
+    inside the strong one's.
+  - **Thin masters**, on one channel.
+  - **A pair that collides** 30-70 % on a shared channel.
+  - **A DH3 every 4 slots.**
+  - **Ordinary hoppers.**
+
+  About half of every file's masters are encrypted-looking: a valid
+  header over a payload of random bytes the CRC rejects, built with
+  `Packet(raw_payload=...)`. Each burst says `payload_valid`, `collision`
+  and `leakage`. Half the masters with their own slot grid sit within
+  150 samples of half a slot.
+
+  bluey's user chose stage 2, over the air, for the clock offset rather
+  than a ppm offset in the synthesis. There is no 10 MHz reference cable
+  yet. The VSG60 has BNC and the BB60D SMA, so the first run will be
+  free-running.
 
 Still open:
 

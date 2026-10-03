@@ -249,6 +249,279 @@ def header_only(snr, seed, lap, uap):
     return n_samples, bursts, entries, [dev], r_noise
 
 
+# --- hard: the cases a tracker gets wrong --------------------------------------
+
+HARD_SLOTS = 320                                 # 200 ms
+#: Packet mix: plaintext, then encrypted-looking (a payload the CRC rejects).
+MIX_PLAIN = [('NULL', .25), ('POLL', .25), ('DM1', .2), ('DH1', .2), ('DH3', .1)]
+MIX_ENC = [('NULL', .2), ('POLL', .2), ('DM1', .2), ('DH1', .2), ('DH3', .2)]
+ROLES = {6: ['leak_strong', 'leak_weak', 'thin', 'coll_x', 'coll_y', 'periodic'],
+         7: ['leak_strong', 'leak_weak', 'thin', 'thin', 'coll_x', 'coll_y',
+             'periodic'],
+         8: ['leak_strong', 'leak_weak', 'thin', 'thin', 'coll_x', 'coll_y',
+             'periodic', 'hopper']}
+
+
+def _pick(rng, mix):
+    r, acc = rng.uniform(), 0.0
+    for name, w in mix:
+        acc += w
+        if r < acc:
+            return name
+    return mix[-1][0]
+
+
+def _raw_payload(rng, ptype, uap, full=False):
+    """Random bytes the length of a real payload of this type, which the CRC
+    under ``uap`` does not accept: an encrypted payload, as a sniffer sees it."""
+    _c, _s, _fec, two_byte, longest = br.PACKET_TYPES[ptype]
+    body = longest if full else int(rng.integers(1, longest + 1))
+    n = (2 if two_byte else 1) + body + 2
+    while True:
+        raw = rng.integers(0, 256, n, dtype=np.uint8).tobytes()
+        bits = br.bytes_bits(raw)
+        if br.crc16(bits[:-16], uap) != bits[-16:]:
+            return raw
+
+
+def _overlap(a0, a1, b0, b1):
+    return max(0, min(a1, b1) - max(a0, b0)) / min(a1 - a0, b1 - b0)
+
+
+def hard_cases(seed, ids, n_slots=HARD_SLOTS):
+    """One file of the cases a blind tracker gets wrong, with full truth.
+
+    Every master has a role:
+
+    * ``leak_strong`` and ``leak_weak`` - 30-40 dB and 6-12 dB on adjacent
+      channels, each on that one channel, the weak one's bursts all inside
+      the strong one's, so the strong LAP leaks into the weak one's channel;
+    * ``thin`` - 10-40 bursts on one channel, the first of them 6-12 dB;
+    * ``coll_x`` and ``coll_y`` - hoppers sharing a channel, a few of whose
+      bursts collide on it, 30-70 % of a burst;
+    * ``periodic`` - a DH3 every 4 slots, hopping;
+    * ``hopper`` - random slots and channels, as in the md files.
+
+    About half the masters are encrypted-looking, whatever their role. The
+    strong leaker and the second thin master are periodic, every 2 slots;
+    the rest send at random. Half the masters with a grid of their own have
+    it within 150 samples of half a slot, the rest anywhere well inside it.
+    """
+    r_who, r_when, r_phase, r_noise = [np.random.default_rng(s) for s in
+                                       np.random.SeedSequence(seed).spawn(4)]
+    roles = ROLES[len(ids)]
+    enc = set(r_who.choice(len(ids), len(ids) // 2, replace=False).tolist())
+
+    # Channels: the leaking pair's two are theirs alone; the collision
+    # channel is shared by the colliding pair and nobody else.
+    pairs = [c for c in CHANNELS if c + 1 in CHANNELS]
+    c_leak = int(r_who.choice(pairs))
+    c_weak = c_leak + 1 if r_who.uniform() < 0.5 else c_leak
+    c_strong = c_leak if c_weak != c_leak else c_leak + 1
+    free = [c for c in CHANNELS if c not in (c_strong, c_weak)]
+    c_coll = int(r_who.choice(free))
+    others = [c for c in free if c != c_coll]
+
+    # Half the masters whose grid is their own sit within 150 samples of half
+    # a slot, where rounding a time to its slot is least certain, and half
+    # anywhere well inside one. The two followers take theirs from a leader.
+    leaders = [i for i, r in enumerate(roles) if r not in ('leak_weak', 'coll_y')]
+    near = set(r_who.permutation(leaders)[:(len(leaders) + 1) // 2].tolist())
+
+    def offset(i):
+        if i in near:
+            return int(r_who.integers(SLOT // 2 - 150, SLOT // 2 + 151))
+        return int(r_who.integers(2000, SLOT - 2000))
+
+    devices = []
+    thin_seen = 0
+    for i, ((lap, uap), role) in enumerate(zip(ids, roles)):
+        d = {'lap': lap, 'uap': uap, 'role': role, 'encrypted': i in enc,
+             'lt_addr': int(r_who.integers(1, 8)),
+             'cfo_hz': float(round(r_who.choice([-1, 1]) * r_who.uniform(1e3, 12e3))),
+             'timing_frac': float(round(r_who.uniform(0, 1), 3)),
+             'clk_at_slot0': int(r_who.integers(0, 1 << 26)) * 4,
+             'slot_offset': offset(i), 'periodic_slots': None}
+        if role == 'leak_strong':
+            d.update(snr_db=float(r_who.integers(30, 41)), n_bursts=int(r_who.integers(40, 61)),
+                     channels_mhz=[2402.0 + c_strong], periodic_slots=2)
+        elif role == 'leak_weak':
+            d.update(snr_db=float(r_who.integers(6, 13)), n_bursts=int(r_who.integers(10, 26)),
+                     channels_mhz=[2402.0 + c_weak])
+        elif role == 'thin':
+            thin_seen += 1
+            low = thin_seen == 1
+            d.update(snr_db=float(r_who.integers(6, 13) if low else r_who.integers(12, 21)),
+                     n_bursts=int(r_who.integers(10, 41)),
+                     channels_mhz=[2402.0 + float(r_who.choice(others))],
+                     periodic_slots=None if low else 2)
+        elif role in ('coll_x', 'coll_y'):
+            chs = r_who.choice(others, int(r_who.integers(2, 4)), replace=False)
+            d.update(snr_db=float(r_who.integers(8, 21)),
+                     n_bursts=int(r_who.integers(20, 41) if role == 'coll_x' else r_who.integers(15, 31)),
+                     channels_mhz=sorted([2402.0 + c_coll] + [2402.0 + c for c in chs]))
+        else:
+            chs = r_who.choice(others, int(r_who.integers(3, 6)), replace=False)
+            d.update(snr_db=float(r_who.integers(8, 21)),
+                     n_bursts=int(r_who.integers(20, 31)) if role == 'periodic'
+                     else int(r_who.choice([3, 6, 10, 15, 25])),
+                     channels_mhz=sorted(2402.0 + c for c in chs),
+                     periodic_slots=4 if role == 'periodic' else None)
+        devices.append(d)
+    by_role = {}
+    for d in devices:
+        by_role.setdefault(d['role'], d)
+    strong, weak = by_role['leak_strong'], by_role['leak_weak']
+    cx, cy = by_role['coll_x'], by_role['coll_y']
+    # The weak leaker sits just behind the strong one in every slot, and the
+    # second collider 30-70 % of a 366-bit burst behind the first.
+    # Neither delay may carry past the end of a slot: the follower's burst
+    # would then sit in the slot before, a slave's, on the wrong clock.
+    lag = int(r_who.integers(100, 1500))
+    strong['slot_offset'] = min(strong['slot_offset'], SLOT - 500 - lag)
+    weak['slot_offset'] = strong['slot_offset'] + lag
+    frac = float(r_who.uniform(0.3, 0.7))
+    lag = int(round((1 - frac) * 366 * SPS))
+    cx['slot_offset'] = min(cx['slot_offset'], SLOT - 500 - lag)
+    cy['slot_offset'] = cx['slot_offset'] + lag
+
+    busy_ch = {}                                  # channel -> [(lo, hi, burst#)]
+    busy_dev = {d['lap']: set() for d in devices}
+    bursts, entries = [], []
+
+    def free_slots(d, k, slots):
+        return all(j not in busy_dev[d['lap']] for j in range(k, k + slots + 1))
+
+    def clear(ch, lo, hi, allow=()):
+        return all(not (a < hi and lo < b) or n in allow
+                   for a, b, n in busy_ch.get(ch, []))
+
+    def place(d, k, ch, ptype, seq, allow=(), full=False):
+        clk = (d['clk_at_slot0'] + 2 * k) & 0x0FFFFFFF
+        if d['encrypted'] and ptype not in ('NULL', 'POLL'):
+            p = br.Packet(d['lap'], d['uap'], clk, ptype, lt_addr=d['lt_addr'],
+                          flow=1, arqn=int(r_when.integers(0, 2)), seqn=seq & 1,
+                          raw_payload=_raw_payload(r_when, ptype, d['uap'], full))
+        else:
+            p = packet(r_when, d['lap'], d['uap'], clk, ptype, d['lt_addr'], seq)
+        start = k * SLOT + d['slot_offset']
+        lo, hi = start - GUARD, start + burst_samples(p) + GUARD
+        if not free_slots(d, k, p.slots) or not clear(ch, lo, hi, allow):
+            return None
+        busy_ch.setdefault(ch, []).append((lo, hi, len(entries)))
+        busy_dev[d['lap']].update(range(k, k + p.slots + 1))
+        bursts.append((start, p, ch, amplitude(d['snr_db']), d['cfo_hz'],
+                       d['timing_frac'], r_phase.uniform(0, 2 * np.pi)))
+        e = burst_entry(start, p, ch, d)
+        e.update(collision=None, leakage=None)
+        entries.append(e)
+        return len(entries) - 1
+
+    def mix(d):
+        return MIX_ENC if d['encrypted'] else MIX_PLAIN
+
+    def one_slot(d):
+        while True:
+            t = _pick(r_when, mix(d))
+            if br.PACKET_TYPES[t][1] == 1:
+                return t
+
+    last = n_slots - 6
+    # 1. The strong leaker: every 2 slots from a random start, one channel.
+    k0 = int(r_when.integers(1, (last - 2 * strong['n_bursts']) // 2)) * 2
+    strong_idx = []
+    for n in range(strong['n_bursts']):
+        strong_idx.append(place(strong, k0 + 2 * n, strong['channels_mhz'][0],
+                                one_slot(strong), n))
+    # 2. The weak leaker, in a random subset of the strong one's slots.
+    for n, j in enumerate(sorted(r_when.choice(len(strong_idx), weak['n_bursts'], replace=False))):
+        se = entries[strong_idx[j]]
+        k = (se['start_sample'] - strong['slot_offset']) // SLOT
+        i = place(weak, k, weak['channels_mhz'][0], one_slot(weak), n)
+        if i is None:
+            raise RuntimeError('weak leaker would not fit')
+        sp, wp = bursts[strong_idx[j]][1], bursts[i][1]
+        ov = _overlap(se['start_sample'], se['start_sample'] + len(sp.bits) * SPS,
+                      entries[i]['start_sample'], entries[i]['start_sample'] + len(wp.bits) * SPS)
+        entries[i]['leakage'] = {'with_lap': strong['lap'], 'with_uap': strong['uap'],
+                                 'with_start_sample': se['start_sample'],
+                                 'channel_offset_mhz': strong['channels_mhz'][0] - weak['channels_mhz'][0],
+                                 'overlap_frac': round(ov, 3)}
+        se['leakage'] = dict(entries[i]['leakage'], with_lap=weak['lap'], with_uap=weak['uap'],
+                             with_start_sample=entries[i]['start_sample'],
+                             channel_offset_mhz=-entries[i]['leakage']['channel_offset_mhz'])
+    # 3. Collisions: 5-8 slots where both colliders send a 366-bit packet on
+    #    the shared channel. The second's grid is behind the first's, so the
+    #    same slot index puts them 30-70 % on top of each other.
+    ch = 2402.0 + c_coll
+    n_coll, done = int(r_when.integers(5, 9)), 0
+    for k in r_when.permutation(range(2, last, 2)).tolist():
+        if done == n_coll:
+            break
+        tx = 'DM1' if r_when.uniform() < 0.5 else 'DH1'
+        ty = 'DM1' if r_when.uniform() < 0.5 else 'DH1'
+        ix = place(cx, k, ch, tx, done, full=True)
+        if ix is None:
+            continue
+        iy = place(cy, k, ch, ty, done, allow=(ix,), full=True)
+        if iy is None:                            # undo x's and try elsewhere
+            busy_ch[ch].pop()
+            busy_dev[cx['lap']].difference_update(range(k, k + 2))
+            bursts.pop()
+            entries.pop()
+            continue
+        a, b = entries[ix], entries[iy]
+        ov = _overlap(a['start_sample'], a['start_sample'] + len(a['air_bits']) * SPS,
+                      b['start_sample'], b['start_sample'] + len(b['air_bits']) * SPS)
+        a['collision'] = {'with_lap': cy['lap'], 'with_uap': cy['uap'],
+                          'with_start_sample': b['start_sample'], 'overlap_frac': round(ov, 3)}
+        b['collision'] = {'with_lap': cx['lap'], 'with_uap': cx['uap'],
+                          'with_start_sample': a['start_sample'], 'overlap_frac': round(ov, 3)}
+        done += 1
+    if done < n_coll:
+        raise RuntimeError('only %d of %d collisions fit' % (done, n_coll))
+    # 4. The periodic ones that are left: every 2 or 4 slots, a channel each
+    #    time from their own set.
+    for d in devices:
+        if d['periodic_slots'] and d['role'] != 'leak_strong':
+            P, n = d['periodic_slots'], d['n_bursts']
+            for _ in range(200):
+                k0 = int(r_when.integers(1, (last - P * n) // 2)) * 2
+                ok = True
+                for m in range(n):
+                    t = 'DH3' if d['role'] == 'periodic' else one_slot(d)
+                    chs = r_when.permutation(d['channels_mhz']).tolist()
+                    if not any(place(d, k0 + P * m, c, t, m) is not None for c in chs):
+                        ok = False
+                        break
+                if ok:
+                    break
+                # Take this attempt back and try another start.
+                keep = [i for i, e in enumerate(entries) if e['lap'] != d['lap']]
+                bursts[:] = [bursts[i] for i in keep]
+                entries[:] = [entries[i] for i in keep]
+                busy_dev[d['lap']].clear()
+                for c in busy_ch:
+                    busy_ch[c] = [(a, b, n_) for a, b, n_ in busy_ch[c]
+                                  if n_ < len(entries)]
+            else:
+                raise RuntimeError('periodic LAP %06X would not fit' % d['lap'])
+    # 5. Everyone else's remaining bursts at random slots.
+    for d in devices:
+        have = sum(e['lap'] == d['lap'] for e in entries)
+        for k in r_when.permutation(range(2, last, 2)).tolist():
+            if have >= d['n_bursts']:
+                break
+            if place(d, k, float(r_when.choice(d['channels_mhz'])),
+                     _pick(r_when, mix(d)), have) is not None:
+                have += 1
+        if have < d['n_bursts']:
+            raise RuntimeError('LAP %06X: %d of %d bursts' % (d['lap'], have, d['n_bursts']))
+    order = sorted(range(len(entries)), key=lambda i: entries[i]['start_sample'])
+    return (n_slots * SLOT, [bursts[i] for i in order], [entries[i] for i in order],
+            devices, r_noise)
+
+
 # --- writing ------------------------------------------------------------------
 
 
@@ -269,7 +542,7 @@ def write(out_iq, out_side, stem, n_samples, bursts, entries, devices,
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('what', choices=['md', 'hdr', 'noise'])
+    ap.add_argument('what', choices=['md', 'hdr', 'noise', 'hard'])
     ap.add_argument('--out', help='one folder for both files, instead of '
                     "bluey-ox-walker's data/iq and data/sidecar")
     args = ap.parse_args()
@@ -302,6 +575,18 @@ def main():
                       *header_only(snr, seed, lap, uap),
                       {'seed': seed, 'snr_db': float(snr), 'lap': lap, 'uap': uap,
                        'symbol_phase': (int(bt_synth.LEAD_SLOTS * SLOT) + HDR_OFFSET) % SPS})
+    elif args.what == 'hard':
+        # New identities, past every one the md and hdr files used.
+        used = len(pool)
+        sizes = {'a1': 6, 'a2': 7, 'a3': 8, 'b1': 7, 'b2': 8}
+        seeds = {'a1': 301, 'a2': 302, 'a3': 303, 'b1': 401, 'b2': 402}
+        more = identities(2026_10_03, used + sum(sizes.values()))[used:]
+        i = 0
+        for name, n in sizes.items():
+            ids, i = more[i:i + n], i + n
+            write(out_iq, out_side, 'hard_' + name, *hard_cases(seeds[name], ids),
+                  {'set': 'A (tuning)' if name[0] == 'a' else 'B (hold-out)',
+                   'seed': seeds[name]})
     else:
         # Seeds of their own: seed 1's noise is already the noise of every
         # hdr file with seed 1, and a noise-only reference that shared it
