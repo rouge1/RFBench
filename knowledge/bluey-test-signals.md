@@ -292,6 +292,36 @@ found the hard way:
   yet. The VSG60 has BNC and the BB60D SMA, so the first run will be
   free-running.
 
+## Stage 2: the first over-the-air runs, 2026-10-03
+
+- **The rig.** `scripts/bt_tx.py` on the work laptop (`ssh worklaptop1`)
+  plays a 256-slot loop of 42 DH5s on 2445 MHz from the VSG60 at
+  2441 MHz, 20 MS/s, through an antenna. `scripts/bt_ota_check.py` on
+  the bench machine records the BB60D at 2441 MHz, 20 MS/s and 60 %
+  gain, through an antenna, and grades every burst against the loop's
+  truth. The references are free-running; there is no 10 MHz cable yet.
+- **The level.** At these antennas' spacing, -40 dBm was below the
+  room's noise and -30 too weak to decode. -20 dBm gave about 9 dB in
+  the channel and -10 dBm about 19 dB: the link is linear. The BB60D sat
+  near -72 dBFS with no ADC overflow, so it was nowhere near overdriven.
+  The earlier reading that the level did not scale from -30 to -20 came
+  from a percentile that was mostly noise at those levels.
+- **What came through at -10 dBm.**
+  - Every burst sent was found and identified in order.
+  - libbtbb took every header at the true UAP and clock.
+  - About 57 % of DH5 payloads passed the CRC byte-exact.
+  - The raw bit error rate was 1e-3, from a plain discriminator with no
+    timing recovery, about what the synthetic files give at 16-17 dB.
+    The errors are a few per burst, spread out, not interference.
+  - The carrier offset was 70-280 Hz between runs.
+  - The sample clocks differed by **-0.37 ppm**, the same in two
+    separate runs, with half a sample of jitter left.
+- **Stopping.** `bt_tx.py` turns SIGTERM, SIGHUP and SIGINT into a flag,
+  so a `timeout`, a dropped ssh session or Ctrl-C stops the repeating
+  waveform and still writes the sidecar, marked `interrupted_by`. A
+  repeat the VSG60 plays from its own memory must not outlive the
+  script.
+
 Still open:
 
 - **The FEC 2/3 tail zeros of a DM packet are not whitened.** Whitening

@@ -87,6 +87,11 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   down rather than just this feature. Verified on the unit here at
   −120 dBm: repeat starts, `waveform_active()` reads True, `stop_waveform()`
   clears it, `send_waveform()` returns only when the burst has gone.
+  A long buffer is fine: a 3.2 M-sample loop (25.6 MB, 160 ms at
+  20 MS/s) went in at once and played for the full 15-35 s asked of
+  it, and 3 s recordings caught every burst across the loop's wraps,
+  with no gap or jump in timing (2026-10-03, the Bluetooth stage 2 runs in
+  [bluey-test-signals](bluey-test-signals.md#stage-2-the-first-over-the-air-runs-2026-10-03)).
 
 - **A VSG60 and a HackRF stream together on one host - in two processes.**
   Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
