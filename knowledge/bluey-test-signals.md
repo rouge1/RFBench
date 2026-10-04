@@ -51,8 +51,10 @@ libbtbb's decode.
    ([bluetooth.md](bluetooth.md#the-bench)).
 3. **Hopping under a narrow AFH map**: 20-40 adjacent channels, so every
    hop lands inside one VSG60 tuning and is a frequency shift in
-   baseband. The master's address and clock are chosen, and bluey's
-   variant-E kernel gives the sequence.
+   baseband. The master's address and clock are chosen, and the sequence
+   comes from a hop kernel written here from the Core specification's text
+   (`apps/bt_hop.py`), not from bluey's, so that the answer the files hold
+   is not bluey's own. See [Stage 3](#stage-3-narrow-afh-hopping-2026-10-04).
 
 ## The file format bluey asked for
 
@@ -94,7 +96,7 @@ The keys it grades against, as agreed with bluey on 2026-10-02:
 | `modulation` | scheme, BT, h and symbol rate |
 | `generator_commit` | the SDR commit the file came from, `-dirty` if uncommitted |
 | `bursts` | one entry per burst, below |
-| `afh_map`, `afh_instant` | stage 3 only; bluey applies a map from `clk1_27 >= afh_instant`, as its variant E does |
+| `afh_map`, `afh_instant` | stage 3 only: the **first** map and its CLK[27:1] instant; bluey applies a map from `clk1_27 >= afh_instant`, as its variant E does. A file with a map change has more: see `afh_maps` under Stage 3 |
 
 Each burst carries:
 
@@ -403,6 +405,109 @@ clean synthetic files, two loops each at 30 dB, for comparison.
   were recorded with a scratch script and graded afterwards, so their
   `receiver` block carries `adc_overflows: 0` and no record start time.
 
+## Stage 3: narrow-AFH hopping, 2026-10-04
+
+A master hopping inside a map of 20 adjacent channels, as six files, from a hop
+kernel written here. The files are not on the air yet.
+
+- **What is in bluey's `data/`:** `synth_hop20_*.cf32` and `.json`, 40 MS/s, centre
+  2444.5 MHz, map channels 33-52 (2435-2454 MHz), address UAP `0x47` LAP
+  `0x9e8b33`, first clock `0x0123400`, seeds 3001-3006, `generator_commit`
+  `eb37d55`. 1.07 GB in all, written in 28 s by
+  `python scripts/bt_synth_hop.py --set stage3`.
+
+  | File | Packet | Bursts | Length | Channels used | Size |
+  |---|---|---|---|---|---|
+  | `hop20_dh5` | DH5 | 100 | 377 ms | 20 | 120.7 MB |
+  | `hop20_dh3` | DH3 | 120 | 302 ms | 20 | 96.7 MB |
+  | `hop20_dh1` | DH1 | 400 | 502 ms | 20 | 160.7 MB |
+  | `hop20_dh1_long` | DH1 | 1000 | 1,252 ms | 20 | 400.7 MB |
+  | `hop20_imp_dh5` | DH5 | 120 | 452 ms | 20 | 144.7 MB |
+  | `hop20_change_dh5` | DH5 | 120 | 452 ms | 23 | 144.7 MB |
+
+  `hop20_imp_dh5` carries 12 kHz of carrier offset, 0.37 of a sample of timing,
+  15 dB in 1 MHz, and every burst moved 7 samples. `hop20_change_dh5` changes
+  from channels 33-52 to 36-55 at burst 60 (clock `0x1236d0`, CLK[27:1]
+  `0x91b68`); the others use the first map throughout, from CLK[27:1]
+  `0x91a00`. The first burst of the others is on channel 35.
+- **Regenerating them gives the same bytes only within one numpy build.** The
+  files came from the project's `gnu` environment (numpy 2.2.4). The system
+  Python's numpy 1.26.4 writes the same bursts on the same channels with the
+  same sidecars, but its samples differ in the last bit of a float: 46 % of
+  samples, by at most 3e-7 of the burst amplitude, against noise 100,000 times
+  larger. Compare files from one environment.
+- **The sidecar adds these keys** to the single-channel ones, and `channel_mhz`
+  and `bt_channel` at the top level are null, since no one channel holds:
+
+  | Key | |
+  |---|---|
+  | `hopping`, `hop_channels` | `true`, and the sorted channels actually used |
+  | `afh_map`, `afh_instant` | the **first** map and its instant, CLK[27:1] |
+  | `afh_map_count`, `afh_maps` | every map, in order: `{instant, first_burst, channels}`. **Grade a file with a map change against `afh_maps`**, and against each burst's `afh_map_index`; `afh_map` alone is wrong from burst 60 on `hop20_change_dh5` |
+  | `afh_instant_meaning`, `hop_kernel`, `address_for_hop` | in words; `uap << 24 \| lap`, of which the kernel reads A27-0 |
+  | `clock_lock_note` | see below |
+  | per burst `channel`, `channel_mhz` | the RF channel, 0-78, and 2402 + channel MHz |
+  | per burst `afh_map_index`, `symbol_phase` | which map applied; `start_sample` modulo 40 |
+
+  Every burst is on an adapted sequence from the first, so the 79-channel
+  sequence a real master uses before an AFH instant is not in the files: it
+  would leave the window. The slave's slot after each packet is silent, as in
+  stage 1, so the rule that gives both slots of a pair one channel is not on
+  the air; a packet is on the channel of its first slot for its whole length.
+- **What a lock should return.** bluey told us on 2026-10-04 that its CLK27 lock
+  follows a hop array equal to the Part G rule shifted by one slot, so on an
+  adapted map it returns the true CLK[27:1] **minus one slot** (two clock
+  ticks); on a basic sequence there is no shift. It is fixing its pair roles,
+  after which the lock should return the true clock. Accept either. The
+  sidecar's `clock_lock_note` says this, dated.
+- **The kernel, `apps/bt_hop.py`,** is the connection-state selection box of
+  Core v6.0 Vol 2 Part B 2.6, basic and adapted, from the specification's text
+  alone. Four places where the text is ambiguous are resolved in its docstring:
+  the bit order of a field, the sense of a butterfly, the order of the register
+  bank, and the adapted sequence giving both slots of a pair one channel.
+  What checks it:
+  - Part G section 2's connection-state tables, all 15 (three addresses; the
+    basic sequence and four adapted maps each): 7,680 of 7,680. Two builders,
+    Sonnet and Grok, each wrote one; neither saw more than one address of the
+    three, and both passed the rest. They agree on 360,000 random clocks and
+    maps at any slot.
+  - **libbtbb's own basic kernel**, a separate C implementation: 15,000 random
+    addresses and 28-bit clocks, 10,000 master slots at this address from this
+    clock, and slave slots, with no difference. This matters because Part G stops
+    at CLK `0x40e` and never sets address bits A1, A4, A6, A12, A19, A21 or A22,
+    all of which these files use.
+  - **bluey's kernel**: no difference on master slots over Part G and over
+    210,000 random inputs, including 20-, 30- and 40-channel maps. At slave
+    slots of an adapted sequence its `single_hop_spec` differs from Part G (3,040
+    of 3,072 entries); bluey confirmed it, and its lock does not use that path.
+  - `scripts/test_bt_hop.py` holds all of this: 480 values copied from Part G, 56
+    pinned channels in the region Part G does not reach, a comparison with
+    libbtbb, and all 7,680 when `BT_HOP_PARTG` names the data.
+- **A Grok review** (34 minutes, $1.46) planted recordings and recovered the hop
+  sequence from the samples alone: 44 of 44 bursts on the channel the sidecar
+  names at 30 dB, across DH5, DH3, DH1 and the map change. It found the kernel
+  right and the tests weaker than the kernel. Every finding was checked here
+  before a change: the AFH tests graded the kernel with the kernel (now libbtbb
+  and the pins; seven changes to the kernel that every test passed before now
+  fail); `afh_map` on a change file is only the first map (now said, with a
+  count); a map naming a channel the window cannot hold was refused only if the
+  sequence landed on it (now refused at once); and `generator_commit` called a
+  tree clean when `git status` failed (now `-unchecked`).
+- **The window.** A burst's channel plus or minus 1 MHz must lie within 0.36
+  of the sample rate either side of the centre: 72 % of the rate in all, over
+  which the VSG60A stays flat
+  ([signal-hound-specs.md](signal-hound-specs.md)). At 40 MS/s that is 2430.1 to
+  2458.9 MHz. Channel 55's band edge, 2458 MHz, is flush with the BB60D's 27 MHz
+  (2431.0 to 2458.0), so the second map sits at the edge of what the receiver
+  holds. The centre, 2444.5 MHz, is between channels 42 and 43, and the
+  VSG60A's carrier feedthrough, a fixed tone at -40 dBc, falls there.
+- **Not checked:** whether symbol phase 20, which the clean files have at start
+  offset 0, is the 40 MS/s counterpart of the dead zone bluey found at 10 of
+  20 samples at 1 MS/s; page, inquiry and the response hop sequences, which
+  `bt_hop.py` does not implement; and any sample of the files on a radio.
+- **Next, with your go:** the VSG60A's longest buffer and flatness at 40 MS/s,
+  at -120 dBm, then over the air through the stage 2 chain.
+
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
 bluey asked for an independent check of how a receiver ends up confirming
@@ -454,5 +559,5 @@ Still open:
   comes before the FEC, and the encoder adds the tail. libbtbb, and so
   bluey, discards the tail, so nothing has checked those bits yet.
 - **A file of the real clock offset** between a transmitter and the SDR.
-- **Stage 2**, the same train from the VSG60 on the work laptop.
-- **Stage 3**, narrow-AFH hopping.
+- **Stage 3 over the air**: the VSG60A at 40 MS/s, its longest buffer and
+  its flatness across 20 MHz are not measured yet; see Stage 3.
