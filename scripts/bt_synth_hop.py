@@ -112,6 +112,13 @@ def channel_mhz(channel):
     return 2402.0 + channel
 
 
+def outside_window(channel, fs, center_mhz):
+    """Whether a channel's occupied band lies outside the window the sample rate
+    and centre can hold: the channel +/- 1 MHz must be inside +/- FLAT_FRACTION
+    x fs of the centre."""
+    return abs(channel_mhz(channel) - center_mhz) + HALF_BAND_MHZ > FLAT_FRACTION * fs / 1e6
+
+
 def hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz):
     """Every burst's clock and channel, checked, before any sample is made.
 
@@ -133,7 +140,7 @@ def hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz):
             raise ValueError("burst %d (clk %#x): channel %d is not 0-%d"
                              % (k, clk, channel, CHANNELS - 1))
         offset = channel_mhz(channel) - center_mhz
-        if abs(offset) + HALF_BAND_MHZ > reach:
+        if outside_window(channel, fs, center_mhz):
             raise ValueError(
                 "burst %d (clk %#x) on channel %d, %g MHz: its band %g to %g MHz is outside "
                 "+/-%g MHz (%g x %g MS/s) of the %g MHz centre"
@@ -243,12 +250,17 @@ MAP_B = list(range(36, 56))
 
 #: What the sidecar says about the instant, and about bluey's clock lock, which
 #: is a fact about bluey and not about the file: worked out on its side.
-INSTANT_MEANING = ("CLK[27:1] from which the map applies; the first map applies from "
-                   "the first burst, so every burst of the file is on an adapted sequence")
-CLOCK_LOCK_NOTE = ("bluey's CLK27 lock on an adapted map follows a hop array equal to the "
-                   "Part G rule shifted by one slot, so it returns the true CLK[27:1] minus 1 "
-                   "(two clock ticks). Accept the true clock or that. A basic sequence has "
-                   "no shift.")
+INSTANT_MEANING = ("CLK[27:1] from which a map applies. afh_map and afh_instant are the FIRST "
+                   "map and its instant only: it applies from the first burst, so every burst of "
+                   "the file is on an adapted sequence. A file with a map change has more than "
+                   "one map: afh_map_count says how many, and afh_maps lists every one, in "
+                   "order, with its instant and the burst it starts on. Grade against afh_maps "
+                   "and each burst's afh_map_index, not against afh_map alone.")
+CLOCK_LOCK_NOTE = ("As of 2026-10-04, before bluey-ox-walker's fix of its pair roles: its CLK27 "
+                   "lock on an adapted map follows a hop array equal to the Part G rule shifted "
+                   "by one slot, so it returns the true CLK[27:1] minus 1 (two clock ticks). "
+                   "Accept the true clock or that; a lock fixed since should return the true "
+                   "clock. A basic sequence has no shift.")
 HOP_KERNEL = ("apps/bt_hop.py, from Core v6.0 Vol 2 Part B 2.6, written from the "
               "specification text; checked against Part G section 2")
 
@@ -257,8 +269,8 @@ def map_channels(channels):
     """A map's channels as a sorted list of ints, each 0-78, at least one.
 
     A ``ValueError`` names the channel that is not one; a channel the tuning
-    cannot hold is not caught here but by ``hop_plan``, for the burst that
-    reaches it.
+    cannot hold is not caught here but by ``synthesise_afh``, before any sample
+    is made, and by ``hop_plan`` for a ``hop_fn`` that is not a map.
     """
     out = set()
     for given in channels:
@@ -325,8 +337,8 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
     from that burst on, the first from burst 0. Each ``first_burst`` becomes the
     instant of that burst's own clock, ``(clk0 + 2 * period * first_burst) >>
     1``, so a map begins on a whole burst and never in the middle of one.
-    A map holding a channel the tuning cannot reach is refused by
-    ``synthesise_hop``, naming the burst, only if the sequence reaches it.
+    A map naming a channel the tuning cannot hold is refused at once, whether
+    or not the sequence would land on it: it would, sooner or later.
     """
     if ptype not in br.PACKET_TYPES:
         raise ValueError("no packet type %r" % (ptype,))
@@ -341,6 +353,14 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
     if firsts[-1] >= bursts:
         raise ValueError("a map starts at burst %d, and the capture has %d bursts"
                          % (firsts[-1], bursts))
+    for number, (first, channels) in enumerate(spec):
+        for channel in channels:
+            if outside_window(channel, fs, center_mhz):
+                raise ValueError(
+                    "map %d (from burst %d) names channel %d, %g MHz, whose band is outside "
+                    "+/-%g MHz (%g x %g MS/s) of the %g MHz centre"
+                    % (number, first, channel, channel_mhz(channel),
+                       FLAT_FRACTION * fs / 1e6, FLAT_FRACTION, fs / 1e6, center_mhz))
     maps = [(((clk0 + 2 * period * first) & 0x0FFFFFFF) >> 1, channels)
             for first, channels in spec]
     iq, sidecar = synthesise_hop(afh_hop_fn(maps, lap, uap), ptype, bursts=bursts, lap=lap,
@@ -354,6 +374,7 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
     sidecar.update(
         afh_map=maps[0][1],
         afh_instant=instants[0],
+        afh_map_count=len(maps),
         afh_maps=[{'instant': instant, 'first_burst': first, 'channels': channels}
                   for (instant, channels), first in zip(maps, firsts)],
         afh_instant_meaning=INSTANT_MEANING,

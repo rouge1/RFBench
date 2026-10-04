@@ -59,9 +59,10 @@ AMPLITUDE = 0.25
 
 def commit():
     """The SDR repository's commit, so a file can be traced to its encoder,
-    with ``-dirty`` when ``apps/`` or ``scripts/`` differ from it. ``git
-    describe --dirty`` alone misses untracked files, and a new encoder not
-    yet committed is exactly that."""
+    with ``-dirty`` when ``apps/`` or ``scripts/`` differ from it, and
+    ``-unchecked`` when git could not say (``git status`` failed: an empty
+    answer is not a clean tree). ``git describe --dirty`` alone misses
+    untracked files, and a new encoder not yet committed is exactly that."""
     try:
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         head = subprocess.run(['git', '-C', here, 'rev-parse', '--short', 'HEAD'],
@@ -72,6 +73,8 @@ def commit():
         name = head.stdout.strip()
         if not name:
             return None
+        if status.returncode != 0:
+            return name + '-unchecked'
         return name + ('-dirty' if status.stdout.strip() else '')
     except (OSError, subprocess.SubprocessError):
         return None

@@ -20,6 +20,10 @@ it was told to put where; this holds what it was told to the kernel:
 * the command line, in a subprocess and then in process, writing a pair of
   files that are the same bytes the second time, with every call given
   ``--out``, since the default folders belong to another project;
+* what a reviewer found: a file with a map change says in its sidecar that
+  ``afh_map`` is only the first map, a map naming a channel the tuning cannot
+  hold is refused even when the sequence would not land on it, and
+  ``generator_commit`` does not call an unchecked tree clean;
 * ``STAGE3_SET``: six names, each map inside what the tuning holds, checked
   with ``hop_plan`` and no samples, and the sequence of a map really hopping.
 
@@ -39,6 +43,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apps import bt_br_frame as br  # noqa: E402
 from apps import bt_hop  # noqa: E402
+from scripts import bt_synth  # noqa: E402
 from scripts import bt_synth_hop as afh  # noqa: E402
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bt_synth_hop.py')
@@ -201,6 +206,49 @@ def check_refusals():
     # A map given as a one-shot iterator is read once, not twice.
     iq, side = afh.synthesise_afh([(0, iter(MAP_A))], 'DH1', bursts=4)
     check(side['afh_map'] == MAP_A, 'a map given as an iterator is still the whole map')
+
+
+def check_review_fixes():
+    print('\nA file with a map change, a map the tuning cannot hold, an unchecked tree')
+    _, one = afh.synthesise_afh([(0, MAP_A)], 'DH1', bursts=6)
+    _, two = afh.synthesise_afh([(0, MAP_A), (3, MAP_B)], 'DH1', bursts=6)
+    check(one['afh_map_count'] == 1 and two['afh_map_count'] == 2,
+          'afh_map_count is the number of maps: 1 and 2')
+    check(two['afh_map'] == MAP_A and [m['channels'] for m in two['afh_maps']] == [MAP_A, MAP_B],
+          'on a change file afh_map is the first map and afh_maps has both')
+    meaning = two['afh_instant_meaning']
+    check('FIRST' in meaning and 'afh_maps' in meaning and 'afh_map_count' in meaning,
+          'afh_instant_meaning says afh_map is the first map only, and where all of them are')
+    check('2026-10-04' in two['clock_lock_note'] and 'fix' in two['clock_lock_note'],
+          'clock_lock_note says as of when it is true, and that a fixed lock returns the true clock')
+
+    # Channel 0 is 42.5 MHz from the centre. Four DH1 bursts do not land on it,
+    # so a refusal that waited for the sequence would let this through.
+    plain = [bt_hop.hop_channel((CLK0 + 4 * k) & 0xFFFFFFF, (UAP << 24) | LAP, mask(MAP_A + [0]))
+             for k in range(4)]
+    why = raises(lambda: afh.synthesise_afh([(0, MAP_A + [0])], 'DH1', bursts=4))
+    check(0 not in plain and why is not None and 'channel 0' in why and 'map 0' in why,
+          'a map naming channel 0 is refused, though four bursts would not reach it: %s'
+          % (why or 'it was not')[:60])
+    why = raises(lambda: afh.synthesise_afh([(0, MAP_A), (2, MAP_B + [60])], 'DH1', bursts=4))
+    check(why is not None and 'map 1' in why and 'channel 60' in why,
+          'and the second map is named when it is the second that holds one: %s' % (why or 'no')[:60])
+
+    # commit(): an empty answer from a failed git status is not a clean tree.
+    class Done:
+        def __init__(self, out, code=0):
+            self.stdout, self.returncode = out, code
+
+    def with_status(out, code):
+        real = bt_synth.subprocess.run
+        bt_synth.subprocess.run = lambda cmd, **kw: Done('abc1234\n') if 'rev-parse' in cmd else Done(out, code)
+        try:
+            return bt_synth.commit()
+        finally:
+            bt_synth.subprocess.run = real
+    check(with_status('', 0) == 'abc1234', 'a clean tree is the hash alone')
+    check(with_status(' M scripts/x.py\n', 0) == 'abc1234-dirty', 'a changed file is -dirty')
+    check(with_status('', 128) == 'abc1234-unchecked', 'a failed git status is -unchecked, not clean')
 
 
 def cli(*argv, out):
@@ -417,6 +465,7 @@ def main():
     check_instants()
     check_sidecar(side)
     check_refusals()
+    check_review_fixes()
     with tempfile.TemporaryDirectory() as tmp:
         check_command_line(tmp)
         check_set_code_path(tmp)

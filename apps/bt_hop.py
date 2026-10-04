@@ -15,9 +15,13 @@ Where the specification text is ambiguous, and how it is resolved here:
 1. Bit order of a field. The spec writes a field as "A22-19", "CLK6-2" or the
    list "A8,6,4,2,0", most significant bit first (2.6.4 says the MSBs of
    address and clock are XORed together, then the second MSBs, and so on).
-   So X = CLK6-2 has CLK2 as X0, B = A22-19 has A19 as B0 and A22 as B3 (the
-   XOR figure, 2.17, is not in the text), C = A8,6,4,2,0 has A0 as C0, and
-   E = A13,11,9,7,5,3,1 has A1 as E0.
+   So X = CLK6-2 has CLK2 as X0, B = A22-19 has A19 as B0 and A22 as B3, C =
+   A8,6,4,2,0 has A0 as C0, and E = A13,11,9,7,5,3,1 has A1 as E0. The XOR
+   figure, 2.17, prints A22 A21 A20 A19 over Z'0 .. Z'4 in the extracted text,
+   but its column alignment is lost, so the figure does not say which address
+   bit meets which wire: the prose does, in 2.6.2.2 (the four LSBs of Z' with
+   A22-19) and 2.6.4 (MSBs with MSBs). B reversed is wrong on 2,548 of Part G's
+   7,680 values.
 2. Butterflies (2.6.2.3). Table 2.1 gives the pairs and the text the stage
    order (P13 P12 first, P1 P0 last), but Figure 2.19, which says which
    multiplexer input a control value of 1 selects, is not in the text. A
