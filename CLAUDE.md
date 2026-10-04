@@ -83,6 +83,7 @@ fixed.
 | [bluetooth.md](knowledge/bluetooth.md) | anything on 2.4 GHz, any Bluetooth transmitter or receiver | what a VSG60 can send - LE advertising yes, a Classic link no, Classic packets on one channel for bluey-ox-walker - the LE PHY from the Core spec, and the bench (not built yet) |
 | [ble-packets.md](knowledge/ble-packets.md) | any Bluetooth LE encoder or decoder | the LE advertising packet bit by bit - access address, CRC, whitening, the PDU types and which one needs no reply, the random static address, advertising data, timing - with Python checked against the spec's own worked packet |
 | [bluey-test-signals.md](knowledge/bluey-test-signals.md) | `bt_br_frame`, `scripts/bt_synth.py`, `scripts/bt_synth_multi.py`, any Bluetooth Classic encoder, anything made for bluey-ox-walker | the plan agreed with bluey-ox-walker: cf32 files, then a fixed-channel DH3/DH5 train on the VSG60, then narrow-AFH hopping; the file and sidecar format, the modulation, what the encoder must get right, and what has been built and sent |
+| [grok.md](knowledge/grok.md) | running Grok as a second reviewer or worker, its sandbox profile and folder trust | what it is worth (leads, not a verdict), the prompt rules, the headless command and how to know it finished, and why the sandbox needs a profile of its own |
 | [media.md](knowledge/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
 | [radios.md](knowledge/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
 | [ui.md](knowledge/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
@@ -207,6 +208,11 @@ damage something. Each links to the why.
   app run through `apps/_run.py` ignored `SIGTERM` and `timeout` with a
   transmitter on the air; `_run.py` now keeps one.
   [ui](knowledge/ui.md#running-one-app-without-the-launcher)
+- **A `read-only` Grok sandbox reads the whole home directory**, ssh keys and
+  every session's scratchpad included, and what it reads goes to the model.
+  Run a reviewer under a profile whose `deny` list names those, tell it never
+  to open a radio, and never hand it a step Claude Code's classifier refused.
+  [grok](knowledge/grok.md#the-sandbox-and-the-folder-trust)
 - **This repository is public.** No IP address, key name or account name of
   a bench machine goes into it; the notes use ssh aliases such as
   `ssh tvademo`.

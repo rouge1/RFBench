@@ -320,6 +320,7 @@ found the hard way:
   no ADC overflow:
   - 97 % of payloads passed the CRC byte-exact, 498 of 512.
   - The raw bit error rate was 2e-4.
+  - The carrier offset was +157 Hz.
   - The clock offset was -0.36 ppm again, with a third of a sample of
     jitter.
 
@@ -329,6 +330,78 @@ found the hard way:
   waveform and still writes the sidecar, marked `interrupted_by`. A
   repeat the VSG60 plays from its own memory must not outlive the
   script.
+
+## Stage 2: the long captures for bluey, 2026-10-04
+
+Two 30 s recordings at 0 dBm, the same antennas and the BB60D at 60 %
+gain, with no ADC overflow in either. Both are in bluey's `data/iq`, each
+with a truth sidecar in `data/sidecar` (34-37 MB, since every burst
+carries its air bits):
+
+| File | Packet | Bursts sent | Found | libbtbb exact |
+|---|---|---|---|---|
+| `ota_dh5_0dbm_20261004_070334` | DH5 | 7875 | 7838 | 7218 (92 %) |
+| `ota_dh3_0dbm_20261004_070436` | DH3 | 11999 | 11922 | 10141 (85 %) |
+
+`synth_ota_dh5_ref` and `synth_ota_dh3_ref` are the same two trains as
+clean synthetic files, two loops each at 30 dB, for comparison.
+
+- **The truth sidecar** lists every whole burst the loop sent while the
+  recording ran, found or not, in the synthetic files' format. Where each
+  one starts comes from the sample clock fitted to the bursts that were
+  found, not from the detector, so a burst the plain demodulator missed
+  is still in the truth with `found: false`. `clk` is exact in CLK6-1 and
+  nominal above it: the VSG60 started its loop at no particular clock.
+- **Where a burst starts.** `start_sample` is the sample nearest the
+  fitted start, with `timing_frac` 0 for the file as in the synthetic
+  files, and `start_exact` is the fit itself to a thousandth. `symbol_phase`
+  is the burst's own `start_sample % 20`: it drifts with the clock, so the
+  file has none and the top-level key is null. Checked on a planted
+  recording, with a known -3 ppm clock and starts at fractions of a sample:
+  the clock to 0.01 ppm, starts within 0.13 sample (a mean of +0.09), and
+  `start_sample` within one sample of the truth. The offset between a burst's
+  start and the detector's peak is 49.5 samples on average, not 50: the peak
+  is a whole sample, and the first version of the grader took 50, which put
+  every start half a sample early and every `symbol_phase` one low. The
+  reference files, whose starts are all whole samples, cannot show this.
+- **The clock is the same as before:** -0.380 ppm in both files, within
+  0.02 of the -0.36 to -0.37 of the earlier runs. Over 30 s that walks the
+  symbol phase through every value, about 228 samples, so the dead zone
+  bluey found at phase 10 is crossed during each recording.
+- **Weaker than the 20 s run in the same room:** about 22 dB in the
+  channel, against 30, and 85-92 % of payloads exact against 97 %. The
+  carrier offset was -220 to -290 Hz, against +157 in the 20 s run.
+  Nothing about the rig changed that was written down; a difference in
+  antenna position is the likely cause and is not confirmed.
+- **The misses are in clusters, not spread evenly.**
+  - DH5 missed 37 of 7875: 16 within 0.14 s at 5.8 s, 16 within 0.14 s at
+    19.8 s, 3 between 21.5 and 21.9 s, and 2 on their own. The bursts that
+    got through beside them read the normal 22 dB.
+  - DH3 missed 77 of 11999: 17 over the first 1.9 s, 30 over the last 4 s
+    (both at the normal 22 dB), 16 within 0.16 s at 13.7 s with the
+    survivors at 19 dB, and a few of 3. In one 0.06 s patch at 14.8 s the
+    survivors read 13 dB.
+
+  Most of them are therefore not a fade in level. Something short-lived on
+  the channel is the likely cause; nothing was identified.
+- **A grader bug, found here and fixed.** The first grading dropped any
+  burst in the 12,000 samples after a boundary between chunks (the files
+  are graded 40 M samples at a time): the earlier chunk skipped it as not
+  its own and the later one as too near its start. Seven DH5 bursts were
+  lost that way, all of them just after a multiple of 40 M. Each chunk
+  now starts 100,000 samples early. The 0 dBm and reference files from
+  before give the same results in chunks as whole, and the reference
+  file gives 84 of 84 whatever the chunk size, boundaries on bursts
+  included.
+- `scripts/test_bt_ota_check.py` holds the grader to a planted recording:
+  a known clock and starts at fractions of a sample, bursts silenced, the
+  same rows at every chunk size, and a recording too short or a fit too wild
+  to grade. The reference files cannot do this, since every start in them
+  is a whole sample.
+- `scripts/bt_ota_check.py --record N --capture NAME` now does the whole
+  thing: records into bluey's `data/iq` and writes the truth. These two
+  were recorded with a scratch script and graded afterwards, so their
+  `receiver` block carries `adc_overflows: 0` and no record start time.
 
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
