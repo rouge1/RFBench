@@ -523,9 +523,12 @@ kernel written here. The files are not on the air yet.
   channel 55's band edge, 2458 MHz, is 0.5 MHz inside the BB60D's 27 MHz
   (2431.5 to 2458.5), so the second map sits at the edge of what the receiver
   holds.
-- **Not checked:** whether symbol phase 20, which the clean files have at start
-  offset 0, is the 40 MS/s counterpart of the dead zone bluey found at 10 of
-  20 samples at 1 MS/s; page, inquiry and the response hop sequences, which
+- **Symbol phase.** Every clean file has its bursts at symbol phase 20 of 40
+  (`--start-offset` 0), and bluey reports that this is the half-symbol dead zone
+  of its single-grid detector: it finds nothing there, and its dual grid finds
+  95-98 %. Only `hop20_imp_dh5` is elsewhere (phase 27). Say if you want a copy
+  of a file at another phase: it is one command with `--start-offset`.
+- **Not checked:** page, inquiry and the response hop sequences, which
   `bt_hop.py` does not implement; and any sample of the files on a radio.
 - **Next, with your go:** the VSG60A's longest buffer and flatness at 40 MS/s,
   at -120 dBm, then over the air through the stage 2 chain.
