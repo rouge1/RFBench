@@ -251,6 +251,21 @@ def check_review_fixes():
     check(with_status('', 128) == 'abc1234-unchecked', 'a failed git status is -unchecked, not clean')
 
 
+def check_centre():
+    print('\nA centre that is not a whole number of MHz')
+    import warnings
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always')
+        afh.synthesise_afh([(0, MAP_A)], 'DH1', bursts=2, center_mhz=2444.5)
+    check(any('whole number of MHz' in str(w.message) for w in seen),
+          '2444.5 MHz warns that a 1 MHz channelizer would see every channel half a bin off')
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always')
+        afh.synthesise_afh([(0, MAP_A)], 'DH1', bursts=2)
+    check(not seen, 'the default centre, %g MHz, does not' % inspect.signature(
+        afh.synthesise_afh).parameters['center_mhz'].default)
+
+
 def cli(*argv, out):
     """``bt_synth_hop.main`` in this process, ``--out`` always given. Returns
     ``(exit code, stdout)``; a refusal by the parser is exit code 2."""
@@ -443,7 +458,7 @@ def check_spread():
     print('\nThe sequence is not stuck')
     pd = period('DH5')
     maps = [(CLK0 >> 1, MAP_A)]
-    plan = afh.hop_plan(afh.afh_hop_fn(maps, LAP, UAP), 100, CLK0, pd, 40e6, 2444.5)
+    plan = afh.hop_plan(afh.afh_hop_fn(maps, LAP, UAP), 100, CLK0, pd, 40e6, 2445.0)
     counts = {}
     for _, channel in plan:
         counts[channel] = counts.get(channel, 0) + 1
@@ -466,6 +481,7 @@ def main():
     check_sidecar(side)
     check_refusals()
     check_review_fixes()
+    check_centre()
     with tempfile.TemporaryDirectory() as tmp:
         check_command_line(tmp)
         check_set_code_path(tmp)

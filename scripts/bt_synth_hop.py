@@ -40,7 +40,7 @@ returns an RF channel, 0-78, at 2402 + channel MHz. What this adds to
 * **A channel the tuning cannot hold is refused**, not clipped: its occupied
   band, the channel +/- 1 MHz, must lie inside +/- 0.36 x ``fs`` of the
   centre, the 72 % of the sample rate over which the VSG60A stays flat. At
-  40 MS/s that is +/- 14.4 MHz, so about 2432 to 2457 MHz round 2444.5.
+  40 MS/s that is +/- 14.4 MHz, so about 2431 to 2459 MHz round 2445.
 
 **The adapted sequence.** ``afh_hop_fn(maps, lap, uap)`` is a ``hop_fn``:
 ``maps`` is a list of ``(instant, channels)`` in increasing ``instant``, an
@@ -84,6 +84,7 @@ import argparse
 import bisect
 import json
 import operator
+import warnings
 import os
 import re
 import sys
@@ -152,7 +153,7 @@ def hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz):
 
 
 def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0=0x0123400,
-                   fs=40e6, center_mhz=2444.5, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
+                   fs=40e6, center_mhz=2445.0, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
                    seed=1, start_offset=0):
     """The samples and the sidecar for one hopping capture.
 
@@ -178,6 +179,12 @@ def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0
     if abs(start_offset) > slot_samples // 4:
         raise ValueError("start_offset must stay within a quarter slot")
 
+    if center_mhz != round(center_mhz):
+        warnings.warn(
+            "center_mhz %g is not a whole number of MHz: a receiver whose channelizer has "
+            "1 MHz bins centred on the capture centre (bluey-ox-walker's) then sees every "
+            "channel half a bin off, and two of them in one bin, and finds no bursts"
+            % center_mhz, stacklevel=2)
     plan = hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz)
     rng = np.random.default_rng(seed)
     first = int(bt_synth.LEAD_SLOTS * slot_samples) + int(start_offset)
@@ -244,7 +251,7 @@ def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0
 
 #: The two 20-channel maps of the stage 3 set. 33-52 is 2435 to 2454 MHz and
 #: 36-55 is 2438 to 2457 MHz, bands out to 2434 and 2458, both inside the
-#: 2430 to 2459 MHz that 40 MS/s on 2444.5 MHz holds.
+#: 2430 to 2459 MHz that 40 MS/s on 2445 MHz holds.
 MAP_A = list(range(33, 53))
 MAP_B = list(range(36, 56))
 
@@ -329,7 +336,7 @@ def afh_hop_fn(maps, lap, uap):
 
 
 def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0=0x0123400,
-                   fs=40e6, center_mhz=2444.5, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
+                   fs=40e6, center_mhz=2445.0, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
                    seed=1, start_offset=0):
     """The samples and the sidecar of a capture on an adapted hop sequence.
 
@@ -389,7 +396,7 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
 
 #: What ``--set stage3`` writes, and nothing else: each file's name and what
 #: ``synthesise_afh`` is called with. Everything not named is its default, 40
-#: MS/s on 2444.5 MHz. The seeds are fixed, so the set can be written again.
+#: MS/s on 2445 MHz. The seeds are fixed, so the set can be written again.
 STAGE3_SET = [
     ('hop20_dh5', dict(ptype='DH5', bursts=100, maps_spec=[(0, MAP_A)], seed=3001)),
     ('hop20_dh3', dict(ptype='DH3', bursts=120, maps_spec=[(0, MAP_A)], seed=3002)),

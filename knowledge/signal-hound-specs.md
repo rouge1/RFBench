@@ -81,10 +81,22 @@ This is inference from the numbers above, not a measurement.
   of 40 is 28.8 MHz, enough for 20 MHz, and a 625 µs slot is 25,000
   samples, a whole number. At 25 MS/s only 80 % of the rate, 20 MHz, is clean,
   which leaves no margin.
-- **The carrier feedthrough lands in the map**, since the centre frequency
-  has to be inside the window. Put it between two channels, not on one: that
-  keeps it off a channel centre, and it is still a fixed tone at −40 dBc
-  that bluey's receiver will see in every hop near it.
+- **The centre has to be a whole number of MHz.** bluey-ox-walker's
+  channelizer has 1 MHz bins centred on the capture centre, so a centre
+  halfway between two channels puts every channel half a bin off a bin
+  centre, two of them in one bin, and its detector then finds no bursts. This
+  was learned the hard way: the first stage 3 files were centred on 2444.5 MHz,
+  the middle of the map, and bluey found nothing in them until it shifted the
+  samples by 0.5 MHz. Stage 2 happened to use 2441.
+- **Between 2444 and 2445 MHz for a map of 33-52 and one of 36-55,** 2445
+  keeps the second map's top band edge, 2458 MHz, 0.5 MHz inside the BB60D's
+  27 MHz; at 2444 it would be 0.5 MHz outside. At 2445 the first map's bands
+  run from 11 MHz below the centre to 10 above, the second's from 8 below to 13
+  above.
+- **The carrier feedthrough lands in the map,** and a whole-number centre puts
+  it on a channel: channel 43 at 2445 MHz. It is a fixed tone at −40 dBc, in
+  every hop that uses that channel, about one in twenty. The same channel is at DC in
+  the receiver, which bluey says its detector misses.
 
 ## Sources
 

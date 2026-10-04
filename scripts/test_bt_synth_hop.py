@@ -37,7 +37,7 @@ from scripts import bt_synth, bt_synth_hop as hop  # noqa: E402
 
 FS = 40e6
 SPS = int(FS / br.SYMBOL_RATE)                   # 40 samples a symbol
-CENTER = 2444.5
+CENTER = 2445.0
 failures = []
 
 #: The channels the stand-in hops over, 31-55: a permutation, 7i mod 25, so
@@ -261,15 +261,15 @@ def check_window():
             return str(e)
         return None
 
-    for channel in (29, 56):
+    for channel in (29, 57):
         why = refused(channel)
         check(why is not None and 'burst 0' in why and 'channel %d' % channel in why,
               'channel %d (%g MHz) raises ValueError: %s' % (channel, hop.channel_mhz(channel),
                                                              (why or 'it did not')[:70]))
-    for channel in (30, 55):
+    for channel in (30, 56):
         check(refused(channel) is None, 'channel %d (%g MHz) does not' % (channel, hop.channel_mhz(channel)))
-    why = refused(56, at=3)
-    check(why is not None and 'burst 3' in why and 'channel 56' in why,
+    why = refused(57, at=3)
+    check(why is not None and 'burst 3' in why and 'channel 57' in why,
           'a bad channel on burst 3 is named burst 3: %s' % (why or 'it did not raise')[:50])
     why = refused(33, fs=20e6, center_mhz=2441.0)
     check(why is None, 'at 20 MS/s on 2441 MHz channel 33 is inside (+/-7.2 MHz)')
