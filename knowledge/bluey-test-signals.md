@@ -411,10 +411,31 @@ A master hopping inside a map of 20 adjacent channels, as six files, from a hop
 kernel written here. The files are not on the air yet.
 
 - **What is in bluey's `data/`:** `synth_hop20_*.cf32` and `.json`, 40 MS/s, centre
-  2444.5 MHz, map channels 33-52 (2435-2454 MHz), address UAP `0x47` LAP
+  **2445.0 MHz**, map channels 33-52 (2435-2454 MHz), address UAP `0x47` LAP
   `0x9e8b33`, first clock `0x0123400`, seeds 3001-3006, `generator_commit`
-  `eb37d55`. 1.07 GB in all, written in 28 s by
+  `b344872`. 1.07 GB in all, written in 22 s by
   `python scripts/bt_synth_hop.py --set stage3`.
+- **The first set was wrong, and was replaced the same day.** It was centred on
+  2444.5 MHz, the middle of the map. bluey's channelizer has 1 MHz bins
+  centred on the capture centre, so at 2444.5 every channel sat half a bin off
+  a bin centre and channels 34 and 35 shared one; its detector found no bursts
+  in any file until the samples were shifted by 0.5 MHz. **The centre of a
+  capture for bluey must be a whole number of MHz** (stage 2's 2441 was, by
+  luck). `bt_synth_hop.py` now warns when it is not. 2445 rather than 2444
+  because the second map's top band edge, 2458 MHz, is 0.5 MHz inside the BB60D's
+  27 MHz at 2445 and 0.5 MHz outside at 2444. The files kept their names,
+  and `generator_commit` was `eb37d55` in the first set.
+- **bluey's results on them,** on the first set (2026-10-04): with its fixed lock
+  (an adapted array indexed by the true slot) `hop20_dh1_long` and `hop20_dh5`
+  give the true CLK[27:1], `596480` at burst 0; the old array gave the truth
+  minus one, as `clock_lock_note` says. The stream being master-only, the new
+  array ties the true slot and the one after it on every burst and a tie-break
+  returns the true one, so these files fix the sign of the lock and nothing
+  more: two-sided traffic has to confirm the rest. On the detector, shifted by
+  0.5 MHz, its single grid was blind at symbol phase 20 of 40 (the half-symbol
+  dead zone) and its dual grid found 95-98 % of bursts, the misses being
+  the channel at DC. With the whole-number centre the channel at DC is channel
+  43 (2445 MHz), in the map, and so is the VSG60A's carrier feedthrough.
 
   | File | Packet | Bursts | Length | Channels used | Size |
   |---|---|---|---|---|---|
@@ -496,11 +517,12 @@ kernel written here. The files are not on the air yet.
 - **The window.** A burst's channel plus or minus 1 MHz must lie within 0.36
   of the sample rate either side of the centre: 72 % of the rate in all, over
   which the VSG60A stays flat
-  ([signal-hound-specs.md](signal-hound-specs.md)). At 40 MS/s that is 2430.1 to
-  2458.9 MHz. Channel 55's band edge, 2458 MHz, is flush with the BB60D's 27 MHz
-  (2431.0 to 2458.0), so the second map sits at the edge of what the receiver
-  holds. The centre, 2444.5 MHz, is between channels 42 and 43, and the
-  VSG60A's carrier feedthrough, a fixed tone at -40 dBc, falls there.
+  ([signal-hound-specs.md](signal-hound-specs.md)). At 40 MS/s on 2445 MHz that
+  is 2430.6 to 2459.4 MHz, channels 30 to 56. The first map's bands run from 11
+  MHz below the centre to 10 above, the second's from 8 below to 13 above, and
+  channel 55's band edge, 2458 MHz, is 0.5 MHz inside the BB60D's 27 MHz
+  (2431.5 to 2458.5), so the second map sits at the edge of what the receiver
+  holds.
 - **Not checked:** whether symbol phase 20, which the clean files have at start
   offset 0, is the 40 MS/s counterpart of the dead zone bluey found at 10 of
   20 samples at 1 MS/s; page, inquiry and the response hop sequences, which
