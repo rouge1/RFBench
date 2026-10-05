@@ -596,6 +596,22 @@ the files' 33-52 at 2445, because of the room (below).
   files, and the burst's own `power_dbfs` is uncalibrated. The shots' symbol
   phase is whatever the BB60D's clock gave. The captures' `clock_lock_note` is
   the dated one from before bluey's lock fix: it now returns the true clock.
+- **What bluey found in them** (graded after its roles fix; its write-up is
+  `knowledge/ota-hop-grading.md` in its own repo). Its CLK27 lock returns
+  exactly `clk >> 1` on all five, both segments of the map change included;
+  detection is 99.6-100 % with its DC block off. **Channel 39, at DC, was
+  detected 0 times with its default DC block on** (10/10, 12/12, 31/31, 110/110
+  and 19/19 with it off): the block's 64-sample mean subtraction notches about
+  fs/64 around DC, and it does the same on real BB60D captures, so that is a
+  receiver bug and not the transmitter's. Maps of the wrong size do not
+  lock; a map wrong by one channel keeps the clock at about 60 % match.
+- **A trap in how the captures were cropped.** Each was cut 40 M samples
+  (1 s) before its first burst, a whole number of slots (1600), so every burst
+  starts within about 70 samples of a slot boundary of the file, and a receiver
+  that takes `sample_offset // slot` splits its detections over two slots (8-18 %
+  on three of the five files). Crop with a lead that is not a whole number of
+  slots (add a few thousand samples that are not a multiple of 25,000), so
+  the slot grid sits at an arbitrary offset, as a live capture's does.
 - **Not done:** `--reference` (a clean synthetic copy of a shot, in the tool)
   was not run for these; no shot at another symbol phase; no impaired file
   (the real link is the impairment).
