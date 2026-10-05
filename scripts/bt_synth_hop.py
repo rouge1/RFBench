@@ -64,7 +64,9 @@ The timing is the master's, exactly as in ``bt_synth``: a burst every
 ``slots + 1`` slots of a 625 us grid, the grid half a slot off sample 0 and
 noise from sample 0. At 40 MS/s a slot is 25,000 samples. ``snr_db`` is the
 burst's power over the noise in 1 MHz, the same on every channel, since the
-noise is added after the shift and is white across the whole file.
+noise is added after the shift and is white across the whole file. ``None``
+adds no noise, and the sidecar's ``snr_db`` is null. ``amplitude`` defaults
+to ``bt_synth.AMPLITUDE``; any other number is the burst's amplitude, |iq|.
 
 The sidecar is ``bt_synth``'s with the per-burst ``channel`` and
 ``channel_mhz`` added and ``hopping: true`` and ``hop_channels`` at the top.
@@ -154,12 +156,15 @@ def hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz):
 
 def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0=0x0123400,
                    fs=40e6, center_mhz=2445.0, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
-                   seed=1, start_offset=0):
+                   seed=1, start_offset=0, amplitude=None):
     """The samples and the sidecar for one hopping capture.
 
     ``hop_fn(clk)`` gives the channel of the packet whose first slot has the
     native clock ``clk``. ``start_offset`` moves every burst by that many whole
     samples, as in ``bt_synth.synthesise``; keep it well inside a quarter slot.
+    ``amplitude`` None is ``bt_synth.AMPLITUDE``; any other number is |iq| of
+    the burst. ``snr_db`` None adds no noise (the sidecar records null); a
+    number is that amplitude over the noise in 1 MHz.
     """
     if clk0 % 4:
         raise ValueError("clk0 must be a master slot's clock: CLK1-0 = 00")
@@ -187,6 +192,9 @@ def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0
             % center_mhz, stacklevel=2)
     plan = hop_plan(hop_fn, bursts, clk0, period, fs, center_mhz)
     rng = np.random.default_rng(seed)
+    # None keeps the historical amplitude, so a default call is the same
+    # samples as before this argument existed.
+    amp = bt_synth.AMPLITUDE if amplitude is None else amplitude
     first = int(bt_synth.LEAD_SLOTS * slot_samples) + int(start_offset)
     total = first + bursts * period * slot_samples + slot_samples
     iq = np.zeros(total, dtype=np.complex64)
@@ -206,16 +214,19 @@ def synthesise_hop(hop_fn, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0
         cycles = (channel_mhz(channel) - center_mhz) * 1e6 + cfo_hz
         cycles = cycles / fs * n
         burst = burst * np.exp(2j * np.pi * (cycles - np.floor(cycles)))
-        iq[lo:lo + len(burst)] += (bt_synth.AMPLITUDE * burst).astype(np.complex64)
+        iq[lo:lo + len(burst)] += (amp * burst).astype(np.complex64)
         entry = {'start_sample': start}
         entry.update(p.sidecar())
         entry.update(channel=channel, channel_mhz=channel_mhz(channel),
                      symbol_phase=start % sps)
         entries.append(entry)
 
-    noise_1mhz = bt_synth.AMPLITUDE ** 2 / 10 ** (snr_db / 10)
-    sigma = np.sqrt(noise_1mhz * fs / 1e6 / 2)
-    iq += (rng.normal(0, sigma, total) + 1j * rng.normal(0, sigma, total)).astype(np.complex64)
+    # None: leave the buffer as the bursts alone. No noise draw, so the
+    # complex64 shot is not joined by two float64 copies of itself.
+    if snr_db is not None:
+        noise_1mhz = amp ** 2 / 10 ** (snr_db / 10)
+        sigma = np.sqrt(noise_1mhz * fs / 1e6 / 2)
+        iq += (rng.normal(0, sigma, total) + 1j * rng.normal(0, sigma, total)).astype(np.complex64)
 
     sidecar = {
         'generator': 'SDR scripts/bt_synth_hop.py',
@@ -337,7 +348,7 @@ def afh_hop_fn(maps, lap, uap):
 
 def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, clk0=0x0123400,
                    fs=40e6, center_mhz=2445.0, cfo_hz=0.0, timing_frac=0.0, snr_db=30.0,
-                   seed=1, start_offset=0):
+                   seed=1, start_offset=0, amplitude=None):
     """The samples and the sidecar of a capture on an adapted hop sequence.
 
     ``maps_spec`` is a list of ``(first_burst, channels)``: the map that applies
@@ -346,6 +357,8 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
     1``, so a map begins on a whole burst and never in the middle of one.
     A map naming a channel the tuning cannot hold is refused at once, whether
     or not the sequence would land on it: it would, sooner or later.
+    ``snr_db`` and ``amplitude`` are ``synthesise_hop``'s: None adds no noise,
+    and ``amplitude`` None is ``bt_synth.AMPLITUDE``.
     """
     if ptype not in br.PACKET_TYPES:
         raise ValueError("no packet type %r" % (ptype,))
@@ -373,7 +386,7 @@ def synthesise_afh(maps_spec, ptype='DH5', bursts=100, lap=0x9E8B33, uap=0x47, c
     iq, sidecar = synthesise_hop(afh_hop_fn(maps, lap, uap), ptype, bursts=bursts, lap=lap,
                                  uap=uap, clk0=clk0, fs=fs, center_mhz=center_mhz,
                                  cfo_hz=cfo_hz, timing_frac=timing_frac, snr_db=snr_db,
-                                 seed=seed, start_offset=start_offset)
+                                 seed=seed, start_offset=start_offset, amplitude=amplitude)
     instants = [instant for instant, _ in maps]
     for entry in sidecar['bursts']:
         entry['afh_map_index'] = map_index(instants, entry['clk'])
