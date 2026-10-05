@@ -408,7 +408,8 @@ clean synthetic files, two loops each at 30 dB, for comparison.
 ## Stage 3: narrow-AFH hopping, 2026-10-04
 
 A master hopping inside a map of 20 adjacent channels, as six files, from a hop
-kernel written here. The files are not on the air yet.
+kernel written here. The files themselves are not on the air; the same kind of train
+went over the air on its own map, see Stage 3 over the air below.
 
 - **What is in bluey's `data/`:** `synth_hop20_*.cf32` and `.json`, 40 MS/s, centre
   **2445.0 MHz**, map channels 33-52 (2435-2454 MHz), address UAP `0x47` LAP
@@ -529,9 +530,75 @@ kernel written here. The files are not on the air yet.
   95-98 %. Only `hop20_imp_dh5` is elsewhere (phase 27). Say if you want a copy
   of a file at another phase: it is one command with `--start-offset`.
 - **Not checked:** page, inquiry and the response hop sequences, which
-  `bt_hop.py` does not implement; and any sample of the files on a radio.
-- **Next, with your go:** the VSG60A's longest buffer and flatness at 40 MS/s,
-  at -120 dBm, then over the air through the stage 2 chain.
+  `bt_hop.py` does not implement; and any sample of these six files on a radio.
+
+## Stage 3 over the air, 2026-10-04
+
+A hopping train from the VSG60A into the BB60D, 40 MS/s, on its own map: not
+the files' 33-52 at 2445, because of the room (below).
+
+- **A one-shot, not a loop.** A hop sequence depends on the clock up to
+  CLK27, so a loop that restarted would restart the channels while a
+  receiver's clock kept running. `scripts/bt_tx_hop.py` plays the whole train
+  once (`send_waveform`; the VSG60A took buffers up to 3.3 GB, 10 s, at
+  40 MS/s) and the recording holds it once, with noise before and after. The
+  truth's `clk` is therefore the exact CLK[27:0] of every burst, which the
+  stage 2 loops could not give, and nothing wraps.
+- **The tuning: centre 2441.0 MHz, map channels 31-50** (2433-2452 MHz, 20
+  channels, the AFH minimum), the stage 2 centre. A scan of the room showed a
+  source above 2452 MHz constantly 20-28 dB over the floor (a Wi-Fi access
+  point on channel 11, probably) and the BB60D sees only +-13.5 MHz at 40
+  MS/s; 2433-2451 was clean. At 2441 channel 52's band reaches 14 MHz, so the
+  map-change shot is 31-50 then 32-51. The VSG60A's carrier feedthrough, the
+  BB60D's DC and the middle channel coincide, at 2441: **channel 39**.
+- **The tools.** `bt_tx_hop.py` (nothing transmits without `--go`; a level
+  above 0 dBm or one that is not a finite number is refused; the sidecar
+  says `tx.sent`; run under `timeout -k 30`, the `-k` must exceed the shot,
+  since a signal cannot interrupt `send_waveform`) and `bt_ota_hop_check.py`
+  (grades a recording against the shot's sidecar and writes the truth).
+  The grader finds the shot by votes from per-channel energy runs, tracks
+  every burst on its own channel, and **refuses to write a truth, with a
+  reason, when it could be wrong**: samples lost or gained in the recording
+  (a step in the clock fit, a rate kink, scatter, a burst read well but far
+  off the line, energy of the shot beyond the bursts found, or the recorder's
+  lost-sample counter), a carrier more than 50 kHz off, a centre not a whole
+  MHz. Two reviewers (Opus, Sonnet) and three fix rounds got it there: the
+  first version wrote a confident wrong truth after a 40-sample drop. Known
+  and accepted: a 5-sample shift of only the first or last burst writes that
+  burst `found: false`, reason `off the line`, placed 5 samples wrong; a 0.5
+  ppm change of clock rate over a short shot passes.
+- **The captures** (0 dBm, the same antennas as stage 2, BB60D 60 % gain, no
+  lost samples; each is the shot plus 1 s before and after, cropped from a
+  20 s recording, `start_sample` from the first sample of the cropped file):
+
+| File (`ota_hop_*_0dbm_20261004_*`) | Bursts | Found | libbtbb exact | Clock | Jitter |
+|---|---|---|---|---|---|
+| `dh5` (200 DH5) | 200 | 200 | 192 | -0.385 ppm | 0.30 sample |
+| `dh3` (240 DH3; 1 ADC overflow event) | 240 | 240 | 230 | -0.375 | 0.31 |
+| `dh1` (600 DH1) | 600 | 599 | 594 | -0.375 | 0.33 |
+| `dh1_long` (2400 DH1, 3 s) | 2400 | 2399 | 2369 | -0.378 | 0.31 |
+| `change_dh5` (240 DH5, map 31-50 then 32-51 at burst 120) | 240 | 240 | 227 | -0.374 | 0.34 |
+
+  About 32 dB in 1 MHz (an SINR where a channel is not clean), 10 dB less at
+  -10 dBm (199 of 200 found). **Link flatness 6.5 dB** across the 20
+  channels, a smooth rise with frequency in every shot: the whole link (VSG60A,
+  two antennas, room, BB60D), not the VSG60A alone; channel 50 was not
+  worse, so the access point did not hurt it this time. The clock, -0.37 to
+  -0.39 ppm, is the stage 2 figure again, and a jitter of 0.3 sample means
+  the one-shot played without a gap.
+- **What a reader should know.** `clk` is exact. `found: false` bursts are
+  placed from the fitted clock, with a `reason`. `start_sample` is the nearest
+  sample, `start_exact` the fit; the detector offset is calibrated on the
+  interpolated peak (99.545 samples), so it is right for the planted files and
+  could be off by the VSG60A's or BB60D's own group delay, which nothing here
+  can see. The top-level `cfo_hz` is the measured median, not a plant
+  (`cfo_hz_meaning`). `snr_db` carries no more than the 1 MHz of the other
+  files, and the burst's own `power_dbfs` is uncalibrated. The shots' symbol
+  phase is whatever the BB60D's clock gave. The captures' `clock_lock_note` is
+  the dated one from before bluey's lock fix: it now returns the true clock.
+- **Not done:** `--reference` (a clean synthetic copy of a shot, in the tool)
+  was not run for these; no shot at another symbol phase; no impaired file
+  (the real link is the impairment).
 
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
@@ -584,5 +651,6 @@ Still open:
   comes before the FEC, and the encoder adds the tail. libbtbb, and so
   bluey, discards the tail, so nothing has checked those bits yet.
 - **A file of the real clock offset** between a transmitter and the SDR.
-- **Stage 3 over the air**: the VSG60A at 40 MS/s, its longest buffer and
-  its flatness across 20 MHz are not measured yet; see Stage 3.
+- **The VSG60A on its own at 40 MS/s**: its flatness across 20 MHz is only
+  known as the whole link's 6.5 dB; separating the two needs a cable and
+  an attenuator; see Stage 3 over the air.

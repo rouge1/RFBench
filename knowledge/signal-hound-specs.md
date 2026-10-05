@@ -98,6 +98,33 @@ This is inference from the numbers above, not a measurement.
   every hop that uses that channel, about one in twenty. The same channel is at DC in
   the receiver, which bluey says its detector misses.
 
+## Measured here at 40 MS/s, 2026-10-04
+
+What the manual gives, checked on the units on the bench, before any
+Bluetooth signal went over the air at this rate.
+
+- **The BB60D's band is +-13.5 MHz, and a wall.** A 10 s recording at
+  40 MS/s, 60 % gain, centre 2445 MHz through `apps/bb60_source` came to
+  400,000,000 samples to the sample, with no zero samples and no ADC overflow,
+  and the disk took it at 1.9 GB/s. The noise floor is flat from -13.5 to
+  +5 MHz about the centre and **there is nothing at all outside +-13.5 MHz**
+  (about 88 dB down: the samples there are at the floor of float
+  rounding). So at 40 MS/s a channel whose band, the channel +-1 MHz,
+  reaches past 13.5 MHz from the centre is lost, even though the VSG60A's
+  72 % rule (+-14.4 MHz) would let it through.
+- **The VSG60A takes a long one-shot.** `send_waveform` accepted 51 MB, 102 MB,
+  205 MB, 410 MB, 819 MB, 1.6 GB and 3.3 GB buffers at 40 MS/s (256 to 16,384
+  slots, up to 10.24 s) at -120 dBm, each returning when its buffer had played
+  (0.642 s for 0.640 s, 10.242 s for 10.240 s). No limit was found. That it
+  played them without a gap cannot be told at that level; see the capture.
+- **The room is not clean everywhere.** Scanned at 40 MS/s in 1 MHz bins over
+  10 s: 2433 to 2451 MHz sits at the floor, with short bursts 15 dB over it
+  about a fifth of the time; **from 2452 MHz up it is 20 to 28 dB over the
+  floor, all the time**, which a Wi-Fi access point on channel 11 would
+  explain; 2431 to 2432 MHz and 2426 MHz are also hot. A map there has to keep
+  off 2452 and above. The spectrum can change, so it is worth a scan, a few seconds
+  of recording with nothing transmitting, before an over-the-air run.
+
 ## Sources
 
 - BB60D Real-Time Spectrum Analyzer datasheet, 20 May 2022, marked

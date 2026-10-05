@@ -92,6 +92,10 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   it, and 3 s recordings caught every burst across the loop's wraps,
   with no gap or jump in timing (2026-10-03, the Bluetooth stage 2 runs in
   [bluey-test-signals](bluey-test-signals.md#stage-2-the-first-over-the-air-runs-2026-10-03)).
+  At 40 MS/s `send_waveform` took one-shot buffers up to 409.6 M samples
+  (3.3 GB, 10.24 s) at -120 dBm and returned at the time they take to play
+  (2026-10-04; [signal-hound-specs](signal-hound-specs.md#measured-here-at-40-ms-s-2026-10-04)).
+  Memory use during the call was not measured; the host had 64 GB.
 
 - **A VSG60 and a HackRF stream together on one host - in two processes.**
   Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
