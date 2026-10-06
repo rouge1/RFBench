@@ -1,0 +1,798 @@
+{
+ "what": "payload yield against SNR for the reference receiver of scripts/bt_synth_acl.py (rx_burst), DM1/DM3/DM5 with LMP, seeds [8101, 8102, 8103], 204 bursts per type per cell",
+ "decoder": "a genie-aided demodulator: channel and start (to within 150 samples) from the sidecar, shift to baseband, 255-tap 0.8 MHz FIR, access-code correlation on the 68 known bits with parabolic peak refinement, one bit per symbol from the phase change over the symbol, threshold from the access code; then libbtbb (btbb_decode_header at the master UAP and CLK6-1, then btbb_decode_payload: FEC 2/3 and CRC-16). A burst counts as a yield if the header passes, the CRC passes and the payload bytes equal the truth.",
+ "seeds": [
+  8101,
+  8102,
+  8103
+ ],
+ "receiver": {
+  "fir_taps": 255,
+  "fir_cutoff_hz": 800000.0,
+  "start_search_samples": 150,
+  "discriminator": "angle(z[c+20] * conj(z[c-20])) over one symbol at 40 MS/s",
+  "timing": "access-code correlation of the 1-sample discriminator, parabolic peak",
+  "threshold": "mean of the mean 1s and mean 0s of the 68 access-code bits",
+  "decoder": "libbtbb btbb_decode_header then btbb_decode_payload"
+ },
+ "decoder_id": {
+  "library": "libbtbb.so.1",
+  "package": "libbtbb1 2018.12.R1-1"
+ },
+ "caveat": "ANOTHER RECEIVER'S YIELD WILL DIFFER (a blind detector, a better demodulator, a different timing recovery); the grade is by dB, not by yield. The levels are those of this genie-aided reference receiver, which is told each burst's channel and start. An independent demodulator (a centre-sample discriminator, same start and channel, same libbtbb) measured by a reviewer on an earlier version of these files was up to 20 percentage points lower in yield (at about 13 dB) than the reference receiver.",
+ "table": [
+  {
+   "snr_db": 8.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 130,
+     "crc_ok": 7,
+     "payload_exact": 7,
+     "yield": 0.03431372549019608
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 124,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 126,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 380,
+    "crc_ok": 7,
+    "payload_exact": 7,
+    "yield": 0.011437908496732025
+   }
+  },
+  {
+   "snr_db": 9.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 174,
+     "crc_ok": 24,
+     "payload_exact": 24,
+     "yield": 0.11764705882352941
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 169,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 171,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 514,
+    "crc_ok": 24,
+    "payload_exact": 24,
+    "yield": 0.0392156862745098
+   }
+  },
+  {
+   "snr_db": 10.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 194,
+     "crc_ok": 57,
+     "payload_exact": 57,
+     "yield": 0.27941176470588236
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 190,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 189,
+     "crc_ok": 0,
+     "payload_exact": 0,
+     "yield": 0.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 573,
+    "crc_ok": 57,
+    "payload_exact": 57,
+    "yield": 0.09313725490196079
+   }
+  },
+  {
+   "snr_db": 11.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 95,
+     "payload_exact": 95,
+     "yield": 0.46568627450980393
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 200,
+     "crc_ok": 2,
+     "payload_exact": 2,
+     "yield": 0.00980392156862745
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 201,
+     "crc_ok": 1,
+     "payload_exact": 1,
+     "yield": 0.004901960784313725
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 605,
+    "crc_ok": 98,
+    "payload_exact": 98,
+    "yield": 0.16013071895424835
+   }
+  },
+  {
+   "snr_db": 12.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 141,
+     "payload_exact": 141,
+     "yield": 0.6911764705882353
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 14,
+     "payload_exact": 14,
+     "yield": 0.06862745098039216
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 11,
+     "payload_exact": 11,
+     "yield": 0.05392156862745098
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 166,
+    "payload_exact": 166,
+    "yield": 0.27124183006535946
+   }
+  },
+  {
+   "snr_db": 13.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 170,
+     "payload_exact": 170,
+     "yield": 0.8333333333333334
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 43,
+     "payload_exact": 43,
+     "yield": 0.2107843137254902
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 35,
+     "payload_exact": 35,
+     "yield": 0.1715686274509804
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 248,
+    "payload_exact": 248,
+    "yield": 0.40522875816993464
+   }
+  },
+  {
+   "snr_db": 14.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 187,
+     "payload_exact": 187,
+     "yield": 0.9166666666666666
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 102,
+     "payload_exact": 102,
+     "yield": 0.5
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 79,
+     "payload_exact": 79,
+     "yield": 0.3872549019607843
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 368,
+    "payload_exact": 368,
+    "yield": 0.6013071895424836
+   }
+  },
+  {
+   "snr_db": 15.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 202,
+     "payload_exact": 202,
+     "yield": 0.9901960784313726
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 161,
+     "payload_exact": 161,
+     "yield": 0.7892156862745098
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 140,
+     "payload_exact": 140,
+     "yield": 0.6862745098039216
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 503,
+    "payload_exact": 503,
+    "yield": 0.8218954248366013
+   }
+  },
+  {
+   "snr_db": 16.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 203,
+     "payload_exact": 203,
+     "yield": 0.9950980392156863
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 189,
+     "payload_exact": 189,
+     "yield": 0.9264705882352942
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 181,
+     "payload_exact": 181,
+     "yield": 0.8872549019607843
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 573,
+    "payload_exact": 573,
+    "yield": 0.9362745098039216
+   }
+  },
+  {
+   "snr_db": 17.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 203,
+     "payload_exact": 203,
+     "yield": 0.9950980392156863
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 198,
+     "payload_exact": 198,
+     "yield": 0.9705882352941176
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 197,
+     "payload_exact": 197,
+     "yield": 0.9656862745098039
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 598,
+    "payload_exact": 598,
+    "yield": 0.9771241830065359
+   }
+  },
+  {
+   "snr_db": 18.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 201,
+     "payload_exact": 201,
+     "yield": 0.9852941176470589
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 609,
+    "payload_exact": 609,
+    "yield": 0.9950980392156863
+   }
+  },
+  {
+   "snr_db": 19.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 612,
+    "payload_exact": 612,
+    "yield": 1.0
+   }
+  },
+  {
+   "snr_db": 20.0,
+   "per_type": {
+    "DM1": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    },
+    "DM3": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    },
+    "DM5": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 204,
+     "payload_exact": 204,
+     "yield": 1.0
+    }
+   },
+   "pooled": {
+    "bursts": 612,
+    "header_ok": 612,
+    "crc_ok": 612,
+    "payload_exact": 612,
+    "yield": 1.0
+   }
+  }
+ ],
+ "levels_chosen": [
+  16.5,
+  15.0,
+  14.0,
+  13.5,
+  10.5
+ ],
+ "levels_check": {
+  "what": "the same receiver at the levels of levels_chosen: first all sweep seeds pooled, then the seed of the files as written (8101, 68 bursts per type)",
+  "all_seeds": [
+   {
+    "snr_db": 10.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 204,
+      "header_ok": 200,
+      "crc_ok": 76,
+      "payload_exact": 76,
+      "yield": 0.37254901960784315
+     },
+     "DM3": {
+      "bursts": 204,
+      "header_ok": 198,
+      "crc_ok": 0,
+      "payload_exact": 0,
+      "yield": 0.0
+     },
+     "DM5": {
+      "bursts": 204,
+      "header_ok": 196,
+      "crc_ok": 0,
+      "payload_exact": 0,
+      "yield": 0.0
+     }
+    },
+    "pooled": {
+     "bursts": 612,
+     "header_ok": 594,
+     "crc_ok": 76,
+     "payload_exact": 76,
+     "yield": 0.12418300653594772
+    }
+   },
+   {
+    "snr_db": 13.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 180,
+      "payload_exact": 180,
+      "yield": 0.8823529411764706
+     },
+     "DM3": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 67,
+      "payload_exact": 67,
+      "yield": 0.3284313725490196
+     },
+     "DM5": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 58,
+      "payload_exact": 58,
+      "yield": 0.28431372549019607
+     }
+    },
+    "pooled": {
+     "bursts": 612,
+     "header_ok": 612,
+     "crc_ok": 305,
+     "payload_exact": 305,
+     "yield": 0.49836601307189543
+    }
+   },
+   {
+    "snr_db": 14.0,
+    "per_type": {
+     "DM1": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 187,
+      "payload_exact": 187,
+      "yield": 0.9166666666666666
+     },
+     "DM3": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 102,
+      "payload_exact": 102,
+      "yield": 0.5
+     },
+     "DM5": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 79,
+      "payload_exact": 79,
+      "yield": 0.3872549019607843
+     }
+    },
+    "pooled": {
+     "bursts": 612,
+     "header_ok": 612,
+     "crc_ok": 368,
+     "payload_exact": 368,
+     "yield": 0.6013071895424836
+    }
+   },
+   {
+    "snr_db": 15.0,
+    "per_type": {
+     "DM1": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 202,
+      "payload_exact": 202,
+      "yield": 0.9901960784313726
+     },
+     "DM3": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 161,
+      "payload_exact": 161,
+      "yield": 0.7892156862745098
+     },
+     "DM5": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 140,
+      "payload_exact": 140,
+      "yield": 0.6862745098039216
+     }
+    },
+    "pooled": {
+     "bursts": 612,
+     "header_ok": 612,
+     "crc_ok": 503,
+     "payload_exact": 503,
+     "yield": 0.8218954248366013
+    }
+   },
+   {
+    "snr_db": 16.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 203,
+      "payload_exact": 203,
+      "yield": 0.9950980392156863
+     },
+     "DM3": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 196,
+      "payload_exact": 196,
+      "yield": 0.9607843137254902
+     },
+     "DM5": {
+      "bursts": 204,
+      "header_ok": 204,
+      "crc_ok": 190,
+      "payload_exact": 190,
+      "yield": 0.9313725490196079
+     }
+    },
+    "pooled": {
+     "bursts": 612,
+     "header_ok": 612,
+     "crc_ok": 589,
+     "payload_exact": 589,
+     "yield": 0.9624183006535948
+    }
+   }
+  ],
+  "file_seed": [
+   {
+    "snr_db": 10.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 68,
+      "header_ok": 66,
+      "crc_ok": 27,
+      "payload_exact": 27,
+      "yield": 0.39705882352941174
+     },
+     "DM3": {
+      "bursts": 68,
+      "header_ok": 67,
+      "crc_ok": 0,
+      "payload_exact": 0,
+      "yield": 0.0
+     },
+     "DM5": {
+      "bursts": 68,
+      "header_ok": 66,
+      "crc_ok": 0,
+      "payload_exact": 0,
+      "yield": 0.0
+     }
+    },
+    "pooled": {
+     "bursts": 204,
+     "header_ok": 199,
+     "crc_ok": 27,
+     "payload_exact": 27,
+     "yield": 0.1323529411764706
+    }
+   },
+   {
+    "snr_db": 13.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 61,
+      "payload_exact": 61,
+      "yield": 0.8970588235294118
+     },
+     "DM3": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 21,
+      "payload_exact": 21,
+      "yield": 0.3088235294117647
+     },
+     "DM5": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 22,
+      "payload_exact": 22,
+      "yield": 0.3235294117647059
+     }
+    },
+    "pooled": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 104,
+     "payload_exact": 104,
+     "yield": 0.5098039215686274
+    }
+   },
+   {
+    "snr_db": 14.0,
+    "per_type": {
+     "DM1": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 63,
+      "payload_exact": 63,
+      "yield": 0.9264705882352942
+     },
+     "DM3": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 30,
+      "payload_exact": 30,
+      "yield": 0.4411764705882353
+     },
+     "DM5": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 28,
+      "payload_exact": 28,
+      "yield": 0.4117647058823529
+     }
+    },
+    "pooled": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 121,
+     "payload_exact": 121,
+     "yield": 0.5931372549019608
+    }
+   },
+   {
+    "snr_db": 15.0,
+    "per_type": {
+     "DM1": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 67,
+      "payload_exact": 67,
+      "yield": 0.9852941176470589
+     },
+     "DM3": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 53,
+      "payload_exact": 53,
+      "yield": 0.7794117647058824
+     },
+     "DM5": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 44,
+      "payload_exact": 44,
+      "yield": 0.6470588235294118
+     }
+    },
+    "pooled": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 164,
+     "payload_exact": 164,
+     "yield": 0.803921568627451
+    }
+   },
+   {
+    "snr_db": 16.5,
+    "per_type": {
+     "DM1": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 67,
+      "payload_exact": 67,
+      "yield": 0.9852941176470589
+     },
+     "DM3": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 67,
+      "payload_exact": 67,
+      "yield": 0.9852941176470589
+     },
+     "DM5": {
+      "bursts": 68,
+      "header_ok": 68,
+      "crc_ok": 63,
+      "payload_exact": 63,
+      "yield": 0.9264705882352942
+     }
+    },
+    "pooled": {
+     "bursts": 204,
+     "header_ok": 204,
+     "crc_ok": 197,
+     "payload_exact": 197,
+     "yield": 0.9656862745098039
+    }
+   }
+  ]
+ }
+}
