@@ -42,7 +42,7 @@ a float32 sum).
   dB over the noise in 1 MHz, the tone being one frequency.
 * ``wifi_const_p20``: Wi-Fi-like noise, complex Gaussian, flat between +11 and
   +20 MHz from the centre (2452 to 2461 MHz; the upper edge is the Nyquist
-  limit, so nothing aliases), on for the whole file. Its power spectral density
+  limit - **but see the skirt below**), on for the whole file. Its power spectral density
   is ``10**(L/10)`` times the floor's, so in every 1 MHz of the band it is
   20 dB over the floor in that 1 MHz. It is white noise through a long FIR band-
   pass (``WIFI_TAPS`` Kaiser taps, passband edges ``WIFI_EDGE_MARGIN_MHZ`` outside
@@ -50,6 +50,17 @@ a float32 sum).
   previous white samples carried across each block boundary, so there is no seam:
   the white noise of block ``i`` is ``default_rng([seed, 3, i])`` and the L - 1
   samples before sample 0 are ``default_rng([seed, 6])``.
+  **The Nyquist skirt.** The filter's upper design edge is +20.05 MHz
+  (``WIFI_EDGE_MARGIN_MHZ`` above the +20 MHz band edge), which is beyond the
+  +20 MHz Nyquist limit of a 40 MS/s capture, so the response wraps: a skirt
+  appears at about -20..-19.95 MHz from the centre (2421.00..2421.05 MHz),
+  measured 18.8 dB above the floor per MHz there, only 1.19 dB below the
+  plateau. It is outside the declared +11..+20 MHz band and outside every
+  channel of the map 31-50 (the lowest, channel 31 at 2433 MHz, is -8 MHz), so
+  it changes no overlap truth, but it is Wi-Fi-like power outside the stated band
+  that a check for out-of-band interference or wrong-channel detections near
+  2421 MHz will see. The samples are final and are not changed for it; the
+  sidecar's Wi-Fi description carries it as ``nyquist_skirt``.
 * ``wifi_bursty_p20``: the same noise, same PSD while on, gated into frames of
   0.3 to 3 ms (length uniform, seeded) at 30 % duty, 5 us raised-cosine edges
   (the amplitude goes 0 to 1 as ``0.5 * (1 - cos(pi * (i + 0.5) / E))``). After
@@ -69,9 +80,12 @@ if one is on during part of that span *and* its band reaches the channel band:
 a tone only on its own channel; the Wi-Fi noise on every channel whose band
 meets 2452..2461 MHz - of the map 31-50, **only channel 50** (2452 MHz, band
 2451.5..2452.5, half of it in the Wi-Fi band, plus the filter's 0.05 MHz skirt); the bursty noise only while a
-frame is on in the span. ``interferer_power_in_band_db`` is the time-averaged
-interferer power in that 1 MHz band during the span, over the noise in 1 MHz, in
-dB: a tone on its channel is its own level; the noise is ``level + 10 log10(MHz
+frame is on in the span. ``interferer_power_in_band_db`` is the **ensemble-
+expected** interferer power in that 1 MHz band, time-averaged over the deterministic
+gate during the span, over the noise in 1 MHz, in dB (the expectation over the Gaussian
+noise, from the FIR's response and the gate, not a measurement of the realisation in
+the file: on a short burst the realisation differs by a fraction of a dB, 0.45 dB seen
+on a 2.87 ms burst on channel 50; a tone has no such difference): a tone on its channel is its own level; the noise is ``level + 10 log10(MHz
 of the channel's 1 MHz band, weighted by the FIR's actual squared response) + 10
 log10(mean of the gate squared over the span)``; interferers on the same channel add in power; ``null`` where there
 is no overlap.
@@ -131,7 +145,33 @@ INTERFERER_NOTE = (
     "the gate squared over the span), the gate being 1 for the constant noise. The FIR's 0.1 MHz "
     "skirt at the lower band edge, which starts 0.05 MHz below +11 MHz, is therefore IN the "
     "figure: channel 50 is about 17.3 dB, not the 16.99 dB of a brick wall. Interferers in the "
-    "same band add in power; null when there is no overlap.")
+    "same band add in power; null when there is no overlap. interferer_power_in_band_db is the "
+    "ENSEMBLE-EXPECTED power: the expectation over the Gaussian noise of the interferer power in "
+    "the channel's 1 MHz band, time-averaged over the deterministic gate during the span, and not "
+    "a measurement of the realisation in the file; on a short burst the realisation differs by a "
+    "fraction of a dB (0.45 dB seen on a 2.87 ms burst on channel 50), a tone not at all. The wifi "
+    "noise's filter wraps at the Nyquist limit: its upper design edge is +20.05 MHz, so a skirt, "
+    "about 1.2 dB below the plateau, sits at -20..-19.95 MHz from the centre (2421.00..2421.05 MHz), "
+    "outside the declared +11..+20 MHz band and outside every channel of the map 31-50; it changes "
+    "no overlap or power figure.")
+
+
+#: What the sidecar says of the filter's wrapped upper skirt (the samples are not changed for it).
+NYQUIST_SKIRT = (
+    "The filter's upper design edge is +20.05 MHz, beyond the +20 MHz Nyquist limit of the capture, so its "
+    "response wraps: a skirt at about -20..-19.95 MHz from the centre (2421.00..2421.05 MHz), measured 18.8 dB "
+    "above the floor per MHz there, 1.19 dB below the plateau. It is outside the declared +11..+20 MHz band "
+    "(band_offset_mhz, band_mhz) and outside every channel 31-50, so it changes no interferer_overlap or "
+    "interferer_power_in_band_db.")
+
+
+
+CLOCK_LOCK_NOTE_INTERF = (
+    "The clock of every burst is in bursts[].clk (native CLK[27:0]); a receiver's CLK[27:1] lock "
+    "for a burst is expected to equal clk >> 1 with no offset (the 2026-10-04 one-slot-shift "
+    "allowance in the older hopping files is withdrawn). Over the 20-channel map (31-50) a "
+    "different clock can reproduce the same hops for a short run of bursts, so a lock over few "
+    "bursts may not be unique.")
 
 
 def amplitude_for(snr_db):
@@ -177,7 +217,9 @@ def wifi_taps(fs=FS):
     """The band-pass FIR of the Wi-Fi-like noise: complex, ``WIFI_TAPS`` Kaiser
     taps, passband from ``WIFI_BAND_MHZ[0]`` less the margin to its top plus the
     margin (the top is Nyquist, so the upper skirt wraps through it and
-    reappears as the 0.05 MHz just above -20 MHz, outside every map channel),
+    reappears as the 0.05 MHz just above -20 MHz, outside every map channel but
+    NOT absent: measured 18.8 dB above the floor per MHz there, 1.19 dB below the
+    plateau, so "nothing aliases" would be wrong),
     gain 1 at the band centre. The group delay is (taps - 1) / 2 samples, which noise does not care
     about."""
     lo, hi = WIFI_BAND_MHZ[0] - WIFI_EDGE_MARGIN_MHZ, WIFI_BAND_MHZ[1] + WIFI_EDGE_MARGIN_MHZ
@@ -350,6 +392,8 @@ def wifi_overlap_table(channels, fs=FS, center_mhz=CENTER_MHZ):
 
 def burst_truth(specs, frames, start, end, channel, wifi_mhz):
     """``(interferer_overlap, interferer_power_in_band_db)`` of one burst."""
+    if end <= start:
+        raise ValueError("burst [%d, %d) on channel %d has no length" % (start, end, channel))
     hit = False
     power = 0.0                                # over the noise in 1 MHz, linear
     for s in specs:
@@ -358,6 +402,9 @@ def burst_truth(specs, frames, start, end, channel, wifi_mhz):
                 hit = True
                 power += 10 ** (s['level_db'] / 10)
         else:
+            if channel not in wifi_mhz:
+                raise ValueError("burst [%d, %d) on channel %d: the Wi-Fi overlap table has no entry for it "
+                                 "(it has %s)" % (start, end, channel, sorted(wifi_mhz)))
             mhz = wifi_mhz[channel]
             if mhz < WIFI_REACH_MHZ:
                 continue
@@ -369,9 +416,10 @@ def burst_truth(specs, frames, start, end, channel, wifi_mhz):
                 g2 = 1.0
             hit = True
             power += 10 ** (s['level_db'] / 10) * mhz * g2
-    if hit and power <= 0:
-        raise ValueError("burst [%d, %d) on channel %d: the interferer overlaps it but its gated "
-                         "energy is zero: overlap and gate disagree" % (start, end, channel))
+    if hit and not (power > 0 and math.isfinite(power)):
+        raise ValueError("burst [%d, %d) on channel %d: the interferer overlaps it but its power over the "
+                         "noise in 1 MHz is %r (not a positive finite number): overlap and gate disagree"
+                         % (start, end, channel, power))
     return hit, (10 * math.log10(power) if hit else None)
 
 
@@ -472,6 +520,7 @@ def synthesise_interf(interferer='clean', bursts=BURSTS, seed=SEED, snr_db=SNR_D
                 'level_db': s['level_db'], 'level_meaning':
                     'power spectral density over the floor\'s: every 1 MHz of the band is level_db '
                     'over noise_1mhz while on',
+                'nyquist_skirt': NYQUIST_SKIRT,
                 'bursty': s['bursty'], 'duty_target': DUTY if s['bursty'] else 1.0,
                 'duty': on / total if s['bursty'] else 1.0,
                 'frames': 'interferer_frames' if s['bursty'] else None,
@@ -528,7 +577,7 @@ def synthesise_interf(interferer='clean', bursts=BURSTS, seed=SEED, snr_db=SNR_D
         'afh_instant_meaning': hop.INSTANT_MEANING,
         'hop_kernel': hop.HOP_KERNEL,
         'address_for_hop': uap << 24 | lap,
-        'clock_lock_note': hop.CLOCK_LOCK_NOTE,
+        'clock_lock_note': CLOCK_LOCK_NOTE_INTERF,
         'seed': seed,
         'noise_block_samples': block_samples,
     }

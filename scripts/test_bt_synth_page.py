@@ -32,12 +32,19 @@ there. Nothing below trusts the generator's bookkeeping.
   states; POLL, NULL and DH1 headers through libbtbb at the master's UAP and
   the burst's ``clk``.
 * **The validator**: bluey's own check rewritten here with no help from the
-  generator - from the (slot, channel) pairs of the master packets after an FHS,
-  brute-force CLK[27:1] over a window and require the one solution to be the
-  FHS's CLK27-2 advanced by the slots since, through ``apps/bt_hop.py`` and the
-  map 31-50. It must succeed for every exchange, and fail for the wrong master
-  LAP, for a shifted FHS clock, for the wrong map, and for a master LAP whose
-  follow-up traffic is removed.
+  generator - from the (slot, channel) pairs of the master packets and the
+  slave answers after an FHS, every CLK[27:1] of the WHOLE 2**27 domain that
+  reproduces them, through ``apps/bt_hop.py`` and the map 31-50. The lock is not
+  unique in every exchange (the 20-channel map gives aliases: 27 of the 200
+  delivered exchanges have two or three solutions), so the receiver's rule is
+  that the FHS's CLK27-2 advanced by the slots since is one of them, and the
+  verdict on any other solution, or on a shifted FHS clock, is "not equal to the
+  FHS clock". The sidecar's ``clock_solutions`` must be exactly the full-domain
+  set, each one checked by the scalar kernel, the vector kernel and its table
+  held to the scalar one on random clocks, and the true clock must be in it in
+  every exchange. The windowed search of the first version could not see an
+  alias outside its 601 clocks. The old controls stay: the wrong master LAP, the
+  wrong map, a master LAP whose follow-up traffic is removed.
 * **Mutants**: ten single mistakes, each made in a copy of the generator, and
   the checks that catch each, reported.
 """
@@ -126,9 +133,12 @@ def nbits(b):
 # --- the validator, bluey's check, written here ------------------------------
 
 def validate_clock(obs, expected, address, mask, span=300):
-    """Every CLK[27:1] ``c`` for the first observation, within ``span`` of
-    ``expected``, for which every ``(slot offset, channel)`` of ``obs`` is the
-    hop of the clock ``c`` advanced by the offset (one CLK[27:1] a slot).
+    """The WINDOWED search of the first version: every CLK[27:1] ``c`` for the
+    first observation, within ``span`` of ``expected``, for which every ``(slot
+    offset, channel)`` of ``obs`` is the hop of the clock ``c`` advanced by the
+    offset (one CLK[27:1] a slot). It cannot see an alias outside the window, so
+    it is used only for the negative controls (a clock that is not a solution at
+    all); the positive checks use ``full_domain_solutions``.
 
     ``obs`` is every packet on the master's access code, the slave's answers
     included. On an adapted sequence the kernel takes CLK1 as 0 (``bt_hop``
@@ -137,19 +147,78 @@ def validate_clock(obs, expected, address, mask, span=300):
     the next master slot's hop."""
     sols = []
     for c in range(expected - span, expected + span + 1):
-        if all(bt_hop.hop_channel(((c + off) << 1) & 0x0FFFFFFF, address, mask) == ch for off, ch in obs):
+        if scalar_fits(c, obs, address, mask):
             sols.append(c)
     return sols
 
 
+def scalar_fits(c, obs, address, mask):
+    """Is every ``(slot offset, channel)`` of ``obs`` the hop of CLK[27:1] ``c`` advanced by the offset,
+    by the scalar kernel ``bt_hop.hop_channel`` one packet at a time."""
+    return all(bt_hop.hop_channel((((c + off) & 0x7FFFFFF) << 1), address, mask) == ch for off, ch in obs)
+
+
 def validates(obs, fhs_c27_2, slots_since_fhs, address=M_ADDRESS, mask=MASK, min_obs=16):
-    """bluey's rule: enough packets on the master's LAP after the FHS, and the
-    one CLK[27:1] they give is the FHS's CLK27-2 (as CLK27-1) advanced by the
-    slots between the FHS and the first of them."""
+    """The first version's windowed rule, kept for the negative controls only: enough packets, and the one
+    clock in the window is the FHS's CLK27-2 (as CLK27-1) advanced by the slots since."""
     if len(obs) < min_obs:
         return False
     expected = (fhs_c27_2 << 1) + slots_since_fhs
     return validate_clock(obs, expected, address, mask) == [expected]
+
+
+def full_domain_solutions(obs, address=M_ADDRESS, mask=MASK):
+    """Every CLK[27:1] of 0..2**27 - 1 for which ``obs`` is the hop sequence, sorted.
+
+    Written here from ``gen.hop_table`` (the hop of every clock slot pair, whose entries are held to the
+    scalar kernel in ``check_kernel``): the candidates of the last observation first, then each of the
+    others in turn."""
+    table = gen.hop_table(address, mask)
+    off, ch = obs[-1]
+    pair = np.flatnonzero(table == ch).astype(np.int64)         # CLK[27:2] of the slot pair that hops to ch
+    cand = np.concatenate([2 * pair, 2 * pair + 1])             # CLK[27:1] of that pair's two slots
+    cand = (cand - off) % (1 << 27)
+    for off, ch in obs[:-1]:
+        cand = cand[table[((cand + off) % (1 << 27)) >> 1] == ch]
+    return sorted(cand.tolist())
+
+
+def lock_verdict(solutions, n_obs, fhs_c27_2, slots_since_fhs, min_obs=16):
+    """What a receiver says about an FHS: enough packets, a clock that fits, and the solution it takes equal to
+    the FHS clock advanced by the slots since (``(CLK27-2 << 1) + slots``). Several solutions are fine as long as
+    the FHS's own is among them; a receiver that took any other one gets "not equal to the FHS clock"."""
+    if n_obs < min_obs:
+        return 'too few packets'
+    if not solutions:
+        return 'no clock fits'
+    expected = (fhs_c27_2 << 1) + slots_since_fhs
+    return 'ok' if expected in solutions else 'not equal to the FHS clock'
+
+
+_KERNEL_CHECKED = [False]
+
+
+def check_kernel():
+    """The generator's vector kernel and its table against the scalar ``bt_hop.hop_channel``."""
+    if _KERNEL_CHECKED[0]:
+        return
+    _KERNEL_CHECKED[0] = True
+    rng = np.random.default_rng(20261006)
+    clks = [int(c) for c in rng.integers(0, 1 << 28, size=10000)]
+    got = gen.hop_channels_vec(clks, M_ADDRESS, MASK)
+    check(all(int(g) == bt_hop.hop_channel(c, M_ADDRESS, MASK) for g, c in zip(got, clks)),
+          'the generator\'s vector kernel gives bt_hop.hop_channel on 10000 random clocks (map 31-50, the master)')
+    other_mask = sum(1 << int(c) for c in rng.choice(79, size=23, replace=False))
+    other_addr = int(rng.integers(0, 1 << 32))
+    clks2 = [int(c) for c in rng.integers(0, 1 << 28, size=3000)]
+    got2 = gen.hop_channels_vec(clks2, other_addr, other_mask)
+    check(all(int(g) == bt_hop.hop_channel(c, other_addr, other_mask) for g, c in zip(got2, clks2)),
+          '... and on 3000 random clocks with another address and a random 23-channel map')
+    table = gen.hop_table(M_ADDRESS, MASK)
+    ks = [0, (1 << 26) - 1] + [int(k) for k in rng.integers(0, 1 << 26, size=10000)]
+    check(len(table) == 1 << 26 and all(int(table[k]) == bt_hop.hop_channel(k << 2, M_ADDRESS, MASK) == 
+                                         bt_hop.hop_channel(k << 2 | 3, M_ADDRESS, MASK) for k in ks),
+          'the hop table has 2**26 entries and 10002 of them, CLK1-0 = 0 and 3 alike, are bt_hop.hop_channel')
 
 
 def observations(starts, channels):
@@ -254,6 +323,15 @@ def xprc_independent(clke, koff, nudge, n):
     return (c16_12 + koff + nudge + ((c4_2_0 - c16_12) % 16) + n) % 32
 
 
+def eq6_readings(clke, koff, nudge, n):
+    """EQ 6 under its two groupings, from bit strings: (CLKE4-2,0 - CLKE16-12) mod 16, and CLKE4-2,0 - (CLKE16-12 mod 16)."""
+    b = format(clke, '028b')[::-1]
+    c16_12 = int(b[16] + b[15] + b[14] + b[13] + b[12], 2)
+    c4_2_0 = int(b[4] + b[3] + b[2] + b[0], 2)
+    return ((c16_12 + koff + nudge + ((c4_2_0 - c16_12) % 16) + n) % 32,
+            (c16_12 + koff + nudge + (c4_2_0 - (c16_12 % 16)) + n) % 32)
+
+
 def check_whitening(side, kind, exchanges):
     """The X-input rule of s7.2 against the recorded inputs, with the equations written here."""
     bursts = side['bursts']
@@ -280,6 +358,18 @@ def check_whitening(side, kind, exchanges):
           'implied_clk6_1 is 32 + X (%d wrong)' % ('Xprc, EQ 6, with N 1 and k_offset 24 (A) or 8 (B)' if kind == 'page'
                                                   else 'Xir, EQ 8,', len(bad)))
     if kind == 'page':
+        differ = 0
+        recomputed = True
+        for E in (side['exchanges'][e]['fhs_whitening'] for e in range(exchanges)):
+            a, b = eq6_readings(E['clke_frozen'], E['koffset'], E['knudge'], E['N'])
+            recomputed = recomputed and E['xprc'] == a and E['xprc_other_reading'] == b
+            differ += a != b
+        note = side['spec_notes'][-1]
+        check(recomputed and differ > 0 and 'CLKE4-2,0 - (CLKE16-12 mod 16)' in note
+              and '(CLKE4-2,0 - CLKE16-12) mod 16' in note and 'matches the structure of EQ 7' in note
+              and 'in %d of the %d exchanges of this file' % (differ, exchanges) in note,
+              'EQ 6 under both groupings is recomputed here from the recorded inputs: the two give a different X in %d '
+              'of %d exchanges, and the sidecar\'s note states that number' % (differ, exchanges))
         check(len({side['exchanges'][e]['fhs_whitening']['train'] for e in range(exchanges)}) == min(2, exchanges)
               or exchanges < 6, 'both trains occur')
         check(any(f['fhs']['implied_clk6_1'] != (b['clk'] >> 1) & 0x3F for f, b in ((x, x) for x in fh)),
@@ -305,6 +395,31 @@ def check_conformance(side, kind, exchanges):
           and any('NOT FOLLOWED' in n and 'basic' in n.lower() for n in side['spec_notes']),
           'conformance lists what is followed, NOT followed (page, page response, inquiry, inquiry response, basic '
           'sequence, with sections) and silent; spec_notes no longer calls the sequences silent')
+    notes = ' '.join(side['spec_notes'])
+    silent = ' '.join(c['silent_in_text'])
+    nf = ' '.join(c['not_followed'])
+    whole = json.dumps(side)
+    check('minus 1' not in whole and 'minus-1' not in whole and 'Accept the true clock or that' not in whole
+          and '2026-10-04' not in side['clock_lock_note'] and 'no one-step offset' in (
+              side['clock_lock_note'] if kind == 'page' else 'no one-step offset'),
+          'the sidecar no longer carries the 2026-10-04 "minus 1" clock-lock note (no "minus 1" anywhere in it)')
+    check('16 slots = 8 TX slots of two IDs each = 10 ms' in notes and 'ended early' in nf and 'response' in nf
+          and 'the freely chosen frequencies' in nf and '16-slot A/B page train' not in nf
+          and 'train length (the files' not in notes and 'a real one is 16 slots' not in notes,
+          'the train wording: 16 slots = 8 TX slots = 10 ms, 3-8 TX slots is an exchange ended early on a response '
+          '(allowed), the departure is the freely chosen frequencies')
+    check('first page FHS counter' not in silent and 'beyond \'a counter starting at one\'' not in silent
+          and 'FHS retransmission with an updated clock is not modelled' in silent
+          and 'every exchange acknowledges the first FHS' in silent
+          and 'independent episodes' in nf and 'independent episodes' in notes
+          and 'whitening pseudo-clock' in notes and 'fhs_clk' in notes,
+          'silent_in_text drops the first-page-FHS counter N and adds FHS retransmission; not_followed has the independent episodes; '
+          'the notes say what clk and fhs_clk are in an FHS')
+    check('312.5 symbols' in gen.__doc__ and '12.5 symbols at 40 MS/s' not in gen.__doc__
+          and '16 slots = 8 TX slots of two IDs each = 10 ms' in gen.__doc__
+          and 'independent episodes' in gen.__doc__ and 'clk27_2' in bt_fhs.FHS.sidecar.__doc__
+          and 'whitening pseudo-clock' in bt_fhs.FHS.sidecar.__doc__,
+          'the docstrings: a tick is 312.5 symbols, the train is 16 slots = 8 TX slots, FHS.sidecar() names its clocks')
     E = side['exchanges']
     check(all('31-50' in e['spec_channels_note'] and 'conformance' in e['spec_channels_note'] for e in E),
           'every exchange has a spec_channels_note')
@@ -422,10 +537,15 @@ def check_plan_page(side, ex, exchanges, followup, controls):
           if real else 'single exchange')
 
     # the validator, on every master-LAP burst after the FHS: master packets and slave answers
-    valid = 0
-    neg = dict(lap=0, clock=0, slot=0, mapw=0, removed=0, nextexch=0)
+    check_kernel()
+    verdicts = dict(ok=0, listed_ok=0, in_list=0, true_in=0, complete=0, unique_flag=0, fhs_rel=0, shift_rejected=0,
+                    alias_rejected=0, alias_only_ok=0)
+    n_alias = 0
+    neg = dict(lap=0, slot=0, mapw=0, removed=0, nextexch=0)
     n_next = 0
+    ambiguous = {}
     for e in range(exchanges):
+        E = side['exchanges'][e]
         items = ex[e]
         fhs = next(b for _, b in items if b['kind'] == 'fhs')
         after = [b for _, b in items if b['kind'] in ('followup_master', 'followup_slave')]
@@ -433,10 +553,33 @@ def check_plan_page(side, ex, exchanges, followup, controls):
         obs = observations(starts, [b['channel'] for b in after])
         since = (starts[0] - fhs['start_sample']) // SLOT
         c27 = fhs['fhs']['clk27_2']
-        valid += validates(obs, c27, since)
+        expected = (c27 << 1) + since
+        listed = E['clock_solutions']
+        if len(listed) > 1:
+            ambiguous[e] = len(listed)
+        verdicts['ok'] += lock_verdict(listed, len(obs), c27, since) == 'ok'
+        # the sidecar's own list: sorted, every one a solution by the scalar kernel, the true clock among them,
+        # and exactly the full-domain set found here
+        verdicts['listed_ok'] += listed == sorted(set(listed)) and all(scalar_fits(c, obs, M_ADDRESS, MASK) for c in listed)
+        verdicts['in_list'] += all(0 <= c < 1 << 27 for c in listed)
+        verdicts['true_in'] += expected in listed and E['first_followup_clk27_1'] == expected \
+            == E['master_clk_at_connection'] >> 1
+        verdicts['complete'] += listed == full_domain_solutions(obs)
+        verdicts['unique_flag'] += E['clock_unique'] is (len(listed) == 1)
+        # FHS CLK27-2 = (c - slots_since_fhs) >> 1, exactly, with no remainder
+        verdicts['fhs_rel'] += (expected - since) % 2 == 0 and (expected - since) >> 1 == c27 \
+            and ((expected - since) >> 1) == (fhs['clk'] >> 2)
         if controls:
+            # a wrong FHS clock (true +- one CLK27-2 step) is not equal to the FHS clock for any listed solution
+            verdicts['shift_rejected'] += all(lock_verdict(listed, len(obs), c27 + d, since) == 'not equal to the FHS clock'
+                                              for d in (1, -1))
+            # a receiver that locked on a solution that is not the FHS value is rejected, and only that one is ok
+            for sol in listed:
+                v = lock_verdict([sol], len(obs), c27, since)
+                n_alias += sol != expected
+                verdicts['alias_rejected'] += sol != expected and v == 'not equal to the FHS clock'
+                verdicts['alias_only_ok'] += (sol == expected) == (v == 'ok')
             neg['lap'] += not validates(obs, c27, since, address=M_UAP << 24 | 0x112234)
-            neg['clock'] += not validates(obs, c27 + 1, since)
             neg['slot'] += not validates(obs, c27, since + 1)
             neg['mapw'] += not validates(obs, c27, since, mask=sum(1 << c for c in range(30, 50)))
             neg['removed'] += not validates([], c27, since) and not validates(obs[:3], c27, since)
@@ -446,15 +589,47 @@ def check_plan_page(side, ex, exchanges, followup, controls):
                 n_next += 1
                 nxt = [b for _, b in ex[e + 1] if b['kind'] in ('followup_master', 'followup_slave')]
                 ns = [b['start_sample'] for b in nxt]
-                neg['nextexch'] += not validates(observations(ns, [b['channel'] for b in nxt]), c27,
-                                                 (ns[0] - fhs['start_sample']) // SLOT)
-    check(valid == exchanges, 'the validator (CLK27-1 brute force over the 31-50 map, master packets and slave answers) '
-          'finds each exchange\'s own FHS clock from its follow-up, unique: %d of %d' % (valid, exchanges))
+                nobs = observations(ns, [b['channel'] for b in nxt])
+                nsince = (ns[0] - fhs['start_sample']) // SLOT
+                neg['nextexch'] += lock_verdict(full_domain_solutions(nobs), len(nobs), c27, nsince) != 'ok'
+    check(all(v == exchanges for k, v in verdicts.items() if k in ('ok', 'listed_ok', 'in_list', 'true_in', 'complete',
+                                                                   'unique_flag', 'fhs_rel')),
+          'clock_solutions of every exchange is the whole-domain set (2**27 clocks) of the CLK[27:1] that reproduce '
+          'the (slot, channel) of the master packets and slave answers after the FHS: sorted, each by the scalar kernel, '
+          'complete against an independent full-domain search, the true clock among them, and the FHS clock is '
+          '(c - slots) >> 1 exactly %s' % {k: v for k, v in verdicts.items()
+                                           if k in ('ok', 'listed_ok', 'in_list', 'true_in', 'complete', 'unique_flag', 'fhs_rel')})
+    n_unique = sum(len(E['clock_solutions']) == 1 for E in side['exchanges'])
+    check(side['clock_unique_exchanges'] == n_unique
+          and 'is unique for %d of %d exchanges and not for the rest' % (n_unique, exchanges) in side['clock_lock_note']
+          and 'equal to the clock the FHS carries' in side['clock_lock_note'] and '20-channel map' in side['clock_lock_note']
+          and 'not from a fault' in side['clock_lock_note']
+          and not any('unique: %d of %d' % (exchanges, exchanges) in n for n in side['spec_notes'] + [side['clock_lock_note']]),
+          'the sidecar says the clock lock is unique for %d of %d exchanges, that the FHS clock is always one of the '
+          'solutions, that a receiver picks the one equal to the FHS clock, and that the aliases come from the map'
+          % (n_unique, exchanges))
+    if exchanges == 200 and followup == 110:
+        # the aliases found by the first review, each listed solution checked one at a time by the scalar kernel
+        hard = {3: 2, 53: 2, 94: 3}
+        slow = True
+        for e, n_sol in hard.items():
+            items = ex[e]
+            after = [b for _, b in items if b['kind'] in ('followup_master', 'followup_slave')]
+            obs = observations([b['start_sample'] for b in after], [b['channel'] for b in after])
+            slow = slow and len(side['exchanges'][e]['clock_solutions']) == n_sol and \
+                all(scalar_fits(c, obs, M_ADDRESS, MASK) for c in side['exchanges'][e]['clock_solutions']) \
+                and side['exchanges'][e]['clock_unique'] is False
+        check(slow, 'exchanges 3, 53 and 94 are ambiguous (2, 2 and 3 clocks), and every listed clock is a solution '
+              'by the scalar kernel')
     if controls:
-        check(neg == dict(lap=exchanges, clock=exchanges, slot=exchanges, mapw=exchanges, removed=exchanges,
-                          nextexch=n_next),
-              'negative controls fail for every exchange: wrong master LAP, FHS clock off by one CLK27-2 step, off by '
-              'one slot, wrong map, follow-up removed, and the next exchange\'s packets after this FHS (%s)' % neg)
+        check(verdicts['shift_rejected'] == exchanges
+              and verdicts['alias_rejected'] == n_alias and verdicts['alias_only_ok'] == sum(len(E['clock_solutions']) for E in side['exchanges']),
+              'a wrong FHS clock (true +-1 CLK27-2 step) and a solution that is not the FHS clock (%d aliases in %d '
+              'ambiguous exchanges) are rejected as "not equal to the FHS clock"; only the FHS value is ok'
+              % (n_alias, len(ambiguous)))
+        check(neg == dict(lap=exchanges, slot=exchanges, mapw=exchanges, removed=exchanges, nextexch=n_next),
+              'negative controls fail for every exchange: wrong master LAP, off by one slot, wrong map, '
+              'follow-up removed, and the next exchange\'s packets after this FHS (%s)' % neg)
 
 
 def check_plan_inquiry(side, ex, exchanges):
@@ -803,12 +978,13 @@ def check_validator_on_samples(got, side):
         r = bt_fhs.parse_fhs_air_bits(got[fi]['bits'][:366], side['bursts'][fi]['fhs']['header_uap'],
                                       side['bursts'][fi]['fhs']['tx_clk'])
         lo = min(16, len(obs))
-        good = validates(obs, r['clk27_2'], since, min_obs=lo)
+        sols = full_domain_solutions(obs)
+        good = lock_verdict(sols, len(obs), r['clk27_2'], since, min_obs=lo) == 'ok'
         bad = (validates(obs, r['clk27_2'], since, address=M_UAP << 24 | 0x112234, min_obs=lo)
-               or validates(obs, r['clk27_2'] + 1, since, min_obs=lo))
+               or lock_verdict(sols, len(obs), r['clk27_2'] + 1, since, min_obs=lo) == 'ok')
         ok += good and not bad
     check(n > 0 and ok == n, 'from the MEASURED starts and carriers and the FHS clock decoded from the measured bits, '
-          'the validator finds every exchange\'s clock (%d of %d), and not with the wrong master LAP or a clock off by one' % (ok, n))
+          'the validator (full-domain search) finds every exchange\'s FHS clock among its solutions (%d of %d), and not with the wrong master LAP or a clock off by one' % (ok, n))
 
 
 def check_noise_and_idle(iq, side):
@@ -891,6 +1067,7 @@ def mutant_module(old, new):
     mod = importlib.util.module_from_spec(spec)
     code = compile(SRC.replace(old, new), gen.__file__, 'exec')
     exec(code, mod.__dict__)
+    mod._TABLE_CACHE = gen._TABLE_CACHE          # the 64 MB hop table is built once, not once a mutant
     return mod
 
 
@@ -901,7 +1078,13 @@ PAGE_FHS = "f = bt_fhs.FHS(PAGED['lap'], MASTER['lap'], MASTER['uap'], MASTER['n
 TRAIN = "train, koffset, knudge, n_ctr = ('A', 24, 0, 1) if rng.integers(0, 2) else ('B', 8, 0, 1)"
 XPRC = "x = bt_fhs.xprc(clke, koffset, knudge, n_ctr)"
 
+DROP_SOLUTION = "assert (conn_clk >> 1) in lock, 'the clock the follow-up was made on is not among its own solutions'"
 MUTANTS = [
+    ('clock_solutions drops one solution (the first)', DROP_SOLUTION, 'lock = lock[1:]', 'page', False),
+    ('clock_solutions searched in a 601-clock window only (the first version)', DROP_SOLUTION,
+     'lock = [c for c in lock if abs(c - (conn_clk >> 1)) <= 300]', 'page', False),
+    ('clock_solutions shifted by one clock', DROP_SOLUTION, 'lock = [c + 1 for c in lock]', 'page', False),
+    ('clock_unique always true', "clock_unique=len(lock) == 1)", "clock_unique=True)", 'page', False),
     ('FHS clock off by one slot-pair (clk27_2 + 1)', "AM_ADDR, fhs_clk, x, sr=sr)", "AM_ADDR, fhs_clk + 4, x, sr=sr)", 'page', False),
     ('follow-up hopping from the wrong clock', 'channel = int(hop_fn(clk_m))', 'channel = int(hop_fn(clk_m + 4))', 'page', False),
     ('follow-up on the wrong map', "hop_fn = hop.afh_hop_fn([(0, channels)], MASTER['lap'], MASTER['uap'])",

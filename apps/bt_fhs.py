@@ -189,10 +189,28 @@ def xprc(clke, koffset, knudge, n):
     most significant first, as the spec's other lists of bits are (§2.6.2,
     "A8,6,4,2,0"). Another reading (least significant first, say) would give a
     different Xprc; the inputs are recorded in the generator's sidecar so a
-    reader can recompute under either. The term is ``(CLKE4-2,0 - CLKE16-12) mod 16`` as in EQ 2."""
+    reader can recompute under either.
+
+    **The grouping of the mod.** EQ 6 as typeset can be read as
+    ``(CLKE4-2,0 - CLKE16-12) mod 16`` (used here, the reading that matches the
+    structure of EQ 7 and, as the first version of this docstring said, EQ 2) or
+    as ``CLKE4-2,0 - (CLKE16-12 mod 16)``, the mod applying to the subtrahend
+    alone (``xprc_other_reading``). The two differ by 16 (mod 32) in Xprc on
+    about half of all inputs, and the recorded inputs allow either to be
+    recomputed. EQ 7's own text is not among the extracts held in this
+    repository."""
     c16_12 = (clke >> 12) & 0x1F
     c4_2_0 = ((clke >> 4) & 1) << 3 | ((clke >> 3) & 1) << 2 | ((clke >> 2) & 1) << 1 | (clke & 1)
     return (c16_12 + koffset + knudge + (c4_2_0 - c16_12) % 16 + n) % 32
+
+
+def xprc_other_reading(clke, koffset, knudge, n):
+    """EQ 6 under its other grouping, ``CLKE4-2,0 - (CLKE16-12 mod 16)``, the
+    mod applying to CLKE16-12 alone (see ``xprc``). Not used for any packet;
+    the sidecar records it so a reader can see where the two readings part."""
+    c16_12 = (clke >> 12) & 0x1F
+    c4_2_0 = ((clke >> 4) & 1) << 3 | ((clke >> 3) & 1) << 2 | ((clke >> 2) & 1) << 1 | (clke & 1)
+    return (c16_12 + koffset + knudge + (c4_2_0 - c16_12 % 16) + n) % 32
 
 
 def xir(clkn, n):
@@ -264,7 +282,16 @@ class FHS:
 
     def sidecar(self):
         """This packet's entry in a sidecar's ``bursts`` list, less the
-        ``start_sample``; ``air_bits`` is left out."""
+        ``start_sample``; ``air_bits`` is left out.
+
+        **Two clocks, and the names of them.** ``clk`` here is ``tx_clk``, the
+        whitening pseudo-clock: the clock whose CLK6-1 seeds the whitening
+        register, which in a response FHS is ``(X | 0x20) << 1`` and not a clock
+        at all. ``fhs_clk`` is the clock carried in the payload (``clk27_2`` is
+        ``fhs_clk >> 2``). A reader who wants the clock the FHS carries takes
+        ``fhs_clk`` or ``clk27_2``, never ``clk``. (The page generator's own
+        ``bursts[].clk`` is the sender's native clock, and the pseudo-clock is
+        in ``bursts[].fhs.tx_clk``.)"""
         return {
             'ptype': 'FHS',
             'clk': self.tx_clk,

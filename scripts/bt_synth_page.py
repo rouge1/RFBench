@@ -92,8 +92,18 @@ the specification's own; every rule is also in the sidecar's ``spec_notes``).
   exchange says what the basic kernel would give; it is not used for the
   samples). Listed in the sidecar's ``conformance`` and ``spec_channels_note``.
 * **The train** is 3-8 TX slots (seeded) of two IDs each on distinct channels;
-  the heard ID is the first or the second of the last slot (seeded). A
-  real train is 16 slots long and repeats; this is the end of one.
+  the heard ID is the first or the second of the last slot (seeded). A page
+  train is 16 slots = 8 TX slots of two IDs each = 10 ms (§8.3.2 p. 558: "16
+  different hop frequencies in 16 slots or 10 ms"), repeated "Npage times or
+  until a response is obtained, whichever is shorter". 3-8 TX slots therefore
+  means the exchange ended early, on a response, which the text allows. The
+  departure from the specification is the freely chosen frequencies (above),
+  not the length of the train.
+* **Not modelled**: a retransmitted FHS with an updated clock (Core §8.3.3.2);
+  every exchange acknowledges the first FHS. Scanner identities of an inquiry
+  file repeat every 50 exchanges, but each exchange's native clock is drawn
+  independently: the file is a set of independent episodes, not one
+  continuous capture of those devices.
 * **After the exchange**: a page ends in the follow-up; an inquirer would go on
   sending IDs (its next TX slot starts before a half-slot response is over)
   and a real scanner would answer none for RAND slots (§8.4.3 p. 568); here
@@ -116,8 +126,15 @@ the specification's own; every rule is also in the sidecar's ``spec_notes``).
   ``spec_notes``, ``fhs.whitening_*`` and ``exchanges[].fhs_whitening``.
 * **Symbol phase** alternates per exchange, 0 and sps/2; the exchange is
   shifted as a whole, so that every timing in it is exact. A tick is
-  12.5 symbols at 40 MS/s, so within an exchange the half-slot bursts sit at
+  312.5 symbols (12500 samples at 40 samples per symbol), so within an exchange the half-slot bursts sit at
   the other phase; ``symbol_phase`` per burst is ``start_sample % sps``.
+
+**The clock lock is not unique in every exchange.** The adapted map of 20 channels
+gives the hop sequence aliases: a different CLK[27:1] that hops the same way for the whole follow-up. Each
+page exchange records ``clock_solutions``, every CLK[27:1] of the whole 2**27 domain that reproduces every
+(slot offset, channel) of the master's packets and the slave's answers after the FHS, as at the first POLL,
+and ``clock_unique``. The FHS's own clock is always one of them; a receiver must take the solution equal to the
+FHS clock, ``(CLK27-2 << 1) + slots since the FHS``. See ``CLOCK_LOCK_NOTE_PAGE``.
 
 **The follow-up** is 40 MS/s's pair geometry of ``scripts/bt_synth_pairs.py``,
 whose bookkeeping is copied: a master packet in a master slot (clk % 4 == 0),
@@ -193,6 +210,89 @@ def amplitude(snr_db):
     return math.sqrt(NOISE_1MHZ * 10 ** (snr_db / 10))
 
 
+# --- the clock lock over the whole CLK[27:1] domain -----------------------------------
+
+#: Hop channel tables, one per (address, used-channel mask): ``table[k]`` is the adapted hop of the clock
+#: ``k << 2`` (CLK[27:2] = k, CLK1-0 = 0), which is the hop of every clock in that slot pair because the
+#: adapted kernel takes CLK1 as 0 (``apps/bt_hop.py`` note 4) and CLK0 is not an input. Built once.
+_TABLE_CACHE = {}
+
+
+def hop_channels_vec(clks, address, used_channels):
+    """``bt_hop.hop_channel(clk, address, used_channels)`` for an array of clocks, on the adapted sequence.
+
+    A vectorised copy of the scalar kernel, in the same order of steps (Core v6.0 Vol 2 Part B s2.6.2-2.6.3);
+    ``bt_hop`` supplies the butterflies and the register bank. It is not trusted on its own: the test
+    holds it to ``hop_channel`` on random clocks, and the table built from it on random entries."""
+    if used_channels is None:
+        raise ValueError("the vector kernel is the adapted sequence only: give a used-channel mask")
+    clk = np.asarray(clks, dtype=np.int64) & 0x0FFFFFFF
+    clk = clk & ~2                                   # bt_hop note 4: the same channel in both slots of a pair
+    a = address & 0xFFFFFFF
+    y1 = (clk >> 1) & 1                              # 0 after the line above; kept so the steps read as bt_hop's
+    y2 = 32 * y1
+    x = (clk >> 2) & 31
+    big_a = bt_hop.span(a, 27, 23) ^ ((clk >> 21) & 31)
+    big_b = bt_hop.span(a, 22, 19)
+    big_c = bt_hop.field(a, 8, 6, 4, 2, 0) ^ ((clk >> 16) & 31)
+    big_d = bt_hop.span(a, 18, 10) ^ ((clk >> 7) & 0x1FF)
+    big_e = bt_hop.field(a, 13, 11, 9, 7, 5, 3, 1)
+    big_f = 16 * (clk >> 7) % 79
+    z = ((x + big_a) % 32) ^ big_b
+    p = big_d | (big_c ^ (31 * y1)) << 9
+    bit = [(z >> i) & 1 for i in range(5)]
+    for n in range(13, -1, -1):
+        swap = ((p >> n) & 1).astype(bool)
+        i, j = bt_hop.BUTTERFLY[n]
+        bi, bj = bit[i], bit[j]
+        bit[i], bit[j] = np.where(swap, bj, bi), np.where(swap, bi, bj)
+    perm5out = sum(b << i for i, b in enumerate(bit))
+    register = (perm5out + big_e + big_f + y2) % 79
+    f_k = np.array(bt_hop.REGISTER_BANK, dtype=np.int64)[register]
+    used = np.array([(used_channels >> c) & 1 for c in range(79)], dtype=bool)
+    ordered = [c for c in bt_hop.REGISTER_BANK if (used_channels >> c) & 1]
+    if not ordered:
+        raise ValueError('used_channels has no channel in 0..78')
+    table = np.array(ordered, dtype=np.int64)
+    n_used = len(ordered)
+    f_prime = 16 * (clk >> 7) % n_used
+    remapped = table[(perm5out + big_e + f_prime + y2) % n_used]
+    return np.where(used[f_k], f_k, remapped)
+
+
+def hop_table(address, used_channels, chunk=1 << 22):
+    """``table[k]`` for every k = CLK[27:2], 2**26 of them, as ``uint8``: the adapted hop of the clock slot pair
+    ``k``. Built once per (address, mask) in blocks, then kept."""
+    key = (address & 0xFFFFFFF, used_channels)
+    if key not in _TABLE_CACHE:
+        out = np.empty(1 << 26, dtype=np.uint8)
+        for lo in range(0, 1 << 26, chunk):
+            k = np.arange(lo, min(lo + chunk, 1 << 26), dtype=np.int64)
+            out[lo:lo + len(k)] = hop_channels_vec(k << 2, address, used_channels)
+        _TABLE_CACHE[key] = out
+    return _TABLE_CACHE[key]
+
+
+def clock_solutions(observations, address, used_channels):
+    """Every CLK[27:1] value ``c`` of the whole 2**27 domain for which each ``(slot offset, channel)`` of
+    ``observations`` is the adapted hop of the clock ``c`` advanced by the offset (CLK[27:1] runs on by one
+    a slot, modulo 2**27), as a sorted list of ints.
+
+    ``observations`` is every packet on the master's access code after the FHS, the slave's answers (in the
+    odd slots, where CLK1 = 1 for the master's own clock) included. Because the adapted kernel gives a slot
+    pair one channel, the master's packets alone cannot tell ``c`` from ``c + 1``; the slave answers do."""
+    table = hop_table(address, used_channels)
+    mask27 = (1 << 27) - 1
+    first_off, first_ch = observations[0]
+    k = np.flatnonzero(table == first_ch).astype(np.int64)
+    cand = np.concatenate([2 * k - first_off, 2 * k + 1 - first_off]) & mask27
+    for off, ch in observations[1:]:
+        cand = cand[table[((cand + off) & mask27) >> 1] == ch]
+        if not len(cand):
+            break
+    return sorted(int(c) for c in cand)
+
+
 WHITENING_RULE = {
     'fhs': "s7.2 p.541-542: the register is [X0 X1 X2 X3 X4 1 1], X = Xprc (EQ 6, s2.6.4.4 p.493) = [CLKE*16-12 + "
            "k_offset + k_nudge + (CLKE*4-2,0 - CLKE*16-12) mod 16 + N] mod 32, N = 1; CLKE*4-2,0 read as the 4-bit "
@@ -243,15 +343,29 @@ SPEC_NOTES = [
     "inquiry burst and the ADAPTED sequence over 31-50 for every follow-up packet from the first POLL on. Cannot "
     "be exercised: page-train position, response/FHS channel from the response sequences, a validator that "
     "insists on the basic sequence for the first POLL.",
-    "SILENT in the text: the train length (the files end a train after 3-8 TX slots; a real one is 16 slots A or "
-    "B repeated); the scanner's clock phase relative to the inquirer's beyond 625 us after the ID (CLK1-0 = 2 + "
+    "SILENT in the text: the scanner's clock phase relative to the inquirer's beyond 625 us after the ID (CLK1-0 = 2 + "
     "1 if the second ID was heard, a transmission in an odd slot); the FHS header's FLOW, ARQN, SEQN (0 chosen) "
     "and, for an inquiry response, its header LT_ADDR (0 chosen; fixed by the text only for the page-response "
     "FHS); previously_used (0). After an FHS the inquirer would keep probing; the file does not.",
+    "The page train (s8.3.2 p.558: '16 different hop frequencies in 16 slots or 10 ms', repeated 'Npage times or "
+    "until a response is obtained, whichever is shorter') is 16 slots = 8 TX slots of two IDs each = 10 ms. The "
+    "files send 3-8 TX slots: the exchange ended early, on a response, which the text allows. The departure from "
+    "the text is the freely chosen frequencies (see NOT FOLLOWED), not the length of the train.",
     "CLKE4-2,0 in EQ 6 is read as the 4-bit number of bits 4, 3, 2, 0 (MSB first). Other readings are "
     "possible (e.g. the bits taken least significant first, or the field read as CLKE4-2 alone) and would "
     "change Xprc. The inputs (clke_frozen, train, koffset, knudge, N) are "
     "recorded per exchange so a reader can recompute under any reading.",
+    "Scanner identities of an inquiry file repeat every 50 exchanges, but each exchange's native clock is drawn "
+    "independently: the file is a set of independent episodes, not one continuous capture of those devices "
+    "(cross-exchange clock continuity is not modelled; the native clock of s2.5.1 p.479 would advance between "
+    "an identity's appearances).",
+    "NOT MODELLED: an FHS retransmitted with an updated clock (Core s8.3.3.2); every exchange acknowledges the "
+    "first FHS.",
+    "In an FHS burst's sidecar fields, bt_fhs.FHS.sidecar() names the clocks thus: 'clk' is tx_clk, the "
+    "whitening pseudo-clock ((X | 0x20) << 1), which is not a clock, and 'fhs_clk' is the clock carried in the "
+    "payload (CLK27-2 is fhs_clk >> 2). In this file's bursts[] entries 'clk' is the sending device's native "
+    "clock at the start of the burst (for an FHS, the same as fhs.clk27_2 << 2) and the whitening pseudo-clock "
+    "is bursts[].fhs.tx_clk.",
     "FHS whitening, s7.2 p.541-542: ordinary packets seed the register with CLK6-1 and a 1 in position 6; "
     "'exceptions are the FHS packet sent during inquiry response or Central page response ... the X-input used "
     "in the inquiry or page response routine shall be used ... extended with two MSBs of value 1', X0 in "
@@ -287,8 +401,14 @@ CONFORMANCE = dict(
         "the basic channel hopping sequence (79 channels) for the first POLL and the connection until AFH is "
         "established (s8.3.3.1 p.563, s8.3.3.2 p.564, Table 8.3 steps 5-6, s8.5 p.570): the adapted sequence over "
         "31-50 is used from the first POLL",
-        "the 16-slot A/B page train and its repetition (s8.3.2 pp.558-559): 3-8 TX slots",
+        "the page train's frequencies (s8.3.2 pp.558-559): a train is 16 slots = 8 TX slots of two IDs each = 10 ms; "
+        "the files send 3-8 TX slots, which means the exchange ended early on a response (allowed), and the "
+        "departure from the spec is the freely chosen frequencies, not the train length",
         "the inquiry RAND back-off and the inquirer's continued probing after a response (s8.4.3 p.568)",
+        "the native clock's continuity across an identity's appearances (s2.5.1 p.479: the clock used for inquiry "
+        "scan is the device's native clock; s2.6.4.6 p.494: not frozen): scanner identities repeat every 50 "
+        "exchanges but each exchange's native clock is drawn independently, so the file is a set of independent "
+        "episodes, not one continuous capture of those devices",
         "the paged device's receiver timing (listening 312.5 us after its response) and newconnectionTO "
         "(s8.3.3.1 p.562-563): not modelled, nothing to see in a transmit-only file"],
     reason="the capture window: a 40 MS/s capture centred on 2441 MHz holds +/-14.4 MHz, and the page, inquiry and "
@@ -302,7 +422,44 @@ CONFORMANCE = dict(
         "previously_used in the FHS payload (0)",
         "the scanner's clock phase relative to the inquirer's (CLK1-0 = 2 + 1 if the second ID was heard)",
         "the reading of CLKE4-2,0 in EQ 6 (bits 4, 3, 2, 0, MSB first; the inputs are recorded to recompute under another)",
-        "the first value of the page-side N beyond 'a counter starting at one' (1)"])
+        "FHS retransmission with an updated clock is not modelled (Core §8.3.3.2); every exchange acknowledges the "
+        "first FHS"])
+
+EQ6_NOTE = ("EQ 6 (s2.6.4.4 p.493) as typeset can be read as (CLKE4-2,0 - CLKE16-12) mod 16, which is USED (fhs_whitening."
+            "xprc), or as CLKE4-2,0 - (CLKE16-12 mod 16), the mod applying to the subtrahend alone "
+            "(fhs_whitening.xprc_other_reading). The two differ by 16 (mod 32) in the X-input, and %s. The first "
+            "reading is the one that matches the structure of EQ 7 (EQ 7 itself is not among the extracts held in "
+            "this repository, so that match is the reviewer's and the encoder author's, not checked here). The "
+            "recorded inputs (clke_frozen, koffset, knudge, N) allow either reading to be recomputed.")
+
+EQ6_NOTE_INQUIRY = ("EQ 6 (s2.6.4.4 p.493) is the Central's page-response X-input and is not used in an inquiry file; "
+                    "the inquiry FHS uses EQ 8. (In the page file EQ 6 as typeset has two readings, "
+                    "(CLKE4-2,0 - CLKE16-12) mod 16, used, and CLKE4-2,0 - (CLKE16-12 mod 16); see that file's notes.)")
+
+
+def eq6_note(kind, exchanges):
+    """The EQ 6 grouping note, with the number of exchanges on which the two readings of the term give a
+    different X, counted from the exchanges' own recorded values."""
+    if kind != 'page':
+        return EQ6_NOTE_INQUIRY
+    n = sum(1 for e in exchanges if e['fhs_whitening']['xprc'] != e['fhs_whitening']['xprc_other_reading'])
+    return EQ6_NOTE % ('the two readings give a different X in %d of the %d exchanges of this file' % (n, len(exchanges)))
+
+
+CLOCK_LOCK_NOTE_PAGE = (
+    "The clock lock over CLK[27:1] is unique for %d of %d exchanges and not for the rest (exchanges[].clock_unique). "
+    "exchanges[].clock_solutions lists every CLK[27:1] of the whole 2**27 domain, as at the first follow-up packet "
+    "(exchanges[].first_followup_clk27_1), that reproduces the slot offset and the channel of every master packet "
+    "and slave answer after the FHS. The FHS's own clock is always one of the solutions, so a receiver must pick "
+    "the solution equal to the clock the FHS carries. The CLK[27:1] a receiver reports for the first follow-up "
+    "packet is the true clock, and the FHS equality is exact: with slots_since_fhs slots from the FHS's start to "
+    "that packet (2 here), the FHS CLK27-2 is (c - slots_since_fhs) >> 1, and c = (CLK27-2 << 1) + slots_since_fhs; "
+    "there is no one-step offset to allow for. The aliases come from the 20-channel map (31-50), where a different "
+    "clock can hop the same way for the whole follow-up, not from a fault.")
+
+CLOCK_LOCK_NOTE_INQUIRY = ("An inquiry exchange has no follow-up traffic, so there is no clock lock to make in this "
+                           "file; the clocks are the scanning devices' own (see clk_convention). The page file's "
+                           "clock_lock_note describes the lock for a page FHS.")
 
 SPEC_CHANNELS_NOTE = ("Every page, response, FHS, acknowledgement and inquiry burst of this exchange is on a free channel in "
                       "31-50, not on the page, page response or inquiry response sequence the text mandates; %s "
@@ -435,7 +592,8 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
             clke = int(rng.integers(0, 1 << 28))
             train, koffset, knudge, n_ctr = ('A', 24, 0, 1) if rng.integers(0, 2) else ('B', 8, 0, 1)
             x = bt_fhs.xprc(clke, koffset, knudge, n_ctr)
-            wx = dict(clke_frozen=clke, train=train, koffset=koffset, knudge=knudge, N=n_ctr, xprc=x)
+            wx = dict(clke_frozen=clke, train=train, koffset=koffset, knudge=knudge, N=n_ctr, xprc=x,
+                      xprc_other_reading=bt_fhs.xprc_other_reading(clke, koffset, knudge, n_ctr))
             f = bt_fhs.page_response(PAGED['lap'], PAGED['uap'], MASTER['lap'], MASTER['uap'], MASTER['nap'],
                                      MASTER['cod'], AM_ADDR, fhs_clk, x, sr=sr)
             evs.append(dict(tick=fhs_tick, kind='fhs', role='master', channel=fhs_channel, packet=f,
@@ -453,6 +611,7 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
             types[0] = 0                                        # the first packet is a POLL
             answers = rng.choice(len(SLAVE_TYPES), size=followup)
             period = 0                                          # pair-periods since the POLL
+            lock_obs = []                                       # (slot offset from the POLL, channel), master and slave
             for k in range(followup):
                 if k:
                     period += int(gaps[k]) + 1
@@ -466,10 +625,14 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
                     body = br.seq_body(stream, br.PACKET_TYPES[ptype][4]) if br.PACKET_TYPES[ptype][4] else b''
                     p = br.Packet(MASTER['lap'], MASTER['uap'], clk, ptype, body, lt_addr=AM_ADDR, flow=1,
                                   arqn=1, seqn=k & 1)
+                    lock_obs.append(((t_m + off - poll_tick) // 2, channel))   # slots after the POLL
                     evs.append(dict(tick=t_m + off, kind=kk, role=role, channel=channel, packet=p,
                                     lap=MASTER['lap'], uap_for_hec=MASTER['uap'], ptype=ptype,
                                     time_clk=clk, clk=clk))
             n_follow = followup
+            # every CLK[27:1] of the whole domain that gives these hops, as at the POLL (see clock_solutions)
+            lock = clock_solutions(lock_obs, MASTER['uap'] << 24 | MASTER['lap'], sum(1 << c for c in channels))
+            assert (conn_clk >> 1) in lock, 'the clock the follow-up was made on is not among its own solutions'
             fhs_info = dict(tick=fhs_tick, clk=fhs_clk, **wx)
             identities = dict(paged=dict(PAGED), master=dict(MASTER), am_addr=AM_ADDR)
         else:
@@ -519,10 +682,13 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
                          fhs_clk27_2=(fhs_info['clk'] >> 2), fhs_tick=fhs_info['tick'],
                          fhs_whitening={k: v for k, v in fhs_info.items() if k not in ('tick', 'clk')},
                          master_clk_at_connection=conn_clk, n_followup=n_follow,
-                         identities=identities))
+                         identities=identities, **(dict(
+                             first_followup_clk27_1=conn_clk >> 1, clock_solutions=lock,
+                             clock_unique=len(lock) == 1) if kind == 'page' else {})))
         events.extend(evs)
 
     total = cursor + slot
+    n_unique = sum(1 for e in exch if e.get('clock_unique'))
     n = len(events)
     draw = np.random.default_rng([seed, (1 << 29) + 1])
     frac = draw.uniform(0, 1, size=n)
@@ -579,7 +745,9 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
         'afh_instant_meaning': hop.INSTANT_MEANING,
         'address_for_hop': MASTER['uap'] << 24 | MASTER['lap'],
         'hop_kernel': hop.HOP_KERNEL,
-        'clock_lock_note': hop.CLOCK_LOCK_NOTE,
+        'clock_lock_note': (CLOCK_LOCK_NOTE_PAGE % (n_unique, exchanges) if kind == 'page'
+                            else CLOCK_LOCK_NOTE_INQUIRY),
+        'clock_unique_exchanges': n_unique if kind == 'page' else None,
         'sample_rate': fs,
         'center_mhz': center_mhz,
         'cfo_hz': 0.0,
@@ -610,7 +778,7 @@ def plan_exchanges(kind='page', exchanges=200, followup=110, fs=40e6, center_mhz
         'identities': (dict(paged=dict(PAGED), master=dict(MASTER), am_addr=AM_ADDR, giac=GIAC)
                        if kind == 'page' else
                        dict(inquirer=None, giac=GIAC, scanner='per exchange: exchanges[].identities.scanner')),
-        'spec_notes': SPEC_NOTES,
+        'spec_notes': SPEC_NOTES + [eq6_note(kind, exch)],
         'page_channels_note': PAGE_CHANNELS_NOTE,
         'conformance': CONFORMANCE,
         'followup_note': (FOLLOWUP_NOTE if kind == 'page' else

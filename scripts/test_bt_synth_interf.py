@@ -28,8 +28,15 @@ blocks and seams), and never against the generator's own bookkeeping:
 * the bursts' own SNR is still 20 dB with the interferer taken away;
 * a seed is a file, the named set is exactly the eight files, an unknown set is
   an error, and the sidecar has every key;
-* ten mutants of the generator, each of which one of the checks above must
-  catch.
+* the Bluetooth bursts themselves, from the samples of the clean file: each
+  burst's carrier from the spectrum and the phase of its demodulated signal, its
+  start from the rising edge of its envelope, against ``channel_mhz`` and
+  ``start_sample + timing_frac``, so that a carrier a MHz off or a start 40
+  samples late is not passed because the sidecar says the right thing;
+* the sidecar's whole ``interferer_note`` (not phrases of it), the Wi-Fi
+  filter's wrapped Nyquist skirt (disclosed, and measured to be there), and the
+  required keys, ``afh_map_index`` among them;
+* mutants of the generator, each of which one of the checks above must catch.
 """
 import contextlib
 import hashlib
@@ -48,6 +55,9 @@ from apps import bt_br_frame as br  # noqa: E402
 from scripts import bt_synth, bt_synth_interf as g  # noqa: E402
 
 PY = sys.executable
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRATCH = tempfile.mkdtemp(prefix='test_interf_')   # the command-line checks write here
+os.makedirs(SCRATCH, exist_ok=True)
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bt_synth_interf.py')
 FS = 40e6
 NOISE = bt_synth.AMPLITUDE ** 2 / 100
@@ -114,6 +124,10 @@ EXPECT = {
 }
 
 #: Phrases the sidecar's interferer_note has to carry, each a fact about the files.
+#: The generator's own note and skirt text as imported, held to by whole string: a mutant that changes the
+#: prose and keeps the phrases below, or the generator's constant patched under the test, is still caught.
+NOTE_SNAPSHOT = g.INTERFERER_NOTE
+SKIRT_SNAPSHOT = g.NYQUIST_SKIRT
 NOTE_PHRASES = ['a cw tone only on its own channel', 'channel 50 only', '2452..2461',
                 'end_sample = start_sample + bits * sps', 'ACTUAL squared frequency response',
                 'null when there is no overlap', 'mean of the gate squared']
@@ -144,9 +158,15 @@ def table_failures(key, side):
                        % (w['level_db'], w['bursty'], w['band_mhz'], want['wifi']))
     if ('interferer_frames' in side) != bool(want['wifi'] and want['wifi'][1]):
         bad.append('interferer_frames present only for the bursty noise')
-    for phrase in NOTE_PHRASES:
+    for phrase in NOTE_PHRASES + ['ENSEMBLE-EXPECTED', 'not a measurement of the realisation', '0.45 dB',
+                                  'Nyquist', '-20..-19.95 MHz']:
         if phrase not in side['interferer_note']:
             bad.append('interferer_note lacks "%s"' % phrase)
+    if side['interferer_note'] != NOTE_SNAPSHOT:
+        bad.append('interferer_note is not the generator\'s own note, word for word')
+    for t in wifi:
+        if t.get('nyquist_skirt') != SKIRT_SNAPSHOT or '-20..-19.95 MHz' not in t['nyquist_skirt']:
+            bad.append('the Wi-Fi description does not carry the Nyquist skirt text')
     for e in side['bursts']:
         should = e['channel'] in want['reach']
         if e['interferer_overlap'] and not should:
@@ -581,6 +601,125 @@ def rendered(key, side, total, **kw):
     return z
 
 
+# --- the Bluetooth bursts, from the samples ---------------------------------------
+
+RAMP = 80            # samples: the burst's raised-cosine amplitude ramp, 2 us at 40 MS/s, before its first bit
+START_TOL = 25.0     # samples, one burst's start (the fit scatters by about 6 samples, 1 sigma, at 20 dB in 1 MHz)
+START_MEAN_TOL = 3.0     # samples, the mean over the bursts
+CARRIER_TOL_HZ = 30e3
+
+
+def carrier_of(x, e):
+    """The burst's carrier in Hz from the centre, from the samples alone: the peak of its smoothed spectrum
+    names the channel (1 MHz apart), then the slope of the phase of the signal demodulated to that channel's
+    centre, through a one-symbol boxcar, over the burst's core gives the offset from it."""
+    a, b = e['start_sample'] + 8 * 40, e['end_sample'] - 8 * 40
+    core = x[a:b].astype(np.complex128)
+    n = len(core)
+    size = 1 << 17
+    spec = np.abs(np.fft.fft(core * np.hanning(n), size)) ** 2
+    spec = np.convolve(np.concatenate([spec, spec[:1300]]), np.ones(1300) / 1300, 'valid')[:size]
+    f = np.fft.fftfreq(size, 1 / FS)
+    window = np.abs(f) < 15e6
+    f_peak = f[window][int(np.argmax(spec[window]))] + 0.0
+    channel_hz = round(f_peak / 1e6) * 1e6                       # a channel is 1 MHz
+    y = core * np.exp(-2j * np.pi * channel_hz / FS * np.arange(n))
+    z = np.convolve(y, np.ones(40) / 40, 'valid')
+    phase = np.unwrap(np.angle(z))
+    slope = np.polyfit(np.arange(len(phase)), phase, 1)[0]
+    return channel_hz + slope * FS / (2 * np.pi)
+
+
+def start_shift(x, e, noise_power):
+    """How many samples later than ``start_sample + timing_frac`` the burst's envelope rises, from the samples
+    alone: the power of the 400 samples about the start, less the noise, fitted by the raised-cosine power ramp
+    of 80 samples that ends at the first bit (the burst's documented shape), over shifts of -60..+60."""
+    a0 = e['start_sample']
+    lo = a0 - 200
+    n = np.arange(lo, lo + 400)
+    p = np.abs(x[lo:lo + 400].astype(np.complex128)) ** 2
+    core = x[a0 + 8 * 40:e['end_sample'] - 8 * 40].astype(np.complex128)
+    sig = float(np.mean(np.abs(core) ** 2)) - noise_power
+    best = None
+    for shift in np.arange(-60, 60.01, 0.5):
+        u = n - (a0 + e['timing_frac'] + shift) + RAMP
+        env = np.where(u <= 0, 0.0, np.where(u >= RAMP, 1.0, 0.5 - 0.5 * np.cos(np.pi * np.clip(u, 0, RAMP) / RAMP)))
+        cost = float(np.sum((p - noise_power - sig * env ** 2) ** 2))
+        if best is None or cost < best[0]:
+            best = (cost, float(shift))
+    return best[1]
+
+
+def burst_sample_failures(x, side):
+    """Every burst of the file against its own samples: the carrier at ``channel_mhz`` (within 30 kHz, and no
+    other channel), and the start where ``start_sample + timing_frac`` says (within 25 samples a burst and 3
+    samples on average)."""
+    bad = []
+    noise_power = float(np.mean(np.abs(x[:LEAD] - x[:LEAD].mean()) ** 2))
+    shifts = []
+    worst_hz = 0.0
+    for i, e in enumerate(side['bursts']):
+        want_hz = (e['channel_mhz'] - side['center_mhz']) * 1e6
+        got_hz = carrier_of(x, e)
+        worst_hz = max(worst_hz, abs(got_hz - want_hz))
+        if abs(got_hz - want_hz) > CARRIER_TOL_HZ:
+            bad.append('burst %d is at %+.3f MHz in the samples, %+.3f in the sidecar (channel %d)'
+                       % (i, got_hz / 1e6, want_hz / 1e6, e['channel']))
+            if len(bad) > 3:
+                break
+        shifts.append(start_shift(x, e, noise_power))
+    if shifts:
+        if max(abs(v) for v in shifts) > START_TOL:
+            bad.append('a burst starts %.1f samples from start_sample + timing_frac' % max(shifts, key=abs))
+        if abs(float(np.mean(shifts))) > START_MEAN_TOL:
+            bad.append('the bursts start %.2f samples from start_sample + timing_frac on average' % np.mean(shifts))
+    return bad
+
+
+def sidecar_key_failures(side):
+    """The keys every sidecar has, at the top and on each burst, and the ones that say which map a burst hopped on."""
+    top = ['generator', 'generator_commit', 'lap', 'uap', 'clk', 'clk_convention', 'hopping', 'hop_channels',
+           'sample_rate', 'center_mhz', 'snr_db', 'snr_bw_hz', 'noise_1mhz', 'modulation', 'slot_samples',
+           'per_burst_keys', 'start_sample_meaning', 'air_bits_omitted', 'interferer_name', 'interferers',
+           'interferer_note', 'n_bursts_on_centre_channel', 'n_bursts_overlapped', 'afh_map', 'afh_instant',
+           'afh_map_count', 'afh_maps', 'afh_instant_meaning', 'hop_kernel', 'address_for_hop', 'clock_lock_note',
+           'seed', 'noise_block_samples', 'bursts']
+    per = ['start_sample', 'end_sample', 'timing_frac', 'symbol_phase', 'clk', 'ptype', 'channel', 'channel_mhz',
+           'snr_db', 'afh_map_index', 'interferer_overlap', 'interferer_power_in_band_db']
+    bad = ['top-level key %s is missing' % k for k in top if k not in side]
+    bad += ['per-burst key %s is missing from %d bursts' % (k, sum(k not in e for e in side['bursts']))
+            for k in per if any(k not in e for e in side['bursts'])]
+    maps = side.get('afh_maps') or []
+    if not bad:
+        if side['afh_map_count'] != len(maps) or not all(0 <= e['afh_map_index'] < len(maps) for e in side['bursts']):
+            bad.append('afh_map_index of a burst names no map of afh_maps (%d)' % len(maps))
+        elif any(e['channel'] not in maps[e['afh_map_index']]['channels'] for e in side['bursts']):
+            bad.append('a burst is on a channel that is not in the map its afh_map_index names')
+        if side['per_burst_keys'] != sorted(side['bursts'][0]):
+            bad.append('per_burst_keys is not the keys of a burst')
+    return bad
+
+
+def truth_error_failures():
+    """burst_truth's refusals: a ValueError that names the burst and the values, never a bare math domain error."""
+    bad = []
+    wifi = [dict(kind='wifi', level_db=20.0, bursty=False)]
+    cases = [('an empty burst', wifi, 100, 100, 50, {50: 0.54}),
+             ('a channel missing from the Wi-Fi table', wifi, 0, 100, 51, {50: 0.54}),
+             ('a non-finite level', [dict(kind='cw', channel=50, level_db=float('nan'))], 0, 100, 50, {50: 0.54}),
+             ('an infinite level', [dict(kind='cw', channel=50, level_db=float('inf'))], 0, 100, 50, {50: 0.54})]
+    for name, specs, a, b, ch, table in cases:
+        try:
+            g.burst_truth(specs, [], a, b, ch, table)
+            bad.append('%s was not refused' % name)
+        except ValueError as e:
+            if 'math domain' in str(e) or '[%d, %d)' % (a, b) not in str(e) or 'channel %d' % ch not in str(e):
+                bad.append('%s: the error does not name the burst: %s' % (name, e))
+        except Exception as e:                                 # noqa: BLE001
+            bad.append('%s raised %s, not a ValueError' % (name, type(e).__name__))
+    return bad
+
+
 # --- the tests --------------------------------------------------------------------
 
 KEYS = [k for k in g.INTERFERERS if k != 'clean']
@@ -629,6 +768,16 @@ def test_wifi():
     m = d[:2 ** 20].real
     k = float(np.mean(m ** 4) / np.mean(m ** 2) ** 2)
     check(abs(k - 3) < 0.1, 'it is Gaussian (kurtosis %.2f)' % k)
+    # the disclosed Nyquist skirt is really there: the filter's upper edge is +20.05 MHz, so about 1.2 dB below the
+    # plateau, at -20..-19.95 MHz, outside the declared band
+    m = (len(d) // 4096) * 4096
+    f, db = welch_db(d[:m].reshape(-1, 4096), m // 4096)
+    skirt = (f >= -20.0) & (f <= -19.96)
+    lvl = 10 * np.log10(np.mean(10 ** (db[skirt] / 10)))
+    check(15.0 < lvl < 21.0 and side['interferers'][0]['nyquist_skirt'] == SKIRT_SNAPSHOT
+          and (f[skirt] < -19.9).all(),
+          'the wrapped Nyquist skirt at -20..-19.95 MHz is %.1f dB over the floor per MHz (plateau 20), outside the declared '
+          'band, and the sidecar says so' % lvl)
 
 
 def test_frames():
@@ -674,6 +823,18 @@ def test_truth():
           'in the map 31-50 the Wi-Fi noise touches channel 50 only, %.4f MHz of it' % table[50])
 
 
+def test_burst_samples():
+    print('the Bluetooth bursts from the samples: carrier and start (clean file, 60 bursts over %d-sample blocks)' % BLOCK)
+    clean, side0 = build('clean')
+    check_all(burst_sample_failures(clean, side0),
+              'every burst\'s carrier is its channel_mhz (within 30 kHz) and it starts at start_sample + timing_frac (%d bursts)'
+              % len(side0['bursts']))
+    seams = sum(1 for e in side0['bursts'] if e['start_sample'] // BLOCK != (e['end_sample'] - 1) // BLOCK)
+    check(seams > 0, '%d of the bursts cross a block boundary' % seams)
+    check_all(truth_error_failures(), 'burst_truth refuses an empty burst, an unknown channel and a non-finite power '
+              'with a ValueError that names the burst')
+
+
 def test_table():
     print('each named file against the table written from the task')
     check(sorted(EXPECT) == sorted(g.INTERFERERS), 'the generator has the eight names of the table')
@@ -709,9 +870,8 @@ def test_sidecar_and_set():
           and side['snr_bw_hz'] == 1e6, 'top-level nulls, snr_db 20.0, rate, centre and floor')
     check(side['per_burst_keys'] == sorted(b[0]) and all(sorted(e) == side['per_burst_keys'] for e in b),
           'per_burst_keys is every per-burst key')
-    check(all(k in b[0] for k in ('start_sample', 'end_sample', 'timing_frac', 'symbol_phase', 'clk', 'ptype',
-                                  'channel', 'channel_mhz', 'snr_db', 'interferer_overlap',
-                                  'interferer_power_in_band_db')), 'the per-burst keys are there')
+    check_all(sidecar_key_failures(side), 'the top-level and per-burst keys are there, afh_map_index among them, and each '
+              'burst\'s afh_map_index names a map that holds its channel')
     check([e['symbol_phase'] for e in b[:6]] == [0, 20, 0, 20, 0, 20] and all(e['ptype'] == 'DH5' for e in b),
           'DH5 bursts, symbol phases alternate 0 and 20')
     fr = [e['start_sample'] % 40 for e in b]
@@ -734,13 +894,14 @@ def test_sidecar_and_set():
                                            'wifi_const_p20', 'wifi_bursty_p20', 'both_p20')]
     check(sorted(names) == sorted(want) and len(names) == 8, '--set interf is exactly the eight named files')
     check_all(set_failures(g.INTERF_SET), 'one seed, 6101, and 800 bursts in every row')
-    r = subprocess.run([PY, '-B', SCRIPT, '--set', 'nonesuch', '--out', '/tmp/sdr-p7/interf/none'],
+    none = os.path.join(SCRATCH, 'none')
+    r = subprocess.run([PY, '-B', SCRIPT, '--set', 'nonesuch', '--out', none],
                        capture_output=True, text=True)
-    check(r.returncode != 0 and not os.path.exists('/tmp/sdr-p7/interf/none'), 'an unknown set exits non-zero and writes nothing')
-    r = subprocess.run([PY, '-B', SCRIPT, '--set', 'interf', '--bursts', '5', '--out', '/tmp/sdr-p7/interf/none'],
+    check(r.returncode != 0 and not os.path.exists(none), 'an unknown set exits non-zero and writes nothing')
+    r = subprocess.run([PY, '-B', SCRIPT, '--set', 'interf', '--bursts', '5', '--out', none],
                        capture_output=True, text=True)
     check(r.returncode != 0, '--set takes no per-file option')
-    with tempfile.TemporaryDirectory(dir='/tmp/sdr-p7/interf') as out:
+    with tempfile.TemporaryDirectory(dir=SCRATCH) as out:
         r = subprocess.run([PY, '-B', SCRIPT, 'small', '--interferer', 'cw43_p10', '--bursts', '6',
                             '--block-samples', '131072', '--out', out], capture_output=True, text=True)
         path = os.path.join(out, 'synth_small.cf32')
@@ -851,9 +1012,51 @@ def test_mutants():
            truth_failures(iq.astype(np.complex128) - cl50.astype(np.complex128), side, 'wifi_const_p20')[0])
 
 
+def test_mutants_bursts():
+    print('mutants of the Bluetooth bursts, with the sidecar left saying the right thing')
+    kw = dict(bursts=20, channels=MIX, block_samples=BLOCK)
+    real_gfsk = g.br.gfsk
+
+    def carrier_off(bits, fs, **k):
+        burst, lead = real_gfsk(bits, fs, **k)
+        return (burst * np.exp(2j * np.pi * 1e6 / fs * np.arange(len(burst)))).astype(np.complex64), lead
+
+    def start_late(bits, fs, **k):
+        burst, lead = real_gfsk(bits, fs, **k)
+        return burst, lead - 40                  # the burst is placed 40 samples later; start_sample is unchanged
+
+    for name, wrap in (('every Bluetooth burst +1 MHz in the samples (sidecar unchanged)', carrier_off),
+                       ('every Bluetooth burst 40 samples late (sidecar unchanged)', start_late)):
+        with patched(mock.patch.object(g.br, 'gfsk', wrap)):
+            iq, side = g.synthesise_interf('clean', **kw)
+        caught(name, 'the burst carrier and start check', burst_sample_failures(iq, side))
+    # a note whose prose is changed while every phrase the table looks for stays
+    with patched(mock.patch.object(g, 'INTERFERER_NOTE', g.INTERFERER_NOTE.replace('0.001 MHz', '0.5 MHz'))):
+        side = g.synthesise_interf('wifi_const_p20', bursts=3, channels=MIX, block_samples=BLOCK)[1]
+    caught('a note with its prose changed and its phrases kept', 'the whole-note comparison',
+           table_failures('wifi_const_p20', side))
+    with patched(mock.patch.object(g, 'NYQUIST_SKIRT', 'the filter is clean')):
+        side = g.synthesise_interf('wifi_const_p20', bursts=3, channels=MIX, block_samples=BLOCK)[1]
+    caught('no Nyquist skirt in the sidecar', 'the table', table_failures('wifi_const_p20', side))
+    # keys: dropped or wrong, on a copy of a real sidecar
+    side = json.loads(json.dumps(build('both_p20')[1]))
+    check(not sidecar_key_failures(side), 'the real both_p20 sidecar has every required key')
+    gone = json.loads(json.dumps(side))
+    for e in gone['bursts']:
+        del e['afh_map_index']
+    caught('afh_map_index dropped from the bursts', 'the key check', sidecar_key_failures(gone))
+    wrong = json.loads(json.dumps(side))
+    wrong['bursts'][3]['afh_map_index'] = 1
+    caught('afh_map_index naming no map', 'the key check', sidecar_key_failures(wrong))
+    for k in ('afh_maps', 'afh_map_count', 'hop_kernel', 'clock_lock_note', 'interferer_note', 'noise_block_samples'):
+        lost = json.loads(json.dumps(side))
+        del lost[k]
+        caught('%s dropped from the sidecar' % k, 'the key check', sidecar_key_failures(lost))
+
+
 def main():
     for t in (test_pairing_and_clean, test_tone, test_wifi, test_frames, test_truth, test_table, test_snr,
-              test_sidecar_and_set, test_mutants):
+              test_burst_samples, test_sidecar_and_set, test_mutants, test_mutants_bursts):
         t()
     print('RESULT: %s' % ('PASS' if not failures else 'FAIL (%d)' % len(failures)))
     for f in failures:

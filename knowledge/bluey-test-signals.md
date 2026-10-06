@@ -692,7 +692,12 @@ reviewed by Opus against the real files, write them; the files are not in git.
   the ID acknowledgement, then the master's first POLL and **110 master packets
   with slave answers** (NULL, DM1 or DH1) hop-true for the clock the FHS carries:
   the receiver's author validates an FHS by brute-forcing CLK[27:1] from those
-  packets and requiring it to equal the FHS's clock. An inquiry exchange: GIAC
+  packets and requiring it to equal the FHS's clock. **That lock is not always
+  unique**: over the whole 2^27 domain, 173 of the 200 page exchanges have one
+  solution, 26 have two and one has three (exchange 94), the FHS's clock always
+  among them (each exchange records `clock_solutions` and `clock_unique`; the
+  aliases come from the 20-channel map). A receiver picks the solution equal to
+  the FHS's clock. The old "minus one" allowance is withdrawn in these sidecars. An inquiry exchange: GIAC
   IDs and the scanning device's FHS response, no follow-up. Identities: paged LAP
   `0x6B1D3C` UAP `0x47`, master `0x112233` UAP `0x55` NAP `0x1234`.
   `apps/bt_fhs.py` is the FHS encoder, written **from the Core v6.0 text**
@@ -711,12 +716,17 @@ reviewed by Opus against the real files, write them; the files are not in git.
   values still decodes it, with an implied "clock" of 32 + X. **What the files do
   not follow, stated in each sidecar's `conformance` key**: the page, page
   response, inquiry and inquiry response hop sequences (the channels are free
-  choices in 31-50), the 16-slot A/B train, the **basic 79-channel sequence the
+  choices in 31-50), the **basic 79-channel sequence the
   text mandates from the first POLL** (the follow-up runs on the adapted map
   31-50 from the first POLL, because 79 MHz does not fit a 40 MS/s capture;
   each exchange records `spec_basic_channel_first_poll`, which differs from the
   channel used in 159 of 200), the inquiry back-off, and the paged device's
-  receiver timing; the page side always uses k_nudge 0 and N 1. A sidecar
+  receiver timing, FHS retransmission, and a clock that continues across
+  exchanges (a scanner identity repeats every 50 exchanges with an independent
+  clock); a page train is 16 slots, 8 TX slots of two IDs, and an exchange of
+  3-8 TX slots has ended early on a response, which is allowed. The page side
+  always uses k_nudge 0 and N 1; EQ 6's grouping can be read two ways that
+  differ in X on 99 of the 200 exchanges (both are recorded per exchange). A sidecar
   also lists what the text leaves silent (the first POLL's slot, the FHS header's
   FLOW/ARQN/SEQN, the inquiry FHS header's LT_ADDR) and what was chosen.
 - **Interferers (`interf`, 8 files, 961 MB each).** `hop20_dh5_int_clean` and
@@ -730,14 +740,23 @@ reviewed by Opus against the real files, write them; the files are not in git.
   channel 50 is the only map channel the Wi-Fi band touches and only half of it,
   and its truth comes from the filter's actual response (17.33 dB), not the
   nominal band (16.99 dB), which two reviewers' measurements showed to be
-  0.35 to 0.44 dB low.
+  0.35 to 0.44 dB low. The per-burst power is an expectation (ensemble, time-
+  averaged over the gate): a 2.87 ms burst on channel 50 reads up to 0.45 dB
+  different in the realised noise. The Wi-Fi filter's upper edge sits past the
+  capture's Nyquist, so a skirt, about 1.2 dB under the plateau, wraps to
+  -20 MHz (2421 MHz), outside every channel of the map. The clock note in these
+  sidecars is the current one: the lock equals `clk >> 1`.
 - **How these were reviewed.** Builders were Sonnet 5.5 subagents; the p6 files
   were reviewed by Opus 5.5 against the real files, the p7 files by GPT-6.1
   Sol and the free Muse Spark 1.3 Contributor through the swarm's OpenCode
   driver, on slices of the files copied into read-only worktrees (OpenCode has
   no sandbox: nothing but public code and synthetic signals goes in). The two
   disagreed on the page generator and the spec text supported the stricter one,
-  which had caught that the follow-up does not use the basic sequence.
+  which had caught that the follow-up does not use the basic sequence. A second
+  round of both, on the regenerated files, found that a clock search over the
+  whole domain is not unique for 27 page exchanges, a stale clock note, and
+  tests that missed a +1 MHz carrier and a +40 sample start in the interferer
+  files; those were fixed (no sample changed, byte-compared).
 
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
