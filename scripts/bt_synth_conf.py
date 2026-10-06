@@ -284,7 +284,7 @@ CONFORMANCE = dict(
 WINDOW_NOTE = ("channels %d to %d inclusive, %d to %d MHz, -%g to +%g MHz around the 2441.0 MHz centre of the 40 MS/s capture: "
                "symmetric about the centre, and with a burst's own +-1 MHz extent its edges are at +-%g MHz, inside the BB60D's "
                "+-13.5 MHz. A burst outside it is in 'bursts' with rendered false and is absent from the samples (the noise "
-               "floor is there, as everywhere)." % (WINDOW + WINDOW_MHZ + (WINDOW_HALF_WIDTH_MHZ,) * 3))
+               "floor is there, as everywhere)." % (WINDOW + WINDOW_MHZ + (WINDOW_HALF_WIDTH_MHZ, WINDOW_HALF_WIDTH_MHZ, WINDOW_HALF_WIDTH_MHZ + 1)))
 
 CLOCK_LOCK_NOTE_PAGE = (
     "clock_solutions lists, per page exchange, every CLK[27:1] of the whole 2**27 domain, as at the first POLL "
