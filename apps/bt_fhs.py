@@ -197,7 +197,9 @@ def xprc(clke, koffset, knudge, n):
     as ``CLKE4-2,0 - (CLKE16-12 mod 16)``, the mod applying to the subtrahend
     alone (``xprc_other_reading``). The two differ by 16 (mod 32) in Xprc on
     about half of all inputs, and the recorded inputs allow either to be
-    recomputed. EQ 7's own text is not among the extracts held in this
+    recomputed. Part G's page hop sample data does not support the second
+    reading (it fits the first with the page train alternating A, B every
+    1.28 s), so it is kept only as a recorded input, not as a live rival. EQ 7's own text is not among the extracts held in this
     repository."""
     c16_12 = (clke >> 12) & 0x1F
     c4_2_0 = ((clke >> 4) & 1) << 3 | ((clke >> 3) & 1) << 2 | ((clke >> 2) & 1) << 1 | (clke & 1)
