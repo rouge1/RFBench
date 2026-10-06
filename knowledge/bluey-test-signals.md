@@ -616,6 +616,78 @@ the files' 33-52 at 2445, because of the room (below).
   was not run for these; no shot at another symbol phase; no impaired file
   (the real link is the impairment).
 
+## Synthetic bursts for the DC block, sync-word errors and slave answers, 2026-10-05
+
+bluey asked for known-truth bursts to settle three questions: whether its
+device-aware DC block (a 64-sample block-mean subtraction) should delete the
+capture-centre channel, how often it recognises a LAP whose sync word has bit
+errors, and whether pairs of master and slave bursts recover the clock and the
+roles. Three generators, built by Sonnet subagents from written tests and each
+reviewed by Opus against the real files, write them; the files are not in git.
+
+- **Where.** `/media/user/4TB/sdr-synth-tmp/{dc,dc40,sync,pairs}/`, as
+  `synth_<name>.cf32` and `.json`; regenerate with `python scripts/bt_synth_dc.py
+  --set dc|dc40 --out DIR`, `bt_synth_sync.py --set sync`, `bt_synth_pairs.py
+  --set pairs`. Same arguments, same bytes (within one numpy build).
+- **What every file shares.** One constant noise floor, 6.25e-4 in 1 MHz
+  (a burst of amplitude 0.25 is 20 dB), the same at 20 and 40 MS/s; a burst's
+  `snr_db` sets its amplitude, never the noise. Burst starts alternate between
+  symbol phase 0 and the half-symbol dead zone (`sps/2`), a random
+  `timing_frac` per burst. No `air_bits` (`air_bits_omitted`). **`timing_frac`,
+  `symbol_phase` and `snr_db` are null at the top level where they vary per
+  burst, and `per_burst_keys` lists the keys that live per burst**: a grader
+  must read them from the bursts. Files of one set share a seed where the point
+  is a paired comparison.
+- **DC set (`dc`, 26 files, 33 GB; `dc40`, 4 files, 13 GB).** Channel 39 at the
+  centre (2441 MHz, 0 Hz), DH5 and DH1, 800 bursts 12.5 ms apart, SNR stepping
+  8, 12, 16, 20 dB in blocks of 200. `dc_<p>_ch39_clean`; `_cw15/25/35`, a
+  continuous tone exactly at DC; `_drift15/25/35`, the tone rising 0 to +1 kHz
+  over the file; controls `_ch38_clean`, `_ch40_clean`, `_ch43_clean`; and
+  `_snr16_cfo0/cfopl30k/cfomi30k` (200 bursts). **A spur file is the clean file
+  plus the tone**: same noise, bursts and timing, so the difference is exactly
+  the tone; the controls are the clean file's bursts on another channel; the
+  cfo files share one seed. The tone level is dB over the **mean** noise bin of
+  a 1024-point rectangular FFT, excluding the noise in the tone's own bin (the
+  raw reading is 10*log10(10**(db/10)+1): 15.13, 25.01, 35.00); a median reader
+  reads 1.6 dB high. The same `spur_db` is 3 dB stronger in absolute terms at
+  40 MS/s (the bin is twice as wide), so the sidecar gives
+  `tone_over_noise_1mhz_db`. A 35 dB tone is 3 times the total noise power:
+  a plain measurement of an 8 dB DH1 burst under it fails unless the tone is
+  subtracted.
+- **Sync-word errors (`sync`).** Hopping DH1 at 40 MS/s on the map 31-50
+  (centre 2441), 800 bursts, 20 dB, one LAP; `hop20_dh1_syncerr_mixed`
+  (burst 0 has exactly 1 error, the others 0, 1 or 2 about a third each:
+  290/237/273), `_first1` (only burst 0, one error), `_clean` (the control),
+  **all one seed, so they differ only in the planted bits**; per burst
+  `sync_errors` and `sync_error_bits` (positions 0-63 within the 64-bit sync
+  word; the preamble and trailer stay as the correct packet has them, as a bit
+  error on air leaves them). Plus `noise_only_20msps_120s` (120 s, 19.2 GB, no
+  bursts, `bursts: []`, the same noise per MHz, no `lap`/`uap`): measured over
+  its whole length as white Gaussian noise with no seams, and a plain
+  discriminator found no match to the LAP's sync word within 7 bits in 7.6e8
+  windows.
+- **Pairs (`pairs`).** `pairs_dh1_hop20`: 400 pairs, a master DH1 in a master
+  slot and a slave DH1 in the next slot **on the same channel**
+  (`hop(clk + 2) == hop(clk)` for all 400 on an adapted map, checked against the
+  spec text), hopping on 31-50 at 40 MS/s, with idle pair-periods of 0, 1 or 2
+  (probabilities 0.60, 0.25, 0.15). The slave is exactly one slot after its
+  master in `start_sample` (25,000 samples, 24,999 to 25,001 in the samples
+  with the timing fractions), whitened with its own clock `clk + 2`; per burst
+  `role`, `pair`, `partner`, `slot_index` (the lower slot is the master's).
+  16 pairs are on the centre channel 39. Fitting the clock from the channels,
+  masters alone tie (j = 0 and j = +1 both score 1.000); adding the slaves
+  breaks it (the wrong one scores 0.515). Five pairs are back-to-back on one
+  channel (about 1 in 46 couples): greedy pairing from the left is right if
+  every burst is detected, and dropping a chain's master mislabels two.
+- **What the reviews changed.** The first versions had spur files and sync files
+  on independent noise draws (now paired), top-level keys that would mislead a
+  grader (now null), `generator_commit` naming a commit without the generator
+  (regenerated from the committed code), and tests that missed a tone at 1 Hz, a
+  repeated noise block or `timing_frac` applied twice (now caught).
+- **Not built:** bluey's item 5, ID packets from a page train and an FHS
+  response (`bt_hop.py` has no page hop sequence; the channels would be ours),
+  and item 6, the interferer file.
+
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
 bluey asked for an independent check of how a receiver ends up confirming
