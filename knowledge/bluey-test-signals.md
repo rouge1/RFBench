@@ -757,6 +757,40 @@ reviewed by Opus against the real files, write them; the files are not in git.
   whole domain is not unique for 27 page exchanges, a stale clock note, and
   tests that missed a +1 MHz carrier and a +40 sample start in the interferer
   files; those were fixed (no sample changed, byte-compared).
+- **DM/LMP traffic at five SNR levels (`acl`, 6 files).** `acl_dm_hop20_snr16p5`,
+  `_snr15p0`, `_snr14p0`, `_snr13p5`, `_snr10p5` (dB over the noise in 1 MHz) and
+  the control `acl_dh5_hop20_clean_snr20`, 40 MS/s, map 31-50, master packets of
+  LAP `0x112233` UAP `0x55`. Each level file has **204 bursts: 68 DM1, 68 DM3,
+  68 DM5 in a seeded order**, and is the same schedule, clocks, channels, payloads,
+  timing and noise as every other level file, scaled in signal only (one seed,
+  8101), so a level comparison is paired. **LMP PDUs travel in DM1 only**
+  (Core Vol 2 Part C Table 5.1 lists DM1 or DM1/DV for every PDU used): all 68 DM1
+  carry one of eleven real PDUs (name_req/res, accepted, not_accepted, detach,
+  features_req/res, version_req/res, max_slot, set_AFH), DM3/DM5 carry LLID 2
+  L2CAP-style data. bluey had asked for LMP in all three; the first build did it
+  and the reviewers caught that Table 5.1 forbids it. Per burst the sidecar gives
+  the header fields, LLID, length, `payload_hex`, `lmp_opcode`, `lmp_params`, and the
+  exact bits: `air_bits` (after whitening and FEC, first transmitted bit is bit 7
+  of the first byte, zero padded) and `body_crc_bits_hex` (payload header, body and
+  CRC before FEC), the one exception to "no `air_bits`". The levels came from a
+  sweep with a genie-aided reference receiver (start and channel from the sidecar,
+  libbtbb as the decoder; the table is in `scripts/bt_synth_acl_sweep.json` and
+  each sidecar): pooled yield about 96, 80, 60 and 50 % at the first four levels
+  and about 12 % at the fifth. **Another receiver's yield differs a lot** (a second
+  demodulator lost up to 20 points at about 13 dB), so grade by dB.
+- **Tones between channels (`between`, 4 files).** `hop20_dh5_int_cwb4p25_p20`,
+  `_cwb4p5_p10`, `_cwb4p5_p20`, `_cwb4p75_p20`: the clean interferer file of
+  `interf` plus one tone at +4.25, +4.5 or +4.75 MHz, paired with
+  `hop20_dh5_int_clean` (the file minus that file is exactly the tone). Per burst
+  `interferer_offset_mhz` (tone minus the channel's centre), `interferer_overlap`
+  (|offset| <= 0.5, both edges inclusive) and `interferer_at_band_edge`. At +4.5
+  the tone is on the edge of channels 43 and 44 and both are labelled with the
+  full tone level, a grading convention: a symmetric integration finds half the
+  power (3 dB lower) in each. A run with a seed other than 6101 says it is not
+  paired.
+- **Sample counts.** The files of these two sets carry `n_samples` at the top of
+  the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
+  their length is the file size divided by 8.
 
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
