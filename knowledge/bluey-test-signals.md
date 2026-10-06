@@ -684,9 +684,60 @@ reviewed by Opus against the real files, write them; the files are not in git.
   grader (now null), `generator_commit` naming a commit without the generator
   (regenerated from the committed code), and tests that missed a tone at 1 Hz, a
   repeated noise block or `timing_frac` applied twice (now caught).
-- **Not built:** bluey's item 5, ID packets from a page train and an FHS
-  response (`bt_hop.py` has no page hop sequence; the channels would be ours),
-  and item 6, the interferer file.
+- **Page and inquiry exchanges with an FHS (`page`, 2 files).**
+  `synth_page_exch_hop20` (200 page exchanges, about 12 GB) and
+  `synth_inq_exch_hop20` (200 inquiry exchanges, about 1.8 GB), 40 MS/s, 20 dB,
+  map 31-50. A page exchange: two ID packets per master TX slot with the paged
+  device's access code (68 bits, no trailer), its ID response, the master's FHS,
+  the ID acknowledgement, then the master's first POLL and **110 master packets
+  with slave answers** (NULL, DM1 or DH1) hop-true for the clock the FHS carries:
+  the receiver's author validates an FHS by brute-forcing CLK[27:1] from those
+  packets and requiring it to equal the FHS's clock. An inquiry exchange: GIAC
+  IDs and the scanning device's FHS response, no follow-up. Identities: paged LAP
+  `0x6B1D3C` UAP `0x47`, master `0x112233` UAP `0x55` NAP `0x1234`.
+  `apps/bt_fhs.py` is the FHS encoder, written **from the Core v6.0 text**
+  (Vol 2 Part B 6.5.1.4, Figure 6.9, Table 6.3; HEC/CRC from the paged UAP in a
+  page response and the DCI 0x00 in an inquiry response; the payload carries
+  SP = 0b10) and checked against libbtbb, which decodes it fully (200 random FHS,
+  wrong-UAP and wrong-whitening controls refused) and against the receiver's
+  synthetic vector (bit for bit with SP = 0; that vector was written by the
+  receiver's own side, so it checks the machinery and not the spec).
+  **Whitening of an FHS in a Central page response or an inquiry response is
+  seeded from the response's X-input, not CLK6-1** (7.2): the register is
+  [X0..X4, 1, 1], with Xprc (EQ 6; a frozen estimate of the paged device's clock,
+  the train offset, a counter N from 1) or Xir (EQ 8; the scanner's CLKN16-12
+  plus a counter N); the first builds assumed CLK6-1 and an independent
+  reviewer reading the spec caught it. A receiver that tries all 64 starting
+  values still decodes it, with an implied "clock" of 32 + X. **What the files do
+  not follow, stated in each sidecar's `conformance` key**: the page, page
+  response, inquiry and inquiry response hop sequences (the channels are free
+  choices in 31-50), the 16-slot A/B train, the **basic 79-channel sequence the
+  text mandates from the first POLL** (the follow-up runs on the adapted map
+  31-50 from the first POLL, because 79 MHz does not fit a 40 MS/s capture;
+  each exchange records `spec_basic_channel_first_poll`, which differs from the
+  channel used in 159 of 200), the inquiry back-off, and the paged device's
+  receiver timing; the page side always uses k_nudge 0 and N 1. A sidecar
+  also lists what the text leaves silent (the first POLL's slot, the FHS header's
+  FLOW/ARQN/SEQN, the inquiry FHS header's LT_ADDR) and what was chosen.
+- **Interferers (`interf`, 8 files, 961 MB each).** `hop20_dh5_int_clean` and
+  seven files that are that file plus an interferer, one seed, so the difference
+  is exactly the interferer: continuous tones at 10 or 20 dB over the noise in
+  1 MHz on channel 49 (+10 MHz) or 43 (+4 MHz); Wi-Fi-like noise band-limited
+  to +11..+20 MHz (2452-2461 MHz, the part of a Wi-Fi channel 11 a capture at
+  2441 sees), +20 dB per MHz, constant or in frames of 0.3-3 ms at 30 % duty;
+  and the two tones with the bursty noise. Per burst `interferer_overlap` and
+  `interferer_power_in_band_db` (null with no interferer power in the band);
+  channel 50 is the only map channel the Wi-Fi band touches and only half of it,
+  and its truth comes from the filter's actual response (17.33 dB), not the
+  nominal band (16.99 dB), which two reviewers' measurements showed to be
+  0.35 to 0.44 dB low.
+- **How these were reviewed.** Builders were Sonnet 5.5 subagents; the p6 files
+  were reviewed by Opus 5.5 against the real files, the p7 files by GPT-6.1
+  Sol and the free Muse Spark 1.3 Contributor through the swarm's OpenCode
+  driver, on slices of the files copied into read-only worktrees (OpenCode has
+  no sandbox: nothing but public code and synthetic signals goes in). The two
+  disagreed on the page generator and the spec text supported the stricter one,
+  which had caught that the follow-up does not use the basic sequence.
 
 ## Wrong clocks, wrong UAPs, and what libbtbb passes
 
