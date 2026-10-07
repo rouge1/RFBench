@@ -785,6 +785,25 @@ def check_second_seed():
     same_fade = sum(x['fade_gain_db'] == y['fade_gain_db'] for x, y in zip(sa['bursts'], sb['bursts']))
     check(sb['seed'] == 9102 and same_ch < 12 and same_pl < 6 and same_fade == 0 and sa['bursts'][0]['timing_frac'] != sb['bursts'][0]['timing_frac'],
           'seed 9102 is independent of 9101: channels equal in %d of 24, payloads in %d, fade lists in %d, timing differs' % (same_ch, same_pl, same_fade))
+    # every random stream of the plan, compared across the seeds (a stream that ignores the seed would pass the checks
+    # above): the hit set, the narrowband draws and the FHS fields
+    pa, pb = g.plan_fade(seed=9101)[0], g.plan_fade(seed=9102)[0]
+    ha, da, _ = g.plan_hits(pa, 9101)
+    hb, db, _ = g.plan_hits(pb, 9102)
+    same_hit = sum(x == y for x, y in zip(ha, hb))
+    same_off = sum(x['offset_khz'] == y['offset_khz'] for x, y in zip(da, db))
+    same_mod = sum(x['mod_phase'] == y['mod_phase'] for x, y in zip(da, db))
+    same_share = sum(x['share'] == y['share'] for x, y in zip(da, db))
+    check(same_off == 0 and same_mod == 0 and same_share == 0 and same_hit < 140,
+          'seeds 9101 and 9102: the narrowband draws are independent (offsets equal in %d, modulation phases in %d, shares in %d, '
+          'of %d bursts; hit membership agrees in %d of %d, chance 102)' % (same_off, same_mod, same_share, len(pa), same_hit, len(pa)))
+    fa = [e['fhs'] for e in sa['bursts'] if e.get('fhs')]
+    fb = [e['fhs'] for e in sb['bursts'] if e.get('fhs')]
+    check(fa and fb and not any(x['access_lap'] == y['access_lap'] for x in fa for y in fb) and not any(
+        x['whitening_x'] == y['whitening_x'] and x['clk27_2'] == y['clk27_2'] for x in fa for y in fb),
+          'seeds 9101 and 9102: the FHS fields are independent (%d and %d FHS bursts, no paged LAP in common)' % (len(fa), len(fb)))
+    fuse = sum(1 for x, y in zip(sa['bursts'], sb['bursts']) if x['fade_gain_db'][:20] == y['fade_gain_db'][:20])
+    check(fuse == 0, 'seeds 9101 and 9102: no burst has the same first 20 fade gains, whatever its length')
     ref2 = run('ref', 18.0, seed=9102)
     iq, side = run('rayleigh', 18.0, 300.0, seed=9102)
     check_fade_samples(iq, side, *ref2, 'ray fd300 snr18 at seed 9102')
