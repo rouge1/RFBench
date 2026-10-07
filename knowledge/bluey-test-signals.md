@@ -887,6 +887,24 @@ reviewed by Opus against the real files, write them; the files are not in git.
   time, `end_sample` (the floor of the continuous endpoint), `symbol_phase_samples`,
   `carrier_offset_hz`. eps = 0 is not written: the generator reproduces the delivered clean
   file byte for byte. The detector scatter at 20 dB is about 0.2 sample.
+- **Paging files (`pagemix`, `connonly`).** Two long files of 10 unsynchronised piconets
+  (NULL/POLL heavy, the role-aware traffic of `mixed/`). `synth_pagemix` (seed 9301,
+  31.46 s, 10.07 GB, 241,714 bursts, 14.2 % collided) adds **20 joiner exchanges** (12 page,
+  8 inquiry) on the spec's hop sequences, each at a random sample offset 0..39 (second ID of
+  a slot at p+20), base SNR 14-22 dB, placed in dense traffic; the FHS is rendered in the
+  window (channels 27-51) in 16 of 20, **chosen by rejection of legal clock parameters**
+  (126 draws in all), and a wanted-in-window exchange must also have at least 4 train IDs in
+  the window before collisions (a second criterion that makes the set easier; disclosed in
+  the header). `expected_page_event_possible` = at least 4 collision-free rendered IDs (the
+  receiver's rule, not the spec's); it is NOT "FHS in window" (ex 4 and 11 have the FHS but
+  cannot page; ex 7 and 12 can page without one). `synth_connonly` (seed 9302, 62.91 s,
+  20.1 GB, 626,218 bursts, 12.65 % collided) is the **negative set**: the same dense traffic
+  and no joiner, ID or FHS at all (IDs and FHS also occur in role switch, which it has none
+  of); every page or inquiry event reported on it is false. Container: a header
+  `synth_<name>.json` plus `synth_<name>.bursts.jsonl.gz` (one burst per line, sorted,
+  index = line, deterministic gzip level 6, mtime 0; the notes carry the read and re-gzip
+  snippets). Device ids 0-9 are different devices in each file. Reviewed by Sol (full) and
+  Muse (a restricted third attempt, after two runs that ended without a review).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
