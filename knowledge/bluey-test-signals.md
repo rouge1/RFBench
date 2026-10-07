@@ -870,6 +870,22 @@ reviewed by Opus against the real files, write them; the files are not in git.
   gate (a 40 MS/s capture nominally covers 2421-2461 MHz). A blind scan of
   the first 30 M samples finds every collision-free burst of all 8 devices and
   none of three LAPs not in the file.
+- **Sample-clock offset (`clk`, 8 files; `clklo`, 6 files).** The 800 bursts of
+  `hop20_dh5_int_clean` (seed 6101) as a receiver sees them whose **sample clock is off by
+  eps ppm** (`hop20_dh5_clk_{p,m}{20,50,100,200}`) or whose clock **and LO** are off by eps
+  (`hop20_dh5_clklo_{p,m}{20,50,100}`). eps > 0 = the receiver's clock is fast: the true
+  sample rate is `40e6 (1 + eps e-6)`, 40 (1 + eps e-6) samples per symbol, a burst at
+  nominal sample s starts at `s (1 + eps e-6)`, the file is longer by that factor, the
+  transmitter's symbol rate stays 1 Msym/s (a receiver assuming 40e6 S/s sees
+  `1e6 / (1 + eps e-6)` symbols/s). In `clk` the baseband carriers are the channel offsets
+  in true Hz (they do NOT scale with eps); in `clklo` every carrier also moves by
+  `-eps e-6 * 2441 MHz` (-244.1 kHz at +100 ppm). Each burst is rendered directly at
+  the true rate (no resampling; -108 dB against a 48-tap windowed-sinc resample), the carrier
+  and the LO shift applied at output sample numbers with a continuous phase, noise added
+  last, white and unscaled. Truth per burst: `start_sample` + `timing_frac` in output
+  time, `end_sample` (the floor of the continuous endpoint), `symbol_phase_samples`,
+  `carrier_offset_hz`. eps = 0 is not written: the generator reproduces the delivered clean
+  file byte for byte. The detector scatter at 20 dB is about 0.2 sample.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
