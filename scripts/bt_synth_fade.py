@@ -562,16 +562,21 @@ def synthesise_fade(kind='ref', snr_db=18.0, fd_hz=None, k_db=None, sir_db=None,
 
 # --- the files ------------------------------------------------------------------------------
 
-def set_files():
-    """What ``--set fade`` writes: ``(name, kwargs)``."""
+SEED2 = 9102
+
+
+def set_files(seed=SEED, suffix=''):
+    """What ``--set fade`` (seed 9101) and ``--set fade2`` (seed 9102, every name ending ``_s2``) write:
+    ``(name, kwargs)``. The second set is the same 13 distortions on independent bursts, noise and fades."""
     runs = []
     for name, kind, snr, fd, k_db, sir in FADE_FILES:
-        paired = None if kind == 'ref' else 'fade_ref_%s' % level_name(snr)
-        runs.append((name, dict(kind=kind, snr_db=snr, fd_hz=fd, k_db=k_db, sir_db=sir, paired_with=paired)))
+        paired = None if kind == 'ref' else 'fade_ref_%s%s' % (level_name(snr), suffix)
+        runs.append((name + suffix, dict(kind=kind, snr_db=snr, fd_hz=fd, k_db=k_db, sir_db=sir, paired_with=paired,
+                                         seed=seed)))
     return runs
 
 
-SETS = {'fade': set_files}
+SETS = {'fade': set_files, 'fade2': lambda: set_files(SEED2, '_s2')}
 
 
 def write_file(name, out_dir, **spec):

@@ -345,7 +345,7 @@ def check_paired_keys(side, ref, label):
     keys = ('clk', 'channel', 'ptype', 'payload_hex', 'air_bits', 'start_sample', 'timing_frac', 'symbol_phase', 'lmp_name', 'burst_phase', 'fhs')
     same = len(side['bursts']) == len(ref['bursts']) and all(
         all(x[k] == y[k] for k in keys) for x, y in zip(side['bursts'], ref['bursts']))
-    check(same and side['seed'] == ref['seed'] == SEED and side['n_samples'] == ref['n_samples'],
+    check(same and side['seed'] == ref['seed'] and side['seed'] in (SEED, 9102) and side['n_samples'] == ref['n_samples'],
           '%s: bursts, channels, payloads, clocks, timing fractions, phases, FHS fields and seed are the reference\'s' % label)
 
 
@@ -766,6 +766,39 @@ def check_hit_sets(sides, label):
 
 # --- the tests -----------------------------------------------------------------------------------------------
 
+def check_second_seed():
+    """``--set fade2``: the same 13 distortions at seed 9102, every name ending ``_s2``, independent of seed 9101."""
+    print('\nThe second seed (--set fade2)')
+    one, two = g.SETS['fade'](), g.SETS['fade2']()
+    check(len(two) == len(one) == 13 and all(n.endswith('_s2') for n, _ in two) and not any(n.endswith('_s2') for n, _ in one),
+          'fade2: 13 files, every name ends _s2; the fade set keeps its names')
+    check(all(k['seed'] == 9102 for _, k in two) and all(k['seed'] == 9101 for _, k in one),
+          'fade2 is seed 9102 and fade is seed 9101, every file')
+    names = {n for n, _ in two}
+    check(all(k['paired_with'] is None or k['paired_with'] in names for _, k in two)
+          and all(k['paired_with'] is None or k['paired_with'] in {n for n, _ in one} for _, k in one),
+          'every paired_with names a reference of its own set')
+    sa = run('rayleigh', 18.0, 300.0, seed=9101)[1]
+    sb = run('rayleigh', 18.0, 300.0, seed=9102)[1]
+    same_ch = sum(x['channel'] == y['channel'] for x, y in zip(sa['bursts'], sb['bursts']))
+    same_pl = sum(x['payload_hex'] == y['payload_hex'] for x, y in zip(sa['bursts'], sb['bursts']))
+    same_fade = sum(x['fade_gain_db'] == y['fade_gain_db'] for x, y in zip(sa['bursts'], sb['bursts']))
+    check(sb['seed'] == 9102 and same_ch < 12 and same_pl < 6 and same_fade == 0 and sa['bursts'][0]['timing_frac'] != sb['bursts'][0]['timing_frac'],
+          'seed 9102 is independent of 9101: channels equal in %d of 24, payloads in %d, fade lists in %d, timing differs' % (same_ch, same_pl, same_fade))
+    ref2 = run('ref', 18.0, seed=9102)
+    iq, side = run('rayleigh', 18.0, 300.0, seed=9102)
+    check_fade_samples(iq, side, *ref2, 'ray fd300 snr18 at seed 9102')
+    nz = noise_of(ref2[1])
+    free = np.ones(len(nz), bool)
+    for e in ref2[1]['bursts']:
+        free[burst_region(e)[0]:burst_region(e)[1]] = False
+    check(np.array_equal(ref2[0][free], nz[free]) and ref2[1]['seed'] == 9102,
+          'seed 9102 reference: off the bursts it is the regenerated noise of default_rng([9102, 1, block])')
+    bad = run('rayleigh', 18.0, 300.0, seed=9101)[1]
+    check(sum(x['channel'] == y['channel'] for x, y in zip(sa['bursts'], bad['bursts'])) == 24,
+          'mutant: a "second" set run at seed 9101 is not independent, and the check above would see it')
+
+
 def tests():
     t0 = time.time()
     print('The full-size plan (204 bursts), sidecar only\n')
@@ -845,6 +878,7 @@ def tests():
     print('\nThe clustering')
     check_clustering('ray fd300 @ 18 dB', 'rayleigh', 300.0)
     check_clustering('ray fd800 @ 18 dB', 'rayleigh', 800.0)
+    check_second_seed()
     check_mutants()
     failed = [w for ok, w in RESULTS if not ok]
     print('\n%.0f s' % (time.time() - t0))
