@@ -222,8 +222,15 @@ NOTES = [
 
 # --- the container -----------------------------------------------------------------------------
 
+#: One line that re-gzips a container and checks it reproduces the bytes (it is also in the header's notes).
+REGZIP = ("import gzip, io; p = 'synth_<name>.bursts.jsonl.gz'; raw = gzip.decompress(open(p, 'rb').read()); out = io.BytesIO(); "
+          "g = gzip.GzipFile(filename='', mode='wb', fileobj=out, compresslevel=6, mtime=0); g.write(raw); g.close(); "
+          "assert out.getvalue() == open(p, 'rb').read()")
+
+
 def open_gzip_lines(path):
-    """A deterministic gzip writer: no file name, mtime 0, fixed level."""
+    """A deterministic gzip writer: compresslevel=6, mtime=0, no file name (filename=''), so the same lines give the same bytes.
+    ``REGZIP`` is a one-line re-gzip that reproduces a written container."""
     raw = open(path, 'wb')
     return raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=6, mtime=0)
 
@@ -643,6 +650,42 @@ def exchange_rows(plan):
     return rows
 
 
+def computed_notes(plan, prof, ex_rows, all_laps, n_pic):
+    """Notes whose numbers come from the plan: the LAP breakdown, the device-id warning, the determinism recipe and, for pagemix,
+    what expected_page_event_possible is and is not."""
+    n_masters = sum(r['kind'] == 'joiner_page' for r in plan.joiners)
+    n_paged = sum(bool(r.get('paged')) for r in plan.joiners)
+    n_scan = sum(r['kind'] == 'joiner_inquiry' for r in plan.joiners)
+    out = [
+        "LAPs on the air: %d, all different = %d piconet masters (devices 0-%d) + %d page-joiner masters + %d paged devices + %d "
+        "inquiry-joiner scanners (an inquiry exchange's IDs carry the GIAC 0x9E8B33, which is not counted and is not a device "
+        "LAP) = %d device LAPs in devices[] (the joiner rows' 'lap') plus the %d paged LAPs in devices[].paged. Every sync word "
+        "is at least 22 bits from every other, the GIAC's included." % (
+            len(all_laps), n_pic, n_pic - 1, n_masters, n_paged, n_scan, len(plan.devices) + len(plan.joiners), n_paged),
+        "THE DEVICE IDS ARE NOT COMPARABLE ACROSS FILES: piconet device k (0-%d) has a different LAP, UAP, clock, level and hop "
+        "sequence in pagemix, in connonly and in mixed/ (each file draws its own from its own seed). A grader must read "
+        "devices[] of the file under test and never carry a LAP or an 'ours' flag from one file to another." % (n_pic - 1),
+        "Determinism: the same arguments give the same bytes. The container is gzip with compresslevel=6, mtime=0 and no file "
+        "name; the lines are json.dumps(burst, separators=(',', ':')) + newline. REGZIP: " + REGZIP,
+    ]
+    if not prof['negative_set']:
+        ids_ok = [r['exchange'] for r in ex_rows if r['expected_page_event_possible']]
+        fhs_in = [r['exchange'] for r in ex_rows if r['fhs_rendered']]
+        cant = [r['exchange'] for r in ex_rows if r['fhs_rendered'] and not r['expected_page_event_possible']]
+        fhs_out_ok = [r['exchange'] for r in ex_rows if not r['fhs_rendered'] and r['expected_page_event_possible']]
+        out.append(
+            "The 4-collision-free-ID rule (expected_page_event_possible) is separate from, and in addition to, the FHS-in-window "
+            "rule; it is also the second selection criterion's consequence (at least 4 rendered train IDs before collisions for "
+            "the exchanges whose FHS is wanted in the window). expected_page_event_possible is NOT 'the FHS is in the window': "
+            "%d exchanges have it true (%s) and %d have the FHS rendered (%s)%s. Exchanges with the FHS rendered in the window but "
+            "fewer than 4 collision-free IDs (a receiver needing four IDs cannot page them): %s. Exchanges with the FHS out of the "
+            "window but 4 or more collision-free IDs (it can page, without an FHS): %s." % (
+                len(ids_ok), ids_ok, len(fhs_in), fhs_in,
+                ' - the same number only by coincidence' if len(ids_ok) == len(fhs_in) else ' - different numbers',
+                cant or 'none', fhs_out_ok or 'none'))
+    return out
+
+
 def build_header(plan, prof, name, laps, taken_syncs, joiner_selection, n_page, n_inquiry):
     entries = plan.entries
     n = len(entries)
@@ -745,7 +788,8 @@ def build_header(plan, prof, name, laps, taken_syncs, joiner_selection, n_page, 
                                                       'Bursts outside it are lines of the bursts file with rendered false.'),
                        text='a joiner burst is rendered iff its channel is %d to %d (the piconets are all on 31-50, inside)' % WINDOW),
         'conformance': CONFORMANCE_NEGATIVE if prof['negative_set'] else conformance_positive(n_join, sum(1 for r in ex_rows if r['kind'] == 'page' and r['train'] == 'B'), sum(1 for r in ex_rows if r['kind'] == 'page')),
-        'notes': NOTES + ([NO_ID_NOTE] if prof['negative_set'] else []), 'seed': plan.seed,
+        'notes': NOTES + ([NO_ID_NOTE] if prof['negative_set'] else []) + computed_notes(plan, prof, ex_rows, all_laps, n_pic),
+        'seed': plan.seed,
         'devices': rows, 'n_devices': len(rows), 'n_piconets': n_pic, 'n_joiners': n_join,
         'n_page_joiners': n_page, 'n_inquiry_joiners': n_inquiry,
         'ours_devices': [r['id'] for r in rows if r['ours']], 'not_ours_devices': [r['id'] for r in rows if not r['ours']],

@@ -158,6 +158,31 @@ def check_keys(h, label, profile):
     check(no_id == (profile == 'connonly'), '%s: the connonly notes say IDs do not exist in the connection state and NULL/POLL are the shortest packets (only there)' % label)
     check('"bursts_not_rendered"' not in json.dumps(h) and 'in bursts_not_rendered' not in json.dumps(h) and (profile == 'connonly') == ('There are no joiners' in h['conformance'])
           and (profile == 'connonly' or 'inquiry response' in h['conformance']), '%s: no stale bursts_not_rendered; conformance matches the profile' % label)
+    devs = h['devices']
+    n_m = sum(d['kind'] == 'joiner_page' for d in devs)
+    n_p = sum(bool(d.get('paged')) for d in devs)
+    n_s = sum(d['kind'] == 'joiner_inquiry' for d in devs)
+    check('LAPs on the air: %d, all different = %d piconet masters (devices 0-9) + %d page-joiner masters + %d paged devices + %d '
+          'inquiry-joiner scanners' % (len(all_laps(h)), N_PIC, n_m, n_p, n_s) in notes
+          and '= %d device LAPs in devices[] (the joiner rows\' \'lap\') plus the %d paged LAPs' % (len(devs), n_p) in notes
+          and len(all_laps(h)) == N_PIC + n_m + n_p + n_s,
+          '%s: the notes give the exact LAP breakdown (%d = %d + %d + %d + %d) as the plan has it' % (label, len(all_laps(h)), N_PIC, n_m, n_p, n_s))
+    check('THE DEVICE IDS ARE NOT COMPARABLE ACROSS FILES' in notes and 'in pagemix, in connonly and in mixed/' in notes and 'devices[] of the file under test' in notes,
+          '%s: the notes warn that device ids map to different LAPs/UAPs in each file' % label)
+    check('compresslevel=6, mtime=0 and no file name' in notes and 'REGZIP: import gzip, io' in notes, '%s: the notes name the gzip level and carry the re-gzip line' % label)
+    if profile != 'connonly':
+        ex = h['exchanges']
+        ids_ok = [r['exchange'] for r in ex if r['n_id_rendered_collision_free'] >= 4]
+        fhs_in = [r['exchange'] for r in ex if r['fhs_rendered']]
+        cant = [r['exchange'] for r in ex if r['fhs_rendered'] and r['exchange'] not in ids_ok]
+        out_ok = [r['exchange'] for r in ex if not r['fhs_rendered'] and r['exchange'] in ids_ok]
+        want = ("%d exchanges have it true (%s) and %d have the FHS rendered (%s)%s. Exchanges with the FHS rendered in the window but fewer than 4 "
+                "collision-free IDs (a receiver needing four IDs cannot page them): %s." % (
+                    len(ids_ok), ids_ok, len(fhs_in), fhs_in,
+                    ' - the same number only by coincidence' if len(ids_ok) == len(fhs_in) else ' - different numbers', cant or 'none'))
+        check(want in notes and 'window but 4 or more collision-free IDs (it can page, without an FHS): %s.' % (out_ok or 'none') in notes
+              and 'is NOT \'the FHS is in the window\'' in notes and 'second selection criterion' in notes,
+              '%s: the notes say expected_page_event_possible is not FHS-in-window and name the exchanges %s (FHS in, cannot page) and %s (FHS out, can), from the plan' % (label, cant, out_ok))
     if profile != 'connonly':
         n_pg = sum(r['kind'] == 'page' for r in h['exchanges'])
         n_b = sum(r['kind'] == 'page' and r['train'] == 'B' for r in h['exchanges'])
@@ -657,6 +682,14 @@ def check_container(mod, plan, tmp, label):
     s3, b3 = mod.write_truth(plan, os.path.join(tmp, 'c'), 'x')
     md = lambda p: hashlib.md5(open(p, 'rb').read()).hexdigest()
     check(md(b1) == md(b2) == md(b3) and md(s1) == md(s2) == md(s3), '%s: the same plan written three times (one a second later, other folders) gives the same bytes' % label)
+    note = next(n for n in json.load(open(s1))['notes'] if 'REGZIP: ' in n)
+    code = note.split('REGZIP: ', 1)[1].replace('synth_<name>.bursts.jsonl.gz', b1)
+    try:
+        exec(compile(code, 'regzip', 'exec'), {})
+        regz = True
+    except Exception as x:
+        regz = False
+    check(regz, '%s: the header\'s one-line re-gzip reproduces the container\'s bytes' % label)
     raw = open(b1, 'rb').read(12)
     check(raw[:2] == b'\x1f\x8b' and raw[4:8] == b'\0\0\0\0' and raw[3] == 0, '%s: the gzip header has mtime 0 and no file name' % label)
     h = json.load(open(s1))
@@ -1025,7 +1058,10 @@ def check_mutants(full_pagemix_ok):
         ('expected_page_event_possible computed with collided IDs', "expected_page_event_possible=len(ids_cf) >= 4,", "expected_page_event_possible=len(ids_r) >= 4,", 'pm', 'full'),
         ('the container not sorted', "items.sort(key=lambda t: (t[0]['start_sample'] + t[0]['timing_frac'], t[0]['device'], t[0]['channel']))",
          "items.sort(key=lambda t: (t[0]['device'], t[0]['start_sample'] + t[0]['timing_frac'], t[0]['channel']))", 'pm', 'plan'),
-        ('a non-deterministic gzip mtime', "compresslevel=6, mtime=0)", "compresslevel=6, mtime=time.time_ns() % 2 ** 31)", 'pm', 'container'),
+        ('a non-deterministic gzip mtime', "fileobj=raw, compresslevel=6, mtime=0)", "fileobj=raw, compresslevel=6, mtime=time.time_ns() % 2 ** 31)", 'pm', 'container'),
+        ('the container gzipped at level 9', "fileobj=raw, compresslevel=6, mtime=0)", "fileobj=raw, compresslevel=9, mtime=0)", 'pm', 'container'),
+        ('the notes\' expected_page_event_possible list computed from the FHS instead of the plan',
+         "ids_ok = [r['exchange'] for r in ex_rows if r['expected_page_event_possible']]", "ids_ok = [r['exchange'] for r in ex_rows if r['fhs_rendered']]", 'pm', 'full'),
         ('an ours swap on one piconet', "device=dev['id'], role=b['role'], ours=dev['ours'],",
          "device=dev['id'], role=b['role'], ours=(not dev['ours']) if dev['id'] == 0 else dev['ours'],", 'pm', 'plan'),
         ('the 4-ID rule removed', "if need_fhs and ex['id_in_window'] < ids_min:", "if False:", 'pm', 'full'),
