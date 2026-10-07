@@ -851,7 +851,7 @@ reviewed by Opus against the real files, write them; the files are not in git.
   float32); the power-delay profile is tested at the profile's own delays.
 - **Mixed devices for blind tests (`mixed`, 2 files, 2.0 GB each).**
   `synth_mixed_blind_a` (seed 9201, 17,487 bursts, 1,452 collided = 8.3 %) and
-  `_b` (9202, 18,389, 1,664 = 9.05 %), 6.29 s each: 8 unsynchronised piconets
+  `_b` (9202, 18,389, 1656 = 9.01 %), 6.29 s each: 8 unsynchronised piconets
   (6 ours, 2 not ours) with their own LAP/UAP (sync words at least 22 bits apart),
   clock, slot grid, level (8-22 dB) and hop sequence on the map 31-50, plus three
   page exchanges on the spec's hop sequences (the joiners, `ours`). The signals add
@@ -859,7 +859,15 @@ reviewed by Opus against the real files, write them; the files are not in git.
   overlapping in time within +-1 MHz: overlap length, channel offset, `sir_db`),
   `collision` (a same-channel overlap) and `overlap_frac`. `sir_db` is the ratio of
   total envelope powers: for an adjacent channel the in-band interference is 25-32 dB
-  lower. `air_bits` hex is padded to a byte; use `air_bits_length`. A blind scan of
+  lower. `air_bits` hex is padded to a byte; use `air_bits_length`. LMP PDUs travel in DM1 only and by
+  role: a Peripheral never sends `LMP_SET_AFH` (Central to Peripheral only, Core
+  Part C Table 5.1); the TID is 0 for a transaction the Central started and 1 for
+  one the Peripheral started. A third review (GPT-6.1 Sol) caught the first
+  version sending `LMP_SET_AFH` from slaves (116 and 78 packets) and slave requests
+  with TID 0; the files were regenerated, only slave DM1 packets with LMP differ.
+  The sidecar is an answer key (devices, `ours`, per-burst identity and bits): `ours`
+  is a policy label, not an RF property. The window 27-51 is a conservative software
+  gate (a 40 MS/s capture nominally covers 2421-2461 MHz). A blind scan of
   the first 30 M samples finds every collision-free burst of all 8 devices and
   none of three LAPs not in the file.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
