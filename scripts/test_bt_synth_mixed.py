@@ -57,6 +57,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apps import bt_br_frame as br  # noqa: E402
 from apps import bt_hop, bt_hop_substates as hs  # noqa: E402
 from scripts import bt_ota_check, bt_synth, bt_synth_mixed as g  # noqa: E402
+from scripts import test_bt_lmp as lmpt  # noqa: E402
 
 FS = 40e6
 SPS = 40
@@ -337,6 +338,9 @@ def check_keys(side, label):
           '%s: the per-burst values are null at the top, the floor, rate and centre are the repository\'s' % label)
     check('31-50' in side['conformance'] and 'joiner' in side['conformance'] and 'unsynchronised' in side['conformance'],
           '%s: the conformance text names the 31-50 map, the joiners\' sequences and the unsynchronised piconets' % label)
+    check('conservative software gate' in side['window']['why'] and '2421' in side['window']['why'] and 'ANSWER KEY' in ' '.join(side['notes'])
+          and 'policy label' in ' '.join(side['notes']) and 'not that unknown LAPs are discovered' in ' '.join(side['notes']),
+          '%s: the window is described as a software gate, and the notes say the sidecar is an answer key, ours is a policy label and the blind scan is known-LAP' % label)
     check('air time' in side['burst_window'] and '40' in side['burst_window'], '%s: the burst window is defined' % label)
 
 
@@ -473,6 +477,68 @@ def check_overlap_unit(mod, label='unit'):
           '%s: overlap_frac is the covered fraction of the burst\'s own length' % label)
     check(ov[8][0]['channel_offset_mhz'] == 1.0 and ov[9][0]['channel_offset_mhz'] == -1.0 and abs(ov[8][0]['sir_db'] - 10.0) < 1e-9
           and abs(ov[0][0]['sir_db'] + 4.0) < 1e-9, '%s: offsets are other minus this, SIR is this minus other' % label)
+
+
+#: Part C: a PDU that answers a transaction carries the TID of the transaction it answers (0 Central-started, 1 Peripheral-started).
+ANSWER_PDUS = {'LMP_name_res', 'LMP_accepted', 'LMP_not_accepted', 'LMP_features_res', 'LMP_version_res'}
+#: Table 5.1 "Possible direction" of the eleven, read from the specification text below where it can be: all C<->P but set_AFH.
+CENTRAL_ONLY = {'LMP_set_AFH'}
+
+
+def check_lmp_truth(side, label):
+    """Every LMP PDU of every burst parsed from the burst's own payload bytes by the table-driven decoder of test_bt_lmp.py
+    and held to the sidecar's lmp_* keys, to Table 5.1's length and direction and to the TID rule of the sender's role."""
+    bad, n = [], {'master': 0, 'slave': 0}
+    for e in side['bursts']:
+        if e['llid'] != 3:
+            if e['lmp_name'] is not None or e['lmp_opcode'] is not None or e['lmp_tid'] is not None or e['lmp_params'] is not None:
+                bad.append((e['index'], 'lmp truth on a non-LMP burst'))
+            continue
+        if e['ptype'] != 'DM1' or e['device'] >= 8:
+            bad.append((e['index'], 'LMP outside a piconet DM1'))
+            continue
+        try:
+            d = lmpt.decode(bytes.fromhex(e['payload_hex']))
+        except ValueError as x:
+            bad.append((e['index'], str(x)))
+            continue
+        n[e['role']] += 1
+        params = {k: (v.hex() if isinstance(v, bytes) else v) for k, v in d['fields'].items()}
+        if (d['name'] != e['lmp_name'] or d['opcode'] != e['lmp_opcode'] or d['tid'] != e['lmp_tid'] or params != e['lmp_params']
+                or lmpt.validate(d) or e['payload_length'] != d['length']):
+            bad.append((e['index'], 'sidecar disagrees with the PDU', d['name'], e['lmp_name']))
+        if e['role'] == 'slave' and d['name'] in CENTRAL_ONLY:
+            bad.append((e['index'], 'a Peripheral sends a Central-only PDU', d['name']))
+        want_tid = int(d['name'] in ANSWER_PDUS) if e['role'] == 'master' else int(d['name'] not in ANSWER_PDUS)
+        if d['tid'] != want_tid:
+            bad.append((e['index'], 'TID', e['role'], d['name'], d['tid']))
+    check(not bad, '%s: every LMP PDU (%d master, %d slave) parsed from its payload bytes equals lmp_*, is Table 5.1\'s length, '
+          'is allowed from its sender and has the TID of its role %s' % (label, n['master'], n['slave'], bad[:3]))
+    check(n['slave'] >= 8 and n['master'] >= 8, '%s: both roles send LMP (%d master, %d slave)' % (label, n['master'], n['slave']))
+    # the direction column, from the specification text
+    import re
+    if os.path.exists(lmpt.SPEC_TEXT):
+        text = open(lmpt.SPEC_TEXT, encoding='utf-8', errors='replace').read()
+        lines = text[text.index('5.1   PDU summary'):][:40000].split('\n')
+        row = re.compile(r'^ *(LMP_\S+) +(\d+) +(\d+|127/\d+) +(\S+) +(C\S+|B)')
+        dirs = {m.group(3): m.group(5) for m in map(row.match, lines) if m}
+        want = {str(v[0]): ('C\u2192P' if k in CENTRAL_ONLY else 'C\u2194P') for k, v in lmpt.SPEC.items()}
+        check(all(dirs.get(k) == v for k, v in want.items()),
+              '%s: Table 5.1 in the specification text gives C->P for LMP_set_AFH and C<->P for the other ten' % label)
+
+
+def check_llid(side, label):
+    bad = []
+    for e in side['bursts']:
+        if e['ptype'] in ('NULL', 'POLL', 'ID', 'FHS'):
+            if e['llid'] is not None:
+                bad.append((e['index'], 'llid on a packet with no payload header'))
+            continue
+        bits = hex_bits(e['body_crc_bits_hex'], e['body_crc_bits_length'])
+        if e['llid'] != bits[0] | bits[1] << 1:
+            bad.append((e['index'], e['ptype'], e['llid'], bits[:2]))
+    check(not bad, '%s: every burst\'s llid is the LLID in the payload header of its own body_crc_bits_hex (first two bits, LSB first) %s' % (label, bad[:3]))
+
 
 
 def check_counts(side, label):
@@ -964,6 +1030,8 @@ def sidecar_checks(side, label='mutant'):
     check_joiners(side, label)
     check_kind_keys(side, label)
     check_ours_pinned(side, label)
+    check_lmp_truth(side, label)
+    check_llid(side, label)
 
 
 def check_mutants():
@@ -981,6 +1049,13 @@ def check_mutants():
         ('a sub-symbol overlap lost (ov > 0 became ov >= 40)', ("if ov > 0 and abs(", "if ov >= 40 and abs("), False),
         ('ours swapped between an ours and a not-ours device (the 6/2 split kept)',
          ("ours=d not in not_ours, lap=laps[d]", "ours=(d not in not_ours) != (d in (0, 5)), lap=laps[d]"), False),
+        ('LMP opcode byte replaced by 0xFE, metadata kept (CRC and FEC recomputed)',
+         ("llid, lmp = 0b11, dict(name=name, tid=tid, params=params)", "body = bytes([0xFE]) + body[1:]\n        llid, lmp = 0b11, dict(name=name, tid=tid, params=params)"), False),
+        ('a slave\'s lmp_tid flipped in the metadata only',
+         ("llid, lmp = 0b11, dict(name=name, tid=tid, params=params)", "llid, lmp = 0b11, dict(name=name, tid=tid ^ (role == 'slave'), params=params)"), False),
+        ('a slave sends LMP_set_AFH', ("tuple(n for n in LMP_NAMES if n != 'LMP_set_AFH')", "tuple(n for n in LMP_NAMES)"), False),
+        ('a slave LMP request with the Central\'s TID 0', ("return int(answer) if role == 'master' else int(not answer)", "return int(answer)"), False),
+        ('joiner DM1 llid left null', ("e['ptype'] in ('DH1', 'DM1'):", "e['ptype'] == 'DH1':"), False),
         ('SIR sign inverted', ("sir_db=round(snrs[i] - snrs[j], 4)", "sir_db=round(snrs[j] - snrs[i], 4)"), False),
         ('a burst not added linearly (the second overwrites the first)', ("out[a - b0:b - b0] += samples[a - lo:b - lo]", "out[a - b0:b - b0] = samples[a - lo:b - lo]"), True),
         ('ours flag swapped on one device', ("id=dev['id'], kind='piconet', ours=dev['ours'], lap=dev['lap']",
@@ -1050,6 +1125,8 @@ def main():
     check_kind_keys(side, 'A')
     check_ours_pinned(side, 'A')
     check_overlap_unit(g)
+    check_lmp_truth(side, 'A')
+    check_llid(side, 'A')
     check_ours_pinned(g.plan_mixed(9202, 3)[0], 'B-plan')
     print('\nThe samples of A', flush=True)
     check_superposition(iq, side, 'A', SEED, 2 ** 22)

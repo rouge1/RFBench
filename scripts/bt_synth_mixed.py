@@ -67,8 +67,9 @@ IDs, the response and the FHS on the page, page response and Central page respon
 (``apps/bt_hop_substates.py``), the follow-up on the *basic* connection sequence with the master's
 own clock, the slave's answer one slot later on that kernel at the slave's clock (a different channel
 from the master's: the same channel mechanism belongs to the adapted sequence only). The bursts whose
-channel is not 27 to 51 (``in_window`` false) are not in the samples: a 40 MS/s capture on 2441.0 MHz
-holds 2429 to 2453 MHz, and a receiver would not see them either; they are in ``bursts_not_rendered``
+channel is not 27 to 51 (``in_window`` false) are not in the samples: 27 to 51 is a conservative software gate (a 40 MS/s
+complex capture on 2441.0 MHz nominally covers 2421 to 2461 MHz and channels 26 and 52 would fit in the BB60D's +-13.5 MHz,
+but are deliberately not rendered, as a guard); they are in ``bursts_not_rendered``
 with their truth and no ``air_bits``, and in no overlap. Each joiner has its own LAPs, the master's and the
 paged device's (14 LAPs in all, distinct, the sync-word distance over all 14 in the sidecar). The
 exchanges are placed at random times in three separate thirds of the file, with their own symbol phases
@@ -148,6 +149,13 @@ WINDOW = conf.WINDOW                           # channels 27 to 51: what the cap
 DEFAULT_OUT = '/media/user/4TB/sdr-synth-tmp'
 SEEDS = {'mixed_blind_a': 9201, 'mixed_blind_b': 9202}
 
+WINDOW_GATE_NOTE = (
+    "A conservative software gate: a joiner burst is rendered iff its channel is 27 to 51 (2429 to 2453 MHz, +-12 MHz of the "
+    "centre), by rule. A complex 40 MS/s capture centred on 2441 MHz nominally covers 2421 to 2461 MHz, and channels 26 and 52 "
+    "(at +-13 MHz) also fit inside the BB60D's +-13.5 MHz, but are deliberately not rendered: the gate keeps a guard band so "
+    "that every rendered burst's +-1 MHz lies inside +-13 MHz. It is not a statement that those channels cannot be captured. "
+    "Bursts outside it are in bursts_not_rendered.")
+
 WINDOW_TEXT = (
     "A burst's window is the packet's air time, from the first preamble sample to the end of its last bit and "
     "nothing else: the real interval [start_sample + timing_frac, start_sample + timing_frac + air_bits_length * 40) "
@@ -170,7 +178,12 @@ CONFORMANCE = (
 
 NOTES = [
     "Nothing in this file is real traffic: the piconets send random packet types at a random rate; the LMP "
-    "PDUs are those of apps/bt_lmp.py in about half of the master's DM1, with random parameters; the data packets "
+    "PDUs are those of apps/bt_lmp.py in about half of the DM1 of the master AND of the slave, with random parameters; "
+    "a slave sends only PDUs its Table 5.1 row allows from the Peripheral (every one of the eleven but LMP_set_AFH, which is "
+    "Central to Peripheral only) and the transaction ID follows who started the transaction (Part C): the master's requests "
+    "and the slave's answers carry TID 0, the slave's requests and the master's answers TID 1 (the acl files' rule: PDUs the "
+    "master starts carry TID 0, its answers 1). The slave's PDUs are not an answer to the master's: no transaction is "
+    "followed. The data packets "
     "carry an L2CAP-like header and random bytes. The SEQN of a packet is the count of the device's packets of that role "
     "and ARQN and FLOW are 1: plausible, not a protocol run. There is no retransmission, no power control and "
     "no flow control.",
@@ -187,6 +200,10 @@ NOTES = [
     "victim's own 1 MHz band is about 25 to 32 dB lower than sir_db suggests (measured by a reviewer), so use channel_offset_mhz "
     "together with sir_db.",
     "air_bits is hex padded with zero bits to a whole byte: use air_bits_length for the number of bits on air.",
+    "This sidecar is an ANSWER KEY: devices[].lap, uap, nap, clk0, ours and every burst's identity, channel and bits are in "
+    "it. A receiver under test must not be given it; the 'ours' flag is a policy label for the test (which LAPs the receiver is "
+    "told to follow), not an RF property of the device. The blind scan of scripts/test_bt_synth_mixed.py supplies the eight "
+    "true LAPs as templates: it checks that known LAPs are detected, not that unknown LAPs are discovered.",
     "air_bits_omitted is false: air_bits are in the sidecar, as in bt_synth_acl.py, because the task asks for its keys.",
     "The piconets' clocks do not drift and the sample clock is the file's; the slot grid of a piconet is exactly "
     "25000 samples a slot.",
@@ -248,8 +265,28 @@ def l2cap_body(rng, longest):
     return (length - 4).to_bytes(2, 'little') + L2CAP_CID.to_bytes(2, 'little') + data
 
 
-def make_packet(dev, ptype, clk, counter, rng, allow_lmp):
-    """The packet and its truth: ``(Packet, extras)`` for one burst of a piconet."""
+#: Table 5.1's "Possible direction" of the eleven PDUs, from Core Vol 2 Part C: every one is C<->P (either side may send it)
+#: except LMP_set_AFH, Central to Peripheral only.
+LMP_FROM_PERIPHERAL = tuple(n for n in LMP_NAMES if n != 'LMP_set_AFH')
+
+#: TID (Part C 2.4): 0 for a transaction the Central started, 1 for one the Peripheral started. A PDU that answers a
+#: transaction (ANSWERS) carries the TID of the transaction it answers; any other PDU starts one.
+LMP_ANSWERS = bt_lmp.ANSWERS
+
+
+def lmp_tid(name, role):
+    """The TID of a PDU sent by ``role``: the master's requests 0 and its answers 1; the slave's requests 1 and its answers 0."""
+    answer = name in LMP_ANSWERS
+    return int(answer) if role == 'master' else int(not answer)
+
+
+def make_packet(dev, ptype, clk, counter, rng, allow_lmp, role='master', side_seed=None):
+    """The packet and its truth: ``(Packet, extras)`` for one burst of a piconet.
+
+    A master's DM1 carries one of the eleven PDUs in about half. A slave's does too, but only a PDU its Table 5.1 row allows
+    from the Peripheral (not LMP_set_AFH) and with the TID of its own role. The draws from ``rng`` are those of the master's
+    rule in both roles (the name from the eleven, then that PDU's parameters), so that a burst's timing, jitter and phase do not
+    depend on the role's rule; a slave whose draw is LMP_set_AFH gets another PDU, from the stream ``side_seed``."""
     longest = br.PACKET_TYPES[ptype][4]
     lmp, llid, body = None, None, b''
     if ptype in ('NULL', 'POLL'):
@@ -257,6 +294,12 @@ def make_packet(dev, ptype, clk, counter, rng, allow_lmp):
     elif ptype == 'DM1' and allow_lmp and rng.random() < DM1_LMP_FRACTION:
         name = LMP_NAMES[int(rng.integers(0, len(LMP_NAMES)))]
         body, params, tid = bt_lmp.random_pdu(rng, name, clk)
+        if role == 'slave':
+            if name not in LMP_FROM_PERIPHERAL:
+                name = LMP_FROM_PERIPHERAL[int(np.random.default_rng(side_seed).integers(0, len(LMP_FROM_PERIPHERAL)))]
+                _, params, _ = bt_lmp.random_pdu(np.random.default_rng(side_seed + [1]), name, clk)
+            tid = lmp_tid(name, 'slave')
+            body = bt_lmp.encode(name, tid, **params)
         llid, lmp = 0b11, dict(name=name, tid=tid, params=params)
     else:
         body, llid = l2cap_body(rng, longest), 0b10
@@ -293,7 +336,8 @@ def plan_piconet(dev, seed, total, level_range):
             else:
                 ptype_b = ptype
             b_rng = np.random.default_rng([seed, 300 + d, 2 * (k_m if role == 'master' else k_s) + (role == 'slave')])
-            p, ex = make_packet(dev, ptype_b, clk & 0x0FFFFFFF, counter, b_rng, True)
+            p, ex = make_packet(dev, ptype_b, clk & 0x0FFFFFFF, counter, b_rng, True, role,
+                                [seed, 700 + d, k_s])
             jitter = float(b_rng.uniform(-JITTER_DB, JITTER_DB))
             pair.append(dict(
                 device=d, role=role, ptype=ptype_b, packet=p, slot=slot, clk=clk & 0x0FFFFFFF, hop_clk=clk_m,
@@ -380,7 +424,7 @@ def joiner_entry(e, dev, bits):
     for key in ('llid', 'payload_length', 'payload_hex', 'lmp_opcode', 'lmp_name', 'lmp_tid', 'lmp_params', 'lt_addr',
                 'flow', 'arqn', 'seqn', 'header18', 'payload_full_hex', 'payload_valid'):
         out.setdefault(key, None)
-    if e['kind'] in ('followup_master', 'followup_slave') and e['ptype'] == 'DH1':
+    if e['kind'] in ('followup_master', 'followup_slave') and e['ptype'] in ('DH1', 'DM1'):
         out['llid'] = 0b10
     if e.get('payload_hex') is not None:
         out['payload_length'] = len(bytes.fromhex(e['payload_hex']))
@@ -646,7 +690,7 @@ def plan_mixed(seed=9201, blocks=BLOCKS, block_samples=BLOCK_SAMPLES, level_rang
         'air_bits_omitted': False,
         'air_bits_note': acl.AIR_BITS_NOTE + ' The joiner bursts that are not rendered have none.',
         'burst_window': WINDOW_TEXT,
-        'window': dict(channels=list(WINDOW), mhz=list(conf.WINDOW_MHZ), why=conf.WINDOW_NOTE,
+        'window': dict(channels=list(WINDOW), mhz=list(conf.WINDOW_MHZ), why=WINDOW_GATE_NOTE,
                        text='a joiner burst is rendered iff its channel is %d to %d (the piconets are all on 31-50, inside)' % WINDOW),
         'conformance': CONFORMANCE,
         'notes': NOTES,
