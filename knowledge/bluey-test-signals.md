@@ -832,6 +832,36 @@ reviewed by Opus against the real files, write them; the files are not in git.
   cluster (index of dispersion 2.8 at 300 Hz and 7.2 at 800 Hz against about 1.2 for
   noise at the same error rate). Burst-level payload yield from the genie reference
   receiver: DM5 falls to 16 % at 800 Hz and 18 dB, 49 % at 24 dB.
+- **Second seed of the clustered-error files (`fade2`, 13 files).** The same
+  13 distortions at seed 9102 (`synth_fade_*_s2`): independent bursts, channels,
+  payloads, FHS fields, noise, fades and narrowband hit sets, paired inside the set
+  to the `_s2` references. Reviewed on the samples: the noise of the two seeds has no
+  correlation (about 3e-4), the burst lists share nothing beyond chance.
+- **Multipath (`mp`, 16 files).** `synth_mp_<profile>_fd<fd>_snr<snr>`: the
+  bursts of `fade_ref_snr18/24` (seed 9101) with each burst replaced by
+  `sum_k a_k h_k(t) s(t - tau_k)`, independent Rayleigh paths, one Doppler for the
+  paths (100 or 300 Hz), profiles `p2a` (0, 0.2 us / 0, -3 dB), `p2b` (0, 1.0 us),
+  `p3` (0, 0.4, 1.0 us / 0, -3, -6 dB), `p4` (0, 0.3, 0.6, 1.0 us / 0, -2, -4,
+  -7 dB). Truth per burst: `mp_taps`, `mp_gain_db` (the narrow-band gain at the carrier,
+  the ISI not in it), `mp_isi_db` (the delayed taps' power over the first tap's, ratio
+  of burst means), `mp_rms_delay_spread_us`. A 1.0 us tap at an integer-MHz
+  carrier has the phase factor 1, so p2b's gain list has no phase term. p2b is
+  brutal (raw BER 0.08-0.15 at 24 dB against 0.004 for the flat fade). The free
+  1/4-sample channel fit does not work (the normal equations are singular in
+  float32); the power-delay profile is tested at the profile's own delays.
+- **Mixed devices for blind tests (`mixed`, 2 files, 2.0 GB each).**
+  `synth_mixed_blind_a` (seed 9201, 17,487 bursts, 1,452 collided = 8.3 %) and
+  `_b` (9202, 18,389, 1,664 = 9.05 %), 6.29 s each: 8 unsynchronised piconets
+  (6 ours, 2 not ours) with their own LAP/UAP (sync words at least 22 bits apart),
+  clock, slot grid, level (8-22 dB) and hop sequence on the map 31-50, plus three
+  page exchanges on the spec's hop sequences (the joiners, `ours`). The signals add
+  linearly. Per burst: `device`, `role`, `ours`, `overlaps` (every burst
+  overlapping in time within +-1 MHz: overlap length, channel offset, `sir_db`),
+  `collision` (a same-channel overlap) and `overlap_frac`. `sir_db` is the ratio of
+  total envelope powers: for an adjacent channel the in-band interference is 25-32 dB
+  lower. `air_bits` hex is padded to a byte; use `air_bits_length`. A blind scan of
+  the first 30 M samples finds every collision-free burst of all 8 devices and
+  none of three LAPs not in the file.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
