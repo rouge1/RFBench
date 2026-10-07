@@ -166,7 +166,8 @@ wrong in the same way, build it twice and check against a third source:
 
 Stage 3's hop kernel went this way: Sonnet's took 3.5 minutes and
 Grok's 7.7 minutes and $0.17, both passed the hold-out (7,680 of 7,680),
-and the two agreed on 360,000 inputs. The comparison with bluey's kernel
+and the two agreed on 360,000 inputs (Grok's copy was deleted afterwards, so that
+comparison can no longer be rerun). The comparison with bluey's kernel
 turned up one real difference, on adapted sequences at slave-slot clocks,
 which bluey confirmed.
 

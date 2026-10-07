@@ -11,8 +11,9 @@ sample data, and nothing here is computed by a kernel of our own: three
 addresses, and for each the basic sequence and four adapted ones, fifteen
 tables. Of each table's 512 values this keeps the first sixteen and the last
 sixteen, 480 in all. The kernel was also held to all 7,680, and two kernels
-written separately from the specification text agree with each other on
-360,000 clocks and maps, but the full data is Bluetooth SIG's and is not kept
+written separately from the specification text (this one, and a second one
+by another builder, since deleted) agreed with each other on 360,000 clocks
+and maps, a comparison that can no longer be rerun. The full data is Bluetooth SIG's and is not kept
 here: ``BT_HOP_PARTG`` names a file holding it as bluey-ox-walker's
 ``knowledge/sample_data.md`` does, and every table in it is checked.
 

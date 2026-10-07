@@ -491,8 +491,9 @@ went over the air on its own map, see Stage 3 over the air below.
   - Part G section 2's connection-state tables, all 15 (three addresses; the
     basic sequence and four adapted maps each): 7,680 of 7,680. Two builders,
     Sonnet and Grok, each wrote one; neither saw more than one address of the
-    three, and both passed the rest. They agree on 360,000 random clocks and
-    maps at any slot.
+    three, and both passed the rest. They agreed on 360,000 random clocks and
+    maps at any slot (Grok's copy was deleted on 2026-10-07, once the side quest
+    with bluey was done, so that comparison can no longer be rerun).
   - **libbtbb's own basic kernel**, a separate C implementation: 15,000 random
     addresses and 28-bit clocks, 10,000 master slots at this address from this
     clock, and slave slots, with no difference. This matters because Part G stops
