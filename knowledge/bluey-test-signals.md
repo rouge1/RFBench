@@ -788,6 +788,50 @@ reviewed by Opus against the real files, write them; the files are not in git.
   full tone level, a grading convention: a symmetric integration finds half the
   power (3 dB lower) in each. A run with a seed other than 6101 says it is not
   paired.
+- **Page and inquiry exchanges on the spec's hop sequences, clipped to the capture
+  window (`conf`, 2 files).** `synth_conf_page_hop_win` (200 page exchanges,
+  12.9 GB, 46,414 bursts) and `synth_conf_inq_hop_win` (200 inquiry exchanges,
+  2.2 GB, 2,042 bursts). Every channel comes from the spec's selection box
+  (`apps/bt_hop_substates.py`, Core Vol 2 Part B 2.6, Table 2.2, EQ 1-8): the page
+  IDs on the page sequence of the A or B train, the response on the peripheral
+  page response sequence (Xprp), the FHS on the Central's (Xprc, N = 1, CLKE
+  frozen), the acknowledgement on Xprp with N incremented, the follow-up from the
+  first POLL on the **basic 79-channel sequence** of the master (a slave answer is
+  on the channel the kernel gives at its own clock, not the master's). The heard
+  slot is derived from the clocks: the first half-slot whose page frequency
+  equals the paged device's page-scan frequency. **Only the bursts on channels
+  27-51 (2429-2453 MHz, -12..+12 MHz, symmetric about 2441.0) are rendered**; the
+  others are listed in `bursts` with `rendered: false` and their would-be start,
+  and leave only noise. Of the 46,414 page bursts 14,808 are in the window, of the
+  2,042 inquiry bursts 819; the page FHS is in the window in 88 of 200
+  exchanges (the inquiry FHS in 72) and the heard ID in 84 (74). Random symbol
+  phase per exchange (0..39 samples), per-exchange base SNR 10-20 dB with a
+  per-burst jitter, no centre bias. The in-window clock lock (a full search over
+  CLK[27:1] using only the rendered master-LAP packets) is unique for 159 of 200
+  exchanges; the true clock is always among the solutions. **Part G's page table**
+  (the spec's hop sample data) is reproduced by the equation unchanged with the
+  train alternating A, B every 1.28 s (Npage = 128 repetitions): the odd 0x1000
+  blocks are the B train. 106 of 200 page exchanges start on B: they are excerpts of
+  a page procedure that had already run an A repetition. Not modelled: scan
+  windows, back-off, interlaced scan, the train repetition count, knudge, FHS
+  retransmission (the sidecar's `conformance` says so). libbtbb decodes the
+  in-window FHS from about 16 dB; below that a slicer reads them only partly.
+- **Clustered errors (`fade`, 13 files, 235 MB each).** 204 bursts per file (51
+  DM1 with LMP, 51 DM3, 51 DM5, 51 stand-alone page-response FHS), the same
+  bursts, channels, payloads and noise in all (seed 9101); a file is the AWGN
+  reference plus a distortion on the signal. `fade_ref_snr18`, `_snr24`;
+  Rayleigh `fade_ray_fd{100,300,800}_snr{18,24}` (Jakes, 32 sinusoids, an
+  independent process per burst, E|h|^2 = 1 and the fade multiplies the signal,
+  not the noise); Rician `fade_rice6_fd300_snr{18,24}` (K = 6 dB); and
+  `fade_nb_sir{0,6,12}_snr24` (an FM-like narrowband signal about 100 kHz wide on
+  a random half of the bursts, over a random 10-60 % of the burst, three SIRs,
+  one hit set). Per burst `fade_gain_db` is the gain at every symbol centre,
+  with `fade_min_db`, `fade_frac_below_10db`, the longest run and `snr_eff_db`;
+  the NB files give `nb_start_symbol`, `nb_end_symbol`, offset and SIR. The
+  fading is a flat Rayleigh/Rician model, not a measured channel; errors do
+  cluster (index of dispersion 2.8 at 300 Hz and 7.2 at 800 Hz against about 1.2 for
+  noise at the same error rate). Burst-level payload yield from the genie reference
+  receiver: DM5 falls to 16 % at 800 Hz and 18 dB, 49 % at 24 dB.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
