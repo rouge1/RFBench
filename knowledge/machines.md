@@ -217,5 +217,5 @@ but a desktop's `/usr/share/alsa/alsa.conf.d/99-pipewire-default.conf` makes
 is only in the system's folder. Every `audio.sink` then fails, the receivers
 print "audio output unavailable" and carry on silent. The launcher points
 `ALSA_PLUGIN_DIR` at the system folder before GNU Radio loads
-(`RFbenchToolkit.py`); `apps/_run.py` does not, so set it by hand there.
+(`RFbenchToolkit.py`), and `apps/_run.py` does the same.
 Found on st-health, confirmed by ear on the RDS receiver.

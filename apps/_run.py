@@ -49,6 +49,16 @@ import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# The launcher's own fix, for the same reason (knowledge/machines.md, "Audio"):
+# conda's alsa-lib cannot find the PipeWire plugin the system's "default"
+# device needs, so every audio sink fails. Set before GNU Radio loads.
+if sys.platform.startswith('linux') and 'ALSA_PLUGIN_DIR' not in os.environ:
+    for _d in ('/usr/lib/x86_64-linux-gnu/alsa-lib', '/usr/lib64/alsa-lib',
+               '/usr/lib/alsa-lib'):
+        if os.path.exists(os.path.join(_d, 'libasound_module_pcm_pipewire.so')):
+            os.environ['ALSA_PLUGIN_DIR'] = _d
+            break
+
 #: How often Python gets the main thread while the app runs, so a signal's
 #: handler runs within this long of the signal. In milliseconds.
 TICK_MS = 200
