@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slot-boundary files for bluey's tracker: a grid offset, 20 ppm of drift, and page IDs with and without a held tail.
+"""Slot-boundary files for bluey's tracker: a grid offset, 23 ppm of drift, and page IDs with and without a held tail.
 
     python scripts/bt_synth_slotb.py --set priority1 --out DIR      # the D files (page train, then connection)
     python scripts/bt_synth_slotb.py --set all --out DIR            # every file below
@@ -20,20 +20,23 @@ present after an ID. Nothing here transmits and nothing opens a radio.
 follow from the first one used, TX slot 16, which begins at file microsecond ``20000 + offset0`` (so there are
 20 ms of noise first and the first slot's ``grid_offset_us`` is exactly ``offset0``, the ``--offset-us``
 parameter). TX slot ``j`` after it begins at ``t_j = 20000 + offset0 + 1250 j / (1 + drift_ppm e-6)`` us:
-**drift_ppm +20 means the transmitter's clock runs FAST by 20 ppm**, its slots are 20 ppm SHORTER in file
-time, and the offset DEcreases by 25 ns per TX slot (12.5 ns per 625 us), drifting DOWN. ``drift_ppm -20`` is
-a slow transmitter, the offset increases. The unwrapped offset of a TX slot is **exactly**
+**drift_ppm +23 (the default of the drifting files, bluey's own measurement of its real train; 20 for
+``B_down_cfo``) means the transmitter's clock runs FAST by 23 ppm**, its slots are 23 ppm SHORTER in file
+time, and the offset DEcreases by 28.75 ns = 1.15 sample per TX slot (14.4 ns per 625 us), drifting DOWN, so the
+symbol phases of the page IDs walk through all 40 (20 ppm moves the offset exactly 1 sample per slot and the
+rendered IDs, which recur every 8 slots, then visit only 10 of the 40). ``drift_ppm -23`` is a slow
+transmitter, the offset increases. The unwrapped offset of a TX slot is **exactly**
 ``offset0 - drift_ppm e-6 * (t - t_first)`` in file time (the task's sweep law anchored at the first slot, not at
-sample 0); it crosses 0 at ``t_first + offset0 / drift``: 0.17 s for 3 us and 20 ppm, 5.02 s for 100 us.
+sample 0); it crosses 0 at ``t_first + offset0 / drift``: about 0.1504 s for 3 us and 23 ppm, 4.37 s for 100 us.
 The wrapped offset is that mod 625. The first-order ``t = tau (1 - drift e-6)`` differs from this by
 ``drift^2 tau`` (0.4 sample at 26 s); the form that makes the sweep law exact was taken.
 
 **What a burst's position is.** The TX slot's start is on that line. A second ID is exactly 312.5 us after
 the first of its slot, and a slave answer exactly 625 us after its master packet (nominal, in file time): the
-drift moves a TX slot against the next one, not an ID against its neighbour in the slot (a true 20 ppm clock
+drift moves a TX slot against the next one, not an ID against its neighbour in the slot (a true clock off by the drift
 would shorten them by 0.25 and 0.5 sample; this is the stated model, and it is what makes "the second ID is
 20 samples, half a symbol, after the first" exact). Symbols inside a burst stay at the nominal 1 Msym/s (a
-DH1's 366 symbols at 20 ppm would be 0.3 sample off at the end; an ID's 68 much less). **Burst starts follow
+DH1's 366 symbols at 23 ppm would be 0.34 sample off at the end; an ID's 68 much less). **Burst starts follow
 the grid exactly: ``start_sample + timing_frac`` is whatever the grid gives**, 0 for a fixed offset that is
 a multiple of 25 ns at 40 MS/s, fractional on drift files, never random. Per burst ``symbol_phase`` is
 recorded all the same: at 40 MS/s a fixed 50.0 us offset puts every first ID at symbol phase 0 and 312.5 us at
@@ -142,23 +145,23 @@ def _add(stem, seed, kind, offset_us, drift_ppm, duration=10.0, tail=None, fs=40
                        tail=tail, fs=fs, center=center, cfo_ppm=cfo_ppm, **extra)
 
 
-_add('D_same_s1', 9401, 'D', 3.0, 20.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
-_add('D_same_s2', 9402, 'D', 3.0, 20.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
-_add('D_same_s3', 9403, 'D', 3.0, 20.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
-_add('D_diff_s1', 9404, 'D', 3.0, 20.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='diff', plan_from='D_same_s1')
-_add('C1_cross', 9405, 'C', 3.0, 20.0, 6.0, tail=dict(variant='C1', level_db=None, dev_khz=None))
-_add('C2m10_cross', 9406, 'C', 3.0, 20.0, 6.0, tail=C2_M10)
+_add('D_same_s1', 9401, 'D', 3.0, 23.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
+_add('D_same_s2', 9402, 'D', 3.0, 23.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
+_add('D_same_s3', 9403, 'D', 3.0, 23.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='same')
+_add('D_diff_s1', 9404, 'D', 3.0, 23.0, train_s=6.0, conn_s=20.0, tail=C2_M10, connection='diff', plan_from='D_same_s1')
+_add('C1_cross', 9405, 'C', 3.0, 23.0, 6.0, tail=dict(variant='C1', level_db=None, dev_khz=None))
+_add('C2m10_cross', 9406, 'C', 3.0, 23.0, 6.0, tail=C2_M10)
 _add('C1_50p25', 9407, 'C', 50.25, 0.0, 6.0, tail=dict(variant='C1', level_db=None, dev_khz=None))
 _add('C2m10_50p25', 9408, 'C', 50.25, 0.0, 6.0, tail=C2_M10)
-_add('B_down', 9409, 'A', 3.0, 20.0)
-_add('B_up', 9410, 'A', 622.0, -20.0)
+_add('B_down', 9409, 'A', 3.0, 23.0)
+_add('B_up', 9410, 'A', 622.0, -23.0)
 _add('A_50p25', 9411, 'A', 50.25, 0.0)
 _add('A_312p75', 9412, 'A', 312.75, 0.0)
-_add('C2_0_cross', 9413, 'C', 3.0, 20.0, 6.0, tail=dict(variant='C2', level_db=0.0, dev_khz=160.0))
-_add('C2m20_cross', 9414, 'C', 3.0, 20.0, 6.0, tail=dict(variant='C2', level_db=-20.0, dev_khz=160.0))
-_add('C2m10_f50k_cross', 9415, 'C', 3.0, 20.0, 6.0, tail=dict(variant='C2', level_db=-10.0, dev_khz=50.0))
-_add('B_late', 9416, 'A', 100.0, 20.0)
-_add('A_20msps', 9417, 'A', 3.25, 20.0, fs=20e6, center=2441.0)
+_add('C2_0_cross', 9413, 'C', 3.0, 23.0, 6.0, tail=dict(variant='C2', level_db=0.0, dev_khz=160.0))
+_add('C2m20_cross', 9414, 'C', 3.0, 23.0, 6.0, tail=dict(variant='C2', level_db=-20.0, dev_khz=160.0))
+_add('C2m10_f50k_cross', 9415, 'C', 3.0, 23.0, 6.0, tail=dict(variant='C2', level_db=-10.0, dev_khz=50.0))
+_add('B_late', 9416, 'A', 100.0, 23.0)
+_add('A_20msps', 9417, 'A', 3.25, 23.0, fs=20e6, center=2441.0)
 _add('C1_50p0', 9418, 'C', 50.0, 0.0, 6.0, tail=dict(variant='C1', level_db=None, dev_khz=None))
 _add('C2m10_50p0', 9419, 'C', 50.0, 0.0, 6.0, tail=C2_M10)
 _add('B_down_cfo', 9420, 'A', 3.0, 20.0, cfo_ppm=20.0)
@@ -188,6 +191,12 @@ def truth_scale(drift_ppm):
 def timing_jitter(rng):
     """The random part of a burst's timing fraction, in samples: none. Every burst is where the grid puts it."""
     return 0.0
+
+
+def placement_shift(start_samples, phase):
+    """Samples added to a burst's position in the SAMPLES only (never in the truth): none. A hook for the
+    test's late-only and connection-only placement mutants."""
+    return 0
 
 
 def half_label(half):
@@ -328,6 +337,33 @@ def exchange_slots(rng, channels, k_lo, k_hi, n_per_10s):
         out.append((k, c))
         heapq.heappush(wanted, (k + int(rng.integers(1, 2 * mean_gap)), c))
     return sorted(out)
+
+
+def header_bits_meaning(entries, uap):
+    """The sidecar's statement of the bit order of ``header_bits_18`` and ``header_air_bits_54``, with a worked
+    example from the file's first packet that has a header."""
+    text = ('Both strings are in TRANSMISSION order, character 0 first. header_bits_18 is the 18 header bits before '
+            'whitening: LT_ADDR (3), TYPE (4), FLOW, ARQN, SEQN, each field least significant bit first, then the HEC '
+            '(8) which is NOT least significant first: it is the HEC register read out from its top position down '
+            '(bt_br_frame.hec: the register preset with the UAP, UAP bit 0 in position 0, fed the ten field bits in '
+            'order, g(D) = D^8 + D^7 + D^5 + D^2 + D + 1, characters 10..17 = positions 7, 6, ..., 0). '
+            'header_air_bits_54 is the header as sent: header_bits_18 XOR the whitening sequence of CLK6-1 '
+            '(whitening_clk6_1; the register [CLK1..CLK6, 1], output position 6), each bit tripled (FEC 1/3); '
+            'character 0 is transmitted FIRST, the first symbol after the 72-bit access code. The stored strings '
+            'are right as they are: do not reverse them.')
+    for e in entries:
+        if e['header_bits_18']:
+            h = e['header_bits_18']
+            w = br.whitening(e['whitening_clk6_1'] << 1, 18)
+            air = ''.join(str(int(h[i]) ^ w[i]) * 3 for i in range(18))
+            text += (' Worked example, burst %d (%s, LT_ADDR %d, UAP 0x%02X): header_bits_18 = %s = LT_ADDR %s, TYPE '
+                     '%s, FLOW %s, ARQN %s, SEQN %s, HEC %s; whitening CLK6-1 = %d gives %s, tripled %s = '
+                     'header_air_bits_54 %s.' % (
+                         e['index'], e['ptype'], e['lt_addr'], uap, h, h[0:3], h[3:7], h[7], h[8], h[9], h[10:18],
+                         e['whitening_clk6_1'], ''.join(str(int(h[i]) ^ w[i]) for i in range(18)), air[:12] + '...',
+                         e['header_air_bits_54'][:12] + '...'))
+            break
+    return text
 
 
 def hec_alias(c, dc):
@@ -498,6 +534,7 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
         j = Fraction(timing_jitter(jit_rng))
         intra_samples = Fraction(str(b['intra'])) * Fraction(ups).limit_denominator(1000)
         pos_s = slot_pos(k, s_scale) + intra_samples + j
+        pos_s += Fraction(placement_shift(float(pos_s), b['phase']))
         pos_t = slot_pos(k, t_scale) + intra_samples + j
         start_s = math.floor(pos_s)
         frac_s = float(pos_s - start_s)
@@ -583,7 +620,7 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                              mhz=2402.0 + b['channel'], cfo_hz=cfo_hz, gain=gain, step_at=step_at))
 
     # ---- the offset law and the crossings
-    d1 = 1 / t_scale - 1                     # the truth's drift as a fraction (+20e-6)
+    d1 = 1 / t_scale - 1                     # the truth's drift as a fraction (e.g. +23e-6)
     crossings = []
     if entries:
         prev = None
@@ -594,9 +631,22 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                 j_cross = prev[0] if down else w            # the multiple of 625 that was passed
                 # u = offset0 - d * (t - t_first) in file time: it meets 625 j at t_first + (offset0 - 625 j) / d
                 t_c = float(20000 + off + (off - 625 * j_cross) / d1) * 1e-6 if d1 != 0 else None
-                crossings.append(dict(time_s=t_c, burst_index_first_after=e['index'], boundary=0 if down else 625,
-                                      direction='down: the offset passes 0 and wraps to 625' if down else
-                                      'up: the offset passes 625 and wraps to 0'))
+                i = e['index']
+                first_r = next((x['index'] for x in entries[i:] if x['rendered']), None)
+                crossings.append(dict(
+                    time_s=t_c, crossing_time_s=t_c, burst_index_first_after=i, first_rendered_index_after=first_r,
+                    boundary=0 if down else 625,
+                    offset_before_us=float(unwrapped_exact[i - 1]), offset_after_us=float(u),
+                    direction='down: the offset passes 0 and wraps to 625' if down else
+                    'up: the offset passes 625 and wraps to 0',
+                    meaning='crossing_time_s = t_first + offset0 / drift (file seconds): where the offset law meets the '
+                            'boundary, between two TX slots of the grid. burst_index_first_after is the first burst '
+                            'whose PARENT TX-slot offset (unwrapped, offset_after_us) is past the boundary; a slave '
+                            'answer and a second ID have their parent slot\'s offset, so the wrap does not split a '
+                            'slot. first_rendered_index_after is the first such burst that is in the samples. '
+                            'offset_before_us / offset_after_us are the offsets of the last slot before and the first '
+                            'after. A second ID of the last slot before the wrap sits 312.5 us into that slot, so its '
+                            'int(start_us / 625) can differ from its first ID\'s capture slot index after the wrap.'))
             prev = (w, e['index'])
 
     cfo_top = float(center * 1e6 * cfo_ppm * 1e-6)
@@ -640,9 +690,9 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                      'file microsecond 20000 + offset0, so its grid_offset_us is exactly offset0. TX slot j after it '
                      'begins at t_j = 20000 + offset0 + 1250 j / (1 + drift_ppm * 1e-6) us (the transmitter clock '
                      'is FAST by drift_ppm); the unwrapped offset of a TX slot (slot_start_us - 1250 k) is exactly '
-                     'offset0 - drift_ppm * 1e-6 * (t - t_first), grid_offset_us that mod 625; drift_ppm_signed +20 '
-                     'means slots 20 ppm shorter in file time, the offset decreasing 25 ns per TX slot (12.5 ns per '
-                     '625 us). The offset crosses 0 at t_first + offset0 / drift (0.17 s for 3 us and 20 ppm). '
+                     'offset0 - drift_ppm * 1e-6 * (t - t_first), grid_offset_us that mod 625; drift_ppm_signed +@D@ '
+                     'means slots @D@ ppm shorter in file time, the offset decreasing @S@ ns per TX slot (half that '
+                     'per 625 us). The offset crosses 0 at t_first + offset0 / drift (see crossings). '
                      'grid_offset_us_first_slot is that of the first TX slot even when the first burst of an '
                      'exchange file comes later. The first-order form t = tau (1 - drift e-6) differs by '
                      'drift^2 * tau (0.4 sample at 26 s)' % K0,
@@ -654,18 +704,14 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                                   'ID, + 625 (= the same mod 625) for a slave answer',
         'slot_grid_note': 'The second ID of a slot is exactly 312.5 us (12500 samples at 40 MS/s) after the first and a '
                           'slave answer exactly 625 us after its master packet in file time: the drift moves one TX '
-                          'slot against the next (25 ns per TX slot at 20 ppm), not a burst within its slot (a true '
-                          '20 ppm clock would put them 0.25 and 0.5 sample earlier). Symbols inside a burst are '
-                          'nominal 1 Msym/s: at 20 ppm a DH1\'s 366 symbols would be 0.3 sample off at their end '
-                          '(366 x %d x 20e-6) and an ID\'s 68 about 0.05 sample.' % sps,
+                          'slot against the next (@S@ ns per TX slot at @D@ ppm), not a burst within its slot (a '
+                          'true @D@ ppm clock would put them 0.25 and 0.5 sample earlier). Symbols inside a burst are '
+                          'nominal 1 Msym/s: at @D@ ppm a DH1\'s 366 symbols would be about 0.3 sample off at their end '
+                          '(366 x %d x @D@e-6) and an ID\'s 68 about 0.05 sample.' % sps,
         'slot_samples': int(round(SLOT_US * ups)),
-        'slot_samples_meaning': 'nominal samples in 625 us, one slot; the grid\'s real slots are 20 ppm (drift_ppm) '
+        'slot_samples_meaning': 'nominal samples in 625 us, one slot; the grid\'s real slots are @D@ ppm (drift_ppm) '
                                 'shorter or longer in file time',
-        'header_bits_meaning': 'header_bits_18 is the 18 header bits before whitening (LT_ADDR 3, TYPE 4, FLOW, ARQN, '
-                               'SEQN, HEC 8, each field least significant bit first), character 0 first; '
-                               'header_air_bits_54 is the header as sent, after whitening with CLK6-1 '
-                               '(whitening_clk6_1) and FEC 1/3, in air transmission order: character 0 (bit 0) is '
-                               'transmitted FIRST and is the first symbol after the 72-bit access code, 54 symbols',
+        'header_bits_meaning': header_bits_meaning(entries, uap if uap is not None else A_UAP),
         'symbol_phase_note': 'symbol_phase = start_sample %% %d, before timing_frac; the grid gives start_sample + '
                              'timing_frac, never a random fraction. At %g MS/s a fixed 50.0 us offset puts every '
                              'first ID at symbol phase 0 and its second ID at %d, and 312.5 us puts the first at %d '
@@ -704,11 +750,20 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                        + ' The default tail is 56 us, not the 50 us bluey asked for ("about 50 us"): bluey saw the 54 '
                        'bit positions after an ID\'s sync word (where a header would be) demodulate as all ones, and '
                        '50 us would cover only 50 of them; 56 us is carrier at +dev_khz over the whole 54-bit header '
-                       'window and 2 symbols more.'),
+                       'window and 2 symbols more. The tail\'s settled level and deviation are exact, but a tail at '
+                       '-10 dB (or -20 dB) is only about 10 dB SNR in 1 MHz at the files\' 20 dB: a plain FM slicer '
+                       'gives ones in about 96 %% of the 54 positions and all 54 in only a minority of the noisy IDs '
+                       '(a reviewer measured 13 of 140 windows all ones for D and 0 of 112 for C1, with 3000 of '
+                       '6048 ones); "all ones" is the transmitter\'s truth, not a per-burst acceptance criterion. '
+                       'The last symbol of this file\'s sync word is %s, so %s.'
+                       % ('1' if br.access_code(lap if lap is not None else A_LAP, trailer=False)[-1] else '0',
+                          'the deviation continues at +dev_khz from the sync word\'s own' if
+                          br.access_code(lap if lap is not None else A_LAP, trailer=False)[-1] else
+                          'the instantaneous deviation passes through about 0 Hz at the tail start')),
         'notes': ['Modelled: the TX slot grid at a stated offset, linear drift between TX slots, one crystal for '
                   'slots and symbols (symbols nominal inside a burst), constant SNR per burst, white constant noise '
                   'through the whole file, random carrier phase per burst.',
-                  'Timing inside a burst is nominal: a 20 ppm clock would shift the end of a DH1 (366 symbols) by '
+                  'Timing inside a burst is nominal: a @D@ ppm clock would shift the end of a DH1 (366 symbols) by '
                   '0.3 sample and the end of an ID (68) by 0.05 sample; the grid error is in the slot starts.',
                   'Not modelled: CFO (except in B_down_cfo, where every carrier is f_ch * (1 + 20e-6)), '
                   'jitter of the slot grid or of the level, a clock error moving the symbol rate, fading, other '
@@ -721,6 +776,11 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
         'per_burst_keys': sorted(entries[0]) if entries else [],
         'bursts': entries,
     }
+    fill = {'@D@': '%g' % abs(drift_truth), '@S@': '%.4g' % (1.25 * abs(drift_truth))}
+    for key in ('drift_law', 'slot_grid_note', 'slot_samples_meaning'):
+        for k, v in fill.items():
+            sidecar[key] = sidecar[key].replace(k, v)
+    sidecar['notes'] = [n.replace('@D@', fill['@D@']).replace('@S@', fill['@S@']) for n in sidecar['notes']]
     if kind == 'D':
         sidecar['connection_start_sample'] = int(math.floor(slot_pos(K0 + n_train, t_scale)))
         sidecar['connection_lap'] = int(truth_lap(conn_lap))
@@ -783,6 +843,30 @@ def render_blocks(plan, block=NOISE_BLOCK, noise=True):
         yield out
 
 
+def render_range(plan, lo, hi, noise=True):
+    """Samples ``lo:hi`` of the file, alone: the noise blocks that cover them (regenerated from the seed) and
+    every burst that reaches them, each rendered whole. Equal to ``render_blocks``' output over that range, without
+    holding the file."""
+    fs, center, seed, total = plan['fs'], plan['center'], plan['noise_seed'], plan['total']
+    hi = min(hi, total)
+    out = np.zeros(hi - lo, dtype=np.complex64)
+    if noise:
+        for index in range(lo // NOISE_BLOCK, (hi - 1) // NOISE_BLOCK + 1):
+            b0 = index * NOISE_BLOCK
+            blk = noise_block(seed, index, min(NOISE_BLOCK, total - b0), fs)
+            a, b = max(lo, b0), min(hi, b0 + len(blk))
+            out[a - lo:b - lo] += blk[a - b0:b - b0]
+    for job in plan['jobs']:
+        j0, j1 = burst_span(job, fs)
+        if j1 <= lo or j0 >= hi:
+            continue
+        base, samples = render_burst(job, fs, center)
+        a, b = max(lo, base), min(hi, base + len(samples))
+        if b > a:
+            out[a - lo:b - lo] += samples[a - base:b - base]
+    return out
+
+
 def synthesise(stem, **kw):
     """The samples and the sidecar of a file, in memory: for a small run."""
     plan = plan_file(stem, **kw)
@@ -815,7 +899,7 @@ def main(argv=None):
     ap.add_argument('--stem', choices=sorted(SPECS), help='write one file')
     ap.add_argument('--out', default=DEFAULT_OUT)
     ap.add_argument('--offset-us', type=float, help='the first-slot grid offset in us; the file\'s default otherwise')
-    ap.add_argument('--drift-ppm', type=float, help='+20 = the transmitter fast, the offset decreasing')
+    ap.add_argument('--drift-ppm', type=float, help='+23 = the transmitter fast, the offset decreasing (default per file)')
     ap.add_argument('--duration', type=float, help='seconds of content (not for D files)')
     ap.add_argument('--train-s', type=float)
     ap.add_argument('--conn-s', type=float)

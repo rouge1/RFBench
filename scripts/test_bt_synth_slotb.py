@@ -5,7 +5,7 @@
 
 ``scripts/bt_synth_slotb.py`` writes files for bluey-ox-walker's slot tracker: single-slot
 exchanges and page-train IDs whose transmitter slot grid sits at a stated offset from the file's own
-625 us grid, drifts against it by 20 ppm, and whose IDs end either cleanly (C1) or with a held tail
+625 us grid, drifts against it by 23 ppm (20 for the CFO file), and whose IDs end either cleanly (C1) or with a held tail
 (C2). The truth of a file is only worth anything if it is the truth of its *samples*, so every check
 here is made on small renders (0.25 to 0.6 s, a few noise blocks, 35 dB so that the start of a burst
 can be fitted to a few hundredths of a sample) and measures the samples; the rules are written out
@@ -869,6 +869,9 @@ def test_plans():
         check('train_A' in ch and 'train_B' in ch and len(ch['train_A']) == 16 and len(ch['train_B']) == 16,
               '%s: channels carries the A and B trains (16 each)' % stem)
         check_overlap(side, stem)
+        if side['drift_ppm_signed']:
+            check_phase_coverage(side, stem)           # a fixed grid sits at two phases by design
+            check_crossing_fields(side, stem)
         print('  (%s planned in %.1f s)' % (stem, time.time() - t), flush=True)
     print('== the D files (plans)', flush=True)
     sides = {}
@@ -883,6 +886,9 @@ def test_plans():
         check(page and conn and all(e['ptype'] == 'ID' for e in page) and all(e['ptype'] != 'ID' for e in conn),
               '%s: %d page IDs then %d connection packets' % (stem, len(page), len(conn)))
         check_pages(dict(side, bursts=page), stem, 6.0)
+        check_phase_coverage(dict(side, bursts=page), stem + ' page part')
+        check_crossing_fields(side, stem)
+        check_header_strings(side, stem)
         first_c = conn[0]
         check(first_c['start_sample'] == side['connection_start_sample'] or
               first_c['start_sample'] >= side['connection_start_sample'],
@@ -935,8 +941,137 @@ def test_plans():
     ca = [(e['start_sample'], e['channel'], e['ptype'], e['clk']) for e in a['bursts'] if e['phase'] == 'connection']
     cb = [(e['start_sample'], e['channel'], e['ptype'], e['clk']) for e in b['bursts'] if e['phase'] == 'connection']
     check(ca == cb, 'and the same connection schedule (%d packets)' % len(ca))
-    check(a['crossings'] and abs(a['crossings'][0]['time_s'] - 0.17) < 1e-3,
-          'D_same_s1: crossing at %.4f s' % a['crossings'][0]['time_s'])
+    want_c = expected_crossings(3.0, 23.0, 26.0)
+    check(len(a['crossings']) == 1 and abs(a['crossings'][0]['time_s'] - want_c[0][0]) < 1e-6,
+          'D_same_s1: crossing at %.6f s (0.02 s + 3 us + 3 us / 23 ppm = %.6f)' % (a['crossings'][0]['time_s'], want_c[0][0]))
+
+
+def check_phase_coverage(side, label):
+    """Over the RENDERED IDs of the page part, every symbol phase occurs among first IDs and among second IDs."""
+    sps = int(round(side['sample_rate'] / 1e6))
+    pg = [e for e in side['bursts'] if e['ptype'] == 'ID' and e['rendered']]
+    first = [e['symbol_phase'] for e in pg if e['half'] == 'first']
+    second = [e['symbol_phase'] for e in pg if e['half'] == 'second']
+    cf, cs = np.bincount(first, minlength=sps), np.bincount(second, minlength=sps)
+    check(len(set(first)) == sps and len(set(second)) == sps,
+          '%s: all %d symbol phases among the %d rendered first IDs (per phase %d..%d) and the %d second IDs (%d..%d)' % (
+              label, sps, len(first), cf.min(), cf.max(), len(second), cs.min(), cs.max()))
+
+
+def check_crossing_fields(side, label):
+    fs = side['sample_rate']
+    ok = True
+    t_first = side['first_tx_slot_start_us']
+    for c in side['crossings']:
+        i, r = c['burst_index_first_after'], c['first_rendered_index_after']
+        want = (t_first + side['grid_offset_us_param'] / (side['drift_ppm_signed'] * 1e-6)) * 1e-6
+        # offset passes 0 downward (offset0 > 0 here) or 625 upward
+        if side['drift_ppm_signed'] < 0:
+            want = (t_first + (side['grid_offset_us_param'] - 625) / (side['drift_ppm_signed'] * 1e-6)) * 1e-6
+        ok &= (abs(c['crossing_time_s'] - c['time_s']) < 1e-12 and abs(c['time_s'] - want) < 1e-6 and
+               r is not None and r >= i and side['bursts'][r]['rendered'] and
+               all(not b['rendered'] for b in side['bursts'][i:r]) and
+               (c['offset_before_us'] >= 0 > c['offset_after_us'] if c['boundary'] == 0 else
+                c['offset_before_us'] < 625 <= c['offset_after_us']) and
+               side['bursts'][i]['grid_offset_unwrapped_us'] == c['offset_after_us'])
+    check(ok and side['crossings'], '%s: crossings carry crossing_time_s = t_first + offset0/drift, first_rendered_index_after, '
+          'and the offsets either side (%s)' % (label, [(round(c['offset_before_us'], 5), round(c['offset_after_us'], 5))
+                                                       for c in side['crossings']]))
+
+
+def check_header_strings(side, label, n=40):
+    """header_bits_18 and header_air_bits_54 rebuilt from the fields with the repository's encoder: the stored strings
+    are in transmission order, the HEC in register read-out order."""
+    ok = True
+    done = 0
+    for e in side['bursts']:
+        if e['header_bits_18'] is None:
+            continue
+        h = br.packet_header(e['lt_addr'], e['ptype'], e['flow'], e['arqn'], e['seqn'], e['uap'])
+        w = br.whitening(e['clk'], 18)
+        air = ''.join(str(b ^ x) * 3 for b, x in zip(h, w))
+        ok &= (e['header_bits_18'] == ''.join(map(str, h)) and e['header_air_bits_54'] == air and
+               e['whitening_clk6_1'] == (e['clk'] >> 1) & 0x3F and
+               [int(c) for c in e['header_bits_18'][10:]] == br.hec(h[:10], e['uap']))
+        done += 1
+        if done >= n:
+            break
+    note = side['header_bits_meaning']
+    check(ok and done > 0 and 'read out' in note and 'do not reverse' in note and 'Worked example' in note,
+          '%s: header strings (%d bursts) are the encoder\'s, transmission order, HEC in register read-out order, '
+          'explained in header_bits_meaning with a worked example' % (label, done))
+
+
+class Window:
+    """A stretch of a file's samples at its absolute positions, for the checks that look at a real late stretch of
+    a long plan without the file: ``len`` is the file's, a slice must lie inside the stretch."""
+
+    def __init__(self, base, arr, n):
+        self.base, self.arr, self.n = base, arr, n
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, sl):
+        lo, hi = sl.start - self.base, sl.stop - self.base
+        if lo < 0 or hi > len(self.arr):
+            raise IndexError('slice %d:%d is outside the rendered stretch' % (sl.start, sl.stop))
+        return self.arr[lo:hi]
+
+
+def late_fits(plan, label, n_each=3):
+    """Fit isolated bursts at REAL late positions of a full-length plan (3 s on, the end of the page train, the first
+    connection packets, the last second), rendering only the stretch round each from the plan's jobs and the
+    regenerated noise: the access-code fit against the truth. Returns the errors in samples."""
+    side = plan['sidecar']
+    fs = side['sample_rate']
+    ups = fs / 1e6
+    rb = [e for e in side['bursts'] if e['rendered']]
+    picks = []
+    late = [e for e in rb if e['start_sample'] >= 3 * fs]
+    picks += late[:n_each]
+    pages = [e for e in rb if e['phase'] == 'page']
+    if pages:
+        picks += pages[-n_each:]
+    conn = [e for e in rb if e['phase'] == 'connection']
+    if conn:
+        picks += conn[:n_each] + conn[len(conn) // 2:len(conn) // 2 + n_each] + conn[-n_each:]
+    picks += rb[-n_each:]
+    seen, errs = set(), []
+    for e in picks:
+        if e['index'] in seen:
+            continue
+        seen.add(e['index'])
+        lo = max(0, int(e['start_sample']) - 3200)
+        hi = int(e['start_sample'] + e['air_bits_length'] * ups + (e['tail']['dur_us'] or 0) * ups) + 3200
+        arr = g.render_range(plan, lo, hi)
+        win = Window(lo, arr, plan['total'])
+        errs.append(fit(win, side, e)['start'] - (e['start_sample'] + e['timing_frac']))
+    return np.array(errs)
+
+
+def test_late():
+    print('== real late positions of the full-length plans (isolated stretches)', flush=True)
+    plan_a = g.plan_file('B_down', snr_db=HIGH, n_per_10s=100)
+    pl = g.plan_file('B_down', snr_db=HIGH, duration=0.2, n_per_10s=300)
+    full = np.concatenate(list(g.render_blocks(pl)))
+    s_ = pl['sidecar']
+    r0, r1 = 3_000_000, 3_400_000
+    check(np.abs(g.render_range(pl, r0, r1) - full[r0:r1]).max() == 0,
+          'render_range gives exactly render_blocks\' samples over a stretch (%d samples)' % (r1 - r0))
+    del full
+    for stem in ('D_same_s1', 'C2m10_50p25'):
+        plan = g.plan_file(stem, snr_db=HIGH)
+        e = late_fits(plan, stem)
+        last = max(b['start_sample'] for b in plan['sidecar']['bursts'] if b['rendered']) / plan['fs']
+        check(len(e) >= 5 and np.abs(e).max() < 0.1,
+              '%s: %d bursts fitted at late real positions (3 s ... %.2f s, the page/connection boundary at %.2f s): '
+              'worst %.3f sample' % (stem, len(e), last, plan['sidecar'].get('connection_start_sample', 0) / plan['fs'],
+                                     np.abs(e).max()))
+    plan = g.plan_file('B_down', snr_db=HIGH)
+    e = late_fits(plan, 'B_down')
+    check(len(e) >= 3 and np.abs(e).max() < 0.1, 'B_down: %d bursts fitted at late real positions: worst %.3f sample' % (
+        len(e), np.abs(e).max()))
 
 
 def test_d_samples():
@@ -1019,6 +1154,20 @@ def mutant(name, patches, stem, kw, label, expect_any):
     del iq
 
 
+def late_mutants():
+    """Placement mutants that only show late in a long file: the unmutated full-length plan passes ``late_fits``,
+    a shift of 40 samples after 1 s and a shift of the connection part alone do not."""
+    base = late_fits(g.plan_file('D_same_s1', snr_db=HIGH), 'base')
+    check(np.abs(base).max() < 0.1, 'unmutated D_same_s1 passes the late fits (worst %.3f sample)' % np.abs(base).max())
+    for label, shift in (('every burst shifted +40 samples after 1 s (samples only)',
+                          lambda pos, ph: 40 if pos > 40e6 else 0),
+                         ('the connection part alone shifted +40 samples (samples only)',
+                          lambda pos, ph: 40 if ph == 'connection' else 0)):
+        with mock.patch.object(g, 'placement_shift', shift):
+            e = late_fits(g.plan_file('D_same_s1', snr_db=HIGH), 'mut')
+        check(np.abs(e).max() > 10, 'mutant %s is caught by the late fits (worst %.1f sample)' % (label, np.abs(e).max()))
+
+
 def test_mutants():
     print('== mutants', flush=True)
     kb = dict(duration=0.3, n_per_10s=400)
@@ -1043,6 +1192,7 @@ def test_mutants():
                    'a_channels': lambda fs, center: [31, 35, 37, 39, 43, 47]}, 'A_50p25', ka,
            'the centre channel used', ['no burst on the centre channel'])
     rng_frac = np.random.default_rng(5)
+    late_mutants()
     mutant('m11', {'timing_jitter': lambda rng: float(rng_frac.uniform(0, 1))}, 'A_50p25', ka,
            'random timing_frac (p6-common\'s default)', ['start_us is slot_start_us', 'the grid offset is'])
 
@@ -1199,9 +1349,10 @@ def verify(cf32, json_path, n_pos=50, n_slots=100, n_dec=30, n_ids=60):
               'file: the grid continues across the page/connection boundary: 8 bursts fitted at 20 dB, median %.3f, '
               'max %.3f sample (the same noise-limited statistic as the starts above)' % (np.median(errs_), max(errs_)))
     if 'C2' in {e['tail']['variant'] for e in side['bursts']} or 'C1' in {e['tail']['variant'] for e in side['bursts']}:
-        ph = {e['symbol_phase'] for e in side['bursts'] if e['half'] == 'first'}
-        ph2 = {e['symbol_phase'] for e in side['bursts'] if e['half'] == 'second'}
-        print('  symbol phases: first IDs %s, second IDs %s' % (sorted(ph), sorted(ph2)))
+        ph = [e['symbol_phase'] for e in rb if e['half'] == 'first']
+        ph2 = [e['symbol_phase'] for e in rb if e['half'] == 'second']
+        print('  symbol phases of the RENDERED IDs: %d distinct among %d first IDs, %d distinct among %d second IDs' % (
+            len(set(ph)), len(ph), len(set(ph2)), len(ph2)))
     failed = [w for ok_, w in RESULTS if not ok_]
     print('RESULT: PASS' if not failed else 'RESULT: FAIL (%d)' % len(failed))
     return 1 if failed else 0
@@ -1214,7 +1365,7 @@ def main():
     t0 = time.time()
     steps = []
     for name, fn in (('files', test_files), ('pages', test_pages), ('plans', test_plans), ('d_samples', test_d_samples),
-                     ('regen', test_regen), ('mutants', test_mutants)):
+                     ('late', test_late), ('regen', test_regen), ('mutants', test_mutants)):
         t = time.time()
         fn()
         steps.append((name, time.time() - t))
