@@ -366,6 +366,46 @@ def header_bits_meaning(entries, uap):
     return text
 
 
+def tail_snr_text(tail, snr_db):
+    """The tail's SNR in 1 MHz from its level relative to the sync word and the file's SNR."""
+    if tail is None or tail.get('variant') != 'C2':
+        return 'This file has no held tail (C1: the carrier is cut after the ID).'
+    lv = tail['level_db']
+    return ('In this file the sync word is %g dB over the floor in 1 MHz and the tail is %g dB relative to it, so '
+            'the tail is %g dB SNR in 1 MHz (the floor is %g per MHz; sync word power %g).' % (
+                snr_db, lv, snr_db + lv, NOISE_1MHZ, NOISE_1MHZ * 10 ** (snr_db / 10)))
+
+
+def capture_slots_text(entries, i):
+    """What bluey's tracker numbering, int(start_us / 625), makes of the bursts of the last parent TX slot before a
+    crossing (burst index ``i`` is the first after) and of the first parent slot after it, from the file's own
+    numbers. The parent-slot offset is the truth; the capture slot index is only a number the tracker computes."""
+    def group(j):
+        t = entries[j]['slot_start_us']
+        k = j
+        while k > 0 and entries[k - 1]['slot_start_us'] == t:
+            k -= 1
+        out = []
+        while k < len(entries) and entries[k]['slot_start_us'] == t:
+            out.append(entries[k])
+            k += 1
+        return out
+
+    def show(g):
+        return ', '.join('burst %d (%s%s) starts %.6f us, int(start_us/625) = %d' % (
+            e['index'], e['role'] + ' ' if e['role'] != 'id_page' else '', e['half'] or e['ptype'], e['start_us'],
+            int(e['start_us'] // 625)) for e in g)
+    before, after = group(i - 1), group(i)
+    return ('Parent-slot offsets are the truth; the capture slot index int(start_us / 625) of the tracker is another '
+            'matter. A first ID or master packet whose parent slot has wrapped offset o is in capture slot K = '
+            'floor(start_us / 625); its second ID, 312.5 us later, is in K if o < 312.5 and in K + 1 if o >= 312.5 '
+            '(after a downward wrap o is about 625, so the second ID is in the next capture slot); a slave answer, '
+            '625 us on, is always in K + 1. In this file, last '
+            'parent slot before the wrap (offset %.6f us): %s; first parent slot after it (offset %.6f us, wrapped '
+            'mod 625 to %.6f): %s.' % (before[0]['grid_offset_unwrapped_us'], show(before),
+                                       after[0]['grid_offset_unwrapped_us'], after[0]['grid_offset_us'], show(after)))
+
+
 def hec_alias(c, dc):
     """Whether a header whitened with CLK6-1 = ``c`` still passes its HEC when de-whitened with ``c + dc``: the HEC
     is affine in its data (``hec(x ^ w, uap) = hec(x, uap) ^ hec(w, 0)``), so this is a property of the pair of
@@ -639,14 +679,14 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                     offset_before_us=float(unwrapped_exact[i - 1]), offset_after_us=float(u),
                     direction='down: the offset passes 0 and wraps to 625' if down else
                     'up: the offset passes 625 and wraps to 0',
-                    meaning='crossing_time_s = t_first + offset0 / drift (file seconds): where the offset law meets the '
-                            'boundary, between two TX slots of the grid. burst_index_first_after is the first burst '
-                            'whose PARENT TX-slot offset (unwrapped, offset_after_us) is past the boundary; a slave '
-                            'answer and a second ID have their parent slot\'s offset, so the wrap does not split a '
-                            'slot. first_rendered_index_after is the first such burst that is in the samples. '
+                    meaning='crossing_time_s = t_first + offset0 / drift (file seconds), t_first = 20000 us + '
+                            'offset0 the start of the first TX slot: where the offset law meets the boundary, between '
+                            'two TX slots of the grid. burst_index_first_after is the first burst whose PARENT TX-slot '
+                            'offset (unwrapped, offset_after_us) is past the boundary; a slave answer and a second ID '
+                            'have their parent slot\'s offset, so the wrap never splits a slot in the truth. '
+                            'first_rendered_index_after is the first such burst that is in the samples. '
                             'offset_before_us / offset_after_us are the offsets of the last slot before and the first '
-                            'after. A second ID of the last slot before the wrap sits 312.5 us into that slot, so its '
-                            'int(start_us / 625) can differ from its first ID\'s capture slot index after the wrap.'))
+                            'after. ' + capture_slots_text(entries, i)))
             prev = (w, e['index'])
 
     cfo_top = float(center * 1e6 * cfo_ppm * 1e-6)
@@ -750,13 +790,14 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                        + ' The default tail is 56 us, not the 50 us bluey asked for ("about 50 us"): bluey saw the 54 '
                        'bit positions after an ID\'s sync word (where a header would be) demodulate as all ones, and '
                        '50 us would cover only 50 of them; 56 us is carrier at +dev_khz over the whole 54-bit header '
-                       'window and 2 symbols more. The tail\'s settled level and deviation are exact, but a tail at '
-                       '-10 dB (or -20 dB) is only about 10 dB SNR in 1 MHz at the files\' 20 dB: a plain FM slicer '
-                       'gives ones in about 96 %% of the 54 positions and all 54 in only a minority of the noisy IDs '
-                       '(a reviewer measured 13 of 140 windows all ones for D and 0 of 112 for C1, with 3000 of '
-                       '6048 ones); "all ones" is the transmitter\'s truth, not a per-burst acceptance criterion. '
+                       'window and 2 symbols more. The tail\'s settled level and deviation are exact. %s '
+                       'Whether a receiver\'s slicer gives ones over the 54 positions depends on the slicer: a 0.7 '
+                       'MHz low-pass plain FM slicer, measured by a reviewer on these IDs at -10 dB, gave 93 to 94 %% '
+                       'of the 54 positions as ones and all 54 in only 1 or 2 of 140 windows (an earlier slicer 96 %% '
+                       'and 13 of 140); at -20 dB (0 dB SNR) expect about chance. "All ones" is the transmitter\'s '
+                       'truth, not a per-burst acceptance criterion. '
                        'The last symbol of this file\'s sync word is %s, so %s.'
-                       % ('1' if br.access_code(lap if lap is not None else A_LAP, trailer=False)[-1] else '0',
+                       % (tail_snr_text(tail, snr_db), '1' if br.access_code(lap if lap is not None else A_LAP, trailer=False)[-1] else '0',
                           'the deviation continues at +dev_khz from the sync word\'s own' if
                           br.access_code(lap if lap is not None else A_LAP, trailer=False)[-1] else
                           'the instantaneous deviation passes through about 0 Hz at the tail start')),
@@ -770,7 +811,8 @@ def plan_file(stem, seed=None, duration=None, train_s=None, conn_s=None, snr_db=
                   'transmitters, RX slots of the paged device, the page response and FHS.',
                   'IDs outside the window are in the truth with rendered false and are not in the samples.',
                   'The offset law is anchored at the first TX slot (20 ms after file start): its grid_offset_us is '
-                  'exactly the offset parameter; crossings are at 20 ms + offset0 / drift.',
+                  'exactly the offset parameter; crossings are at t_first + offset0 / drift, t_first = 20 ms + offset0 '
+                  '(the first TX slot starts at 20000 us + offset0), i.e. 20 ms + offset0 + offset0 / drift.',
                   'The exchange files (A, B kinds) use LAP 0x635FCA, UAP 0x47, the C files\' paged LAP: a legal '
                   'non-reserved LAP, 34 bits from the GIAC\'s sync word, not in 0x9E8B00-0x9E8B3F.'],
         'per_burst_keys': sorted(entries[0]) if entries else [],
