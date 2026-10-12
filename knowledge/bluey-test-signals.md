@@ -905,6 +905,59 @@ reviewed by Opus against the real files, write them; the files are not in git.
   index = line, deterministic gzip level 6, mtime 0; the notes carry the read and re-gzip
   snippets). Device ids 0-9 are different devices in each file. Reviewed by Sol (full) and
   Muse (a restricted third attempt, after two runs that ended without a review).
+- **Slot-boundary files (`slotb`, 20 files, `scripts/bt_synth_slotb.py`).** For a defect in
+  bluey's blind UAP recovery: its tracker computes `slot = int(t_us / 625)` on the capture
+  clock, and on a real capture the page IDs of one device sat within about 5 us of a multiple
+  of 625 us, so the slot index flipped and libbtbb's UAP elimination converged on a wrong UAP
+  (the 54 bit positions after an ID's sync word also demodulated as all ones). The files give
+  truth for both: **where the transmitter's TX-slot grid sits against the file's own 625 us
+  grid** (`grid_offset_us` = the TX slot boundary in file microseconds mod 625) and **whether a
+  held tail follows the sync word**. 40 MS/s centre **2439.0 MHz** (one file 20 MS/s centre
+  2441.0), 20 dB per burst, no CFO (except `B_down_cfo`), the constant noise floor running
+  through tails and gaps. `drift_ppm_signed` > 0 = the transmitter's clock is FAST, its slots
+  shorter in file time, the offset DEcreasing (B_down); < 0 the reverse (B_up). The law is
+  anchored at the first TX slot (20 ms after the start), whose offset equals the stated
+  parameter; the crossing is `t_first + offset0 / drift` and lies between grid slots (the
+  slot offsets either side are in the sidecar), so `burst_index_first_after` is the first
+  burst whose PARENT slot is past the boundary, `first_rendered_index_after` the first
+  rendered one. Burst starts follow the grid exactly: no random timing fraction, no phase
+  alternation; second ID +312.5 us, slave answer +625 us, rigid inside their slot (a true
+  clock would shorten them by 0.25 and 0.5 sample; stated).
+  **Files** (seeds 9401-9420): `D_same_s1..s3` and `D_diff_s1` (26 s: 6 s of page-train IDs
+  with a C2 tail, then 20 s of single-slot connection traffic on channels of the train, the
+  same drifting grid; `D_diff` has a connection LAP that never sent an ID), `C1_cross` /
+  `C2m10_cross` (6 s of IDs, clean cut / held tail, drift through 0 at 0.150 s),
+  `C1_50p25` / `C2m10_50p25` (fixed offset 50.25 us: symbol phases 10 and 30, symmetric about
+  the single grid's dead zone at 20), `B_down`, `B_up` (single-slot exchanges POLL/NULL/DM1/DH1
+  on 5 fixed channels, about 100 masters per channel per 10 s), `A_50p25`, `A_312p75`
+  (fixed controls), extras `C2_0` / `C2m20` / `C2m10_f50k_cross` (tail level 0 / -20 dB, and
+  +50 kHz), `B_late` (+100 us, crossing at 4.37 s), `A_20msps`, `C1_50p0` / `C2m10_50p0`
+  (exact offsets, phases 0 / 20) and `B_down_cfo` (the clock error also moves the carriers by
+  20e-6, +48.8 kHz).
+  **Decisions worth knowing.** (1) **The drift is 23 ppm**, bluey's own measurement of its
+  real train, not 20: at exactly 20 ppm the offset moves 1.0000 sample per TX slot and the
+  page IDs recur every 8 slots, so the rendered IDs visited only 10 of 40 symbol phases; at
+  23 ppm all 40 are visited (22, 22.5, 23, 23.5 do; 24 gives 25), asserted over the
+  rendered IDs of the full plans. `B_down_cfo` keeps 20 ppm (49 kHz is where bluey's detector
+  stops). (2) The page train is the **spec-true page hop sequence** with the A/B alternation
+  every 1.28 s (the channel set changes four times in 6 s); the LAP and CLKE are chosen by
+  REJECTION so that the first train has channels 39 and 43 in the window and no centre
+  channel (365 draws for the C files, 452 for `D_same_s1`); 0x9E8B33 is a reserved LAP and
+  cannot be a paged device, so the C files use 0x635FCA (also the LAP of the A and B files,
+  UAP 0x47). (3) The tail is **+160 kHz held 56 us** (phase continuous; the 54 header
+  positions plus 2) at 0, -10 or -20 dB relative to the sync word; at -10 dB it is 10 dB
+  SNR in 1 MHz, at -20 dB 0 dB, so a plain slicer sees ones in about 94 % of the 54
+  positions and all 54 in only a few of 140 noisy IDs: 'all ones' is the transmitter's truth,
+  not a per-burst criterion. (4) The 54 `header_air_bits` are in transmission order; the HEC
+  is the register read out from its top position down, the other fields LSB first (the note
+  in the sidecar has a worked example); a wrong whitening clock breaks the HEC except for 4
+  of 128 alias pairs, listed. (5) `start_us` / `slot_start_us` / `grid_offset_us` /
+  `start_mod_625_us` / `grid_offset_unwrapped_us` are per burst; `half` says first or
+  second ID of a slot, `phase` page or connection (D).
+  Reviewed by Sonnet (builder, 558 checks and 13 mutants), Sol twice (timing, tails, hops,
+  decodes and superposition recomputed independently; found the phase-coverage artefact, a
+  wrong bit-order note, a late-placement test gap and the crossing definition); Muse was
+  not available (an invalid credential).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
