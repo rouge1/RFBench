@@ -208,3 +208,14 @@ wrong in a way only a fresh machine shows. Both were found on 2026-09-18.
   The lesson is the general one: a package installed by hand into `gnu`
   and not written back into the file is invisible until a new machine is
   built. See [ism](ism.md#the-rtl-sdr-as-a-receiver).
+
+### Audio: "audio_alsa_sink: No such device" on a PipeWire desktop
+
+The conda environment's alsa-lib looks for plugins inside the environment,
+but a desktop's `/usr/share/alsa/alsa.conf.d/99-pipewire-default.conf` makes
+`default` a PipeWire device, whose plugin (`libasound_module_pcm_pipewire.so`)
+is only in the system's folder. Every `audio.sink` then fails, the receivers
+print "audio output unavailable" and carry on silent. The launcher points
+`ALSA_PLUGIN_DIR` at the system folder before GNU Radio loads
+(`RFbenchToolkit.py`); `apps/_run.py` does not, so set it by hand there.
+Found on st-health, confirmed by ear on the RDS receiver.

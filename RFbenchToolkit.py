@@ -8,6 +8,16 @@ import json
 import math
 import importlib.util
 
+# Conda's alsa-lib looks for its plugins inside the environment, but the
+# system's alsa.conf routes "default" to PipeWire, whose plugin is only in the
+# system's folder: every audio sink then fails with "No such device".
+if sys.platform.startswith('linux') and 'ALSA_PLUGIN_DIR' not in os.environ:
+    for _d in ('/usr/lib/x86_64-linux-gnu/alsa-lib', '/usr/lib64/alsa-lib',
+               '/usr/lib/alsa-lib'):
+        if os.path.exists(os.path.join(_d, 'libasound_module_pcm_pipewire.so')):
+            os.environ['ALSA_PLUGIN_DIR'] = _d
+            break
+
 # Third party imports
 from PyQt5.QtWidgets import ( # type: ignore
     QAbstractButton,
