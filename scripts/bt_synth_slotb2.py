@@ -673,7 +673,9 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
                           'ack the paged device\'s CLKN; for the FHS, POLL and connection packets the master\'s native '
                           'clock (clk % 4 == 0 at a TX slot), a slave answer clk + 2; whitening_clk6_1 = '
                           '(whitening_clk >> 1) & 0x3F where whitening_clk is clk for a packet and the Xprc '
-                          'pseudo-clock ((X | 0x20) << 1) of an FHS',
+                          'pseudo-clock ((X | 0x20) << 1) of an FHS. Per-burst phase: page for id_page, id_response, id_ack and '
+                          'fhs (an FHS is NOT an ID: it has a header, on the paged LAP), connection for POLL, NULL and the '
+                          'connection packets; key on ptype or role to tell an ID from a header-bearing packet',
         'seed': spec['seed'], 'plan_seed': plan_seed,
         'grid_offset_us_first_slot': float(sb.wrap_offset(20000 + off)),
         'first_tx_slot_start_us': float(20000 + off), 'grid_offset_us_param': float(off),
@@ -727,6 +729,9 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
             'Not modelled: drift (slotb has it), fading, other transmitters, RX slots of the master, the paged '
             'device\'s receiver, a retransmitted FHS, the train repetition count Npage and the knudge of EQ 4 (0).',
             'Out-of-window bursts are in the truth with rendered false and are not in the samples.',
+            'Only the heard ID, the response, the FHS and the ack of a P1 exchange are required to be in the window: the '
+            'first POLL and the slave answers may be out of it (rendered false, absent from the samples), so a '
+            '"POLL is 1250 us after the FHS" check must skip them.',
             'Per burst lap and uap are those of the access code and header actually used.',
         ],
         'bursts': entries,
@@ -777,7 +782,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
             exchanges=exch, n_exchanges=len(exch), draws_total=draws_total,
             selection_note='identities after %d draws and %d attempts (LAPs not reserved, 8+ sync bits apart, UAPs outside {0x00, '
                            '0xD6, 0x0B, 0xDD}, a page table without the centre channel %d and 72 %% of the window share of in-window page entries); each exchange by rejection (draws in exchanges[].draws, %d in '
-                           'all): heard ID '
+                           'all, counting the terminating round of the identity search): heard ID '
                            '20 to 300 ms into the train, heard/response/FHS/ack in the window, no burst on the '
                            'centre channel, CLKN16-12 constant to the ack: a selection of legal clocks, not a '
                            'change of a kernel' % (ident['tries'], ident['attempts'], ctr, draws_total),
