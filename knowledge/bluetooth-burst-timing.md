@@ -52,6 +52,31 @@ So: calibrate the receiver's own constants once with a local experiment on known
 transmitter's ramp as per-device. That second half is **our recommendation, not something we measured**: the
 spread bluey reports (+5 to +20 us) is the evidence that one device's ramp cannot be assumed for another.
 
+## Generalise from a local experiment, or measure live per device?
+
+Both, and they answer different questions.
+
+- **Generalise (one local experiment, then reuse):** everything that belongs to the *receiver chain*: the
+  correlator's start offset, the filter and decimation group delay, the sample-rate dependent constants.
+  Measure them once on files whose truth is known (`slotb`, `slotb2`: `start_sample + timing_frac` and
+  `id_end_sample` are exact there), per receiver and per rate and filter setting, and apply the number to
+  every device. A change of rate, filter or decimation is a new calibration.
+- **Measure live, per device:** everything that belongs to the *transmitter*: the ramp-down and ramp-up
+  shape, how long the carrier lingers, the carrier offset. A local experiment on one device, or on our
+  synthetic ramp (a 2 us raised cosine, which is a model and not any real radio), says what the pipeline
+  does with such a ramp; it does not say what another device does. bluey's captures already differ by
+  +5 to +20 us in when power is back at noise.
+- **Do not need either:** the end of an ID relative to its start (68 us), and the placement of the window
+  derived from it. That is why the decoder should lean on them and treat the per-device ramp as an
+  optional refinement.
+
+How to make the per-device part cheap and safe: key it by the device's identity as the receiver sees it
+(LAP, and the carrier-offset group within it, since two devices can share a channel but not an offset);
+estimate it from that device's own IDs as they arrive; keep a running value with its spread; and fall back
+to the "no ramp assumed" decoder until the spread is small. How many bursts that takes is not known: check
+convergence on bluey's own captures, where IDs are plentiful. A new device, a new channel group or a
+different transmit level is a new estimate until shown otherwise; nothing in our files tests that.
+
 ## What follows for a decoder
 
 - Place the window from the **correlator start + 68 us**, never from a detected power drop: then a device's
