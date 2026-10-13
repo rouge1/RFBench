@@ -958,6 +958,31 @@ reviewed by Opus against the real files, write them; the files are not in git.
   decodes and superposition recomputed independently; found the phase-coverage artefact, a
   wrong bit-order note, a late-placement test gap and the crossing definition); Muse was
   not available (an invalid credential).
+- **Page responses and ID mixes (`slotb2`, 14 files, `scripts/bt_synth_slotb2.py`).** bluey's UAP voter
+  was fed the 54 bit positions after any ID as if they were a header, and `slotb` held only the pager's
+  IDs. Its own measurement then showed the real "all ones" after an ID is its slicer's local threshold
+  (power is gone within +5 to +20 us; a negative carrier offset makes the threshold go negative), not a
+  transmitted tail: so **no file here has a tail** (every ID ends as `br.gfsk` ends it) and the files
+  give known truth for who sent what. 20 dB, grid offset 50.25 us (symbol phases 10 and 30; 5 and 15 at
+  20 MS/s), drift 0, seeds 9501.., truth UAP never 0x00, 0xD6, 0x0B or 0xDD. `master_cfo_hz` per file
+  (-30 kHz, +30 kHz or 0; per burst `cfo_hz`), the slave +30 kHz with a timing offset N(0, 1.5) us
+  clipped to +-3 us (wider than the spec's +-1 us, by request). Every ID carries `id_end_sample` (start
+  + 68 symbols, before the 2 us ramp-down). **`R_s1..s3`, `R_20msps_s1`**: repeated spec-true page
+  exchanges on one grid: page train -> heard ID -> paged device's ID response (+625 us) -> master's FHS
+  (+1250 us after the heard slot's first ID) -> ID ack (+625 us) -> POLL (+1250 us) -> 6 to 12 master
+  packets with NULL answers; the same paged and master LAP in every exchange. **The FHS carries the PAGED
+  device's access code and HEC (paged UAP), the master's identity is in its payload** (so the paged LAP
+  has IDs and one FHS per exchange, and a UAP claim on it can only come from the FHS); `phase` is `page`
+  for the FHS too, key on `ptype`/`role`. The heard ID is 26 to 300 ms into the train (the scan
+  frequency enters the train at a CLKE block change), the paged device's CLKN is redrawn per exchange,
+  heard/response/FHS/ack are always in the window, the first POLL and the slave answers may not be.
+  **`X_first_id{10,50,87}_s{1,2}`**: a connection on LAP L alone for 4 s, then a page train of IDs on the
+  SAME LAP in the TX slots the connection leaves free (not a spec-true page: bluey's capture shape);
+  **`X_bda_id{10,50,87}_s1`**: the train all file, the connection only 3 to 9 s. The ID share of the
+  LAP's rendered bursts is 10, 50 or 87 % (measured within 0.01 point whole-file, `id_share_measured`).
+  **`C_20msps`**: IDs only at 20 MS/s centred 2441.0 MHz. Built by a Sonnet builder, reviewed by Muse
+  against samples (no blocker; the spec citation for the FHS access code could not be checked from its
+  pack). Not built: a role switch so the connection continues on the paged LAP (`R_switch`).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
