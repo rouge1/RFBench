@@ -983,6 +983,28 @@ reviewed by Opus against the real files, write them; the files are not in git.
   **`C_20msps`**: IDs only at 20 MS/s centred 2441.0 MHz. Built by a Sonnet builder, reviewed by Muse
   against samples (no blocker; the spec citation for the FHS access code could not be checked from its
   pack). Not built: a role switch so the connection continues on the paged LAP (`R_switch`).
+- **Packets of known on-air length (`endlen`, 6 files, `scripts/bt_synth_endlen.py`).** bluey's burst-end
+  stage takes a burst's end from the spec length (68 / 126 / 366) and could not test the margin between a
+  NULL or POLL (126) and an empty DH1 (150), an empty DM1 (171) or an AUX1 (134), nor any burst over 366.
+  Files `synth_endlen_<name>.cf32` + `.json`, 20 dB, slotb2's grid (offset 50.25 us, drift 0, one crystal),
+  no tail anywhere (every burst ends as `br.gfsk` ends it), one LAP/UAP per file, master -30 kHz (`_s1`) or
+  +30 kHz (`E_mix_s2`), slave +30 kHz with a timing offset N(0, 1.5) us clipped +-3 us: `E_mix_s1`,
+  `E_mix_s2` (seeds 9601, 9602; 12 s; page-train IDs of the connection's LAP 20 %, NULL 10, POLL 5, empty
+  DH1 15, empty DM1 15, AUX1 10, DH1 1..27 bytes 10, full DH1 5, DM1 1..17 5, full DM1 5 %, measured over
+  the master side; the slave answers NULL or, one in four, an empty DH1/DM1), `E_ladder_s1` (9603; every
+  DH1 body 0..27, DM1 0..17, AUX1 0..29 about 75 times: on air DH1 150..366 step 8, DM1 171..366 step 15,
+  AUX1 134..366 step 8), `E_mix_20msps_s1` (9604, 10 s, 20 MS/s centre 2441.0), `E_ladder_20msps_s1` (9606,
+  10 s, 20 MS/s), `E_long_s1` (9605; DM3/DH3/DM5/DH5 over their body ranges with NULL/POLL; on air up to
+  1626 / 1622 / 2871 / 2870). Truth per burst, added to slotb2's keys: `ptype`, `body_bytes`,
+  `info_bytes`, `payload_bits_pre_fec`, `fec_pad_bits`, `payload_bits_air`, `onair_bits`, `end_sample` /
+  `end_us` (start + `onair_bits` symbols, **before** the 2 us ramp-down: the power half-point is about 0.5
+  to 1.0 us after it), `crc`, `fec`, `llid`; the sidecar adds `onair_counts` (rendered bursts only) and
+  `mix_measured_pct`. Choices a reader must know: the connection channels are a per-exchange draw from a
+  fixed in-window list (not the hop sequence; the clock is the whitening clock only); the IDs carry the
+  connection's LAP (not a spec-true page); no FHS (slotb2 has them); AUX1 is test-mode only (Part B
+  6.5.4.7), so no real device sends it; an empty DH1/DM1 carries LLID 0b01, a choice the Core text does
+  not make. Lengths are in [bluetooth-core-spec-citations.md](bluetooth-core-spec-citations.md#how-long-a-packet-is-on-air---table-62-and-651-to-654).
+  Reviewed by Muse (no data or code bug; doc fixes made); delivered once, generator commit 406c29f, 18 GB.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
