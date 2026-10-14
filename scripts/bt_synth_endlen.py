@@ -451,17 +451,34 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
         tail_notes='There is no held tail anywhere in these files (no tails): every burst ends as br.gfsk ends it, '
                    'the raised-cosine amplitude ramp-down of 2 us after its last bit.',
         end_note='end_sample / end_us = start_sample + timing_frac + onair_bits * samples_per_symbol (end_us in file '
-                 'microseconds), the end of the last bit, BEFORE the 2 us ramp-down; the power half-point of the '
-                 'falling edge is about 0.6 us later. id_end_sample is the same on an ID and None on a packet.',
+                 'microseconds), the end of the last bit, BEFORE the 2 us ramp-down. The power half-point of the '
+                 'falling edge is later: 0.6 us by a fit of the 2 us raised-cosine ramp, about 0.8 us (spread '
+                 '0.15 us) by a 1 us boxcar power estimate at 20 dB; the amplitude half-point is about 1 us later. '
+                 'Read it as "about 0.5 to 1.0 us after end_us", whichever estimator. id_end_sample is the same '
+                 'on an ID and None on a packet.',
         onair_note='onair_bits = 72 access code + 54 header + payload_bits_air; an ID is 68, NULL and POLL 126. '
                    'Payload: payload header (1 byte DM1/DH1/AUX1, 2 bytes DM3/DH3/DM5/DH5) + body + CRC-16 '
-                   '(none for AUX1), zero tail bits to a multiple of 10 and FEC 2/3 for DM*.',
+                   '(none for AUX1), zero tail bits to a multiple of 10 and FEC 2/3 for DM*. onair_counts and '
+                   'mix_measured_* count RENDERED bursts only (the burst list also holds the out-of-window '
+                   'page-train IDs, so onair_counts["ID:68"] is smaller than the number of ID entries).',
         notes=['Modelled: the master\'s TX slot grid at a fixed offset, one crystal, constant 20 dB SNR, white '
                'constant noise through the whole file, random carrier phase per burst, every burst cut by '
                'br.gfsk\'s ramp (no tail).',
                'Not modelled: drift (slotb has it), fading, other transmitters, FHS or page exchanges, hopping.',
                'Out-of-window bursts are in the truth with rendered false and are not in the samples.',
-               'AUX1 body 0 carries LLID 0b10; a zero-length DH1/DM1 carries LLID 0b01.'])
+               'Connection channels are drawn per exchange from the file\'s fixed in-window list (channels.connection) '
+               'and are NOT the basic hopping sequence of the clock; clk is the whitening clock only (hop is None '
+               'on connection bursts); the page-train IDs follow the page hop sequence of the LAP.',
+               'Body bytes 17 and longer are br.seq_body counters; bodies of 1 to 12 bytes are the low counter '
+               'bytes then the base64 alphabet and are exactly recoverable from payload_hex, not from a counter.',
+               'AUX1 (Part B 6.5.4.7, test mode only): 1 to 30 information bytes including the 1-byte payload '
+               'header, no CRC, no FEC, TYPE 1001 (Table 6.2). Its LLID is 0b10 (also for a zero body). A '
+               'zero-length DH1/DM1 carries LLID 0b01 (Table 6.5, continuation fragment): the Core text gives no '
+               'rule for the LLID of an empty ACL payload, so this is a choice, not a spec requirement; do not '
+               'make a decoder depend on it.',
+               'Multi-slot packets (E_long): the slave answer row\'s slot_start_us / slot_offset_us name the '
+               'master\'s LAST slot of the packet (offset 625 us); start_us is the absolute time and is the '
+               'master start + 625 us x slots + timing_offset_us.'])
     if spec['kind'] != 'mix':
         side.pop('mix_target_pct')
         side.pop('mix_tolerance_points')

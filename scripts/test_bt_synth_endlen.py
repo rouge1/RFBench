@@ -637,6 +637,10 @@ def run_long(iq, side, label):
     t2.check_overlap(side, label)
 
 
+def run_ctr(iq, side, label):
+    check_40(side, label)
+
+
 def run_uap(iq, side, label):
     check_ids_uap(side, label)
 
@@ -654,6 +658,10 @@ def test_mutants():
            ['length rule', 'crc is true except AUX1', 'decode from the samples'], 'AUX1 given a CRC')
     mutant({'end_extra_symbols': lambda: 2.0}, 'E_mix_s1', dict(snr_db=20.0, duration=0.2), run_end,
            ['half-point'], 'end_us taken after the ramp')
+    mutant({'end_extra_symbols': lambda: 8.0}, 'E_mix_s1', dict(snr_db=20.0, duration=0.2), run_end,
+           ['half-point'], 'end_us 8 symbols after the last bit')
+    mutant({'centre_channel': lambda c: 99}, 'E_mix_s1', dict(duration=4.0, seed=9602), run_ctr,
+           ['centre channel 37 never'], 'the centre channel used by the page train', plan_only=True)
     mutant({'info_bytes_of': lambda p, n: n}, 'E_mix_s1', dict(duration=0.3), run_len, ['info_bytes'],
            'a DH1 body of one byte counted as 1 information byte instead of 2')
     mutant({'type_code': lambda p: {'AUX1': 4, 'DH1': 9}.get(p, G.TYPE_CODES[p])}, 'E_mix_s1', dict(duration=0.3),
