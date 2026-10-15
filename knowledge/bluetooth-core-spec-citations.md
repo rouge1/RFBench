@@ -93,9 +93,51 @@ What follows:
 - **An empty data packet is not 156.** DH1 with the payload header and CRC only is 24 payload bits, 150 in
   all. DM1 is 171: 24 bits are padded with zero tail bits to a multiple of 10 before the 2/3 FEC (7.5), 30
   bits, three codewords, 45. The DV data field's own "45 - 150" (Figure 6.10) shows the same padding.
-- **Not covered:** the Enhanced Data Rate types (GFSK access code and header, then a guard, a sync sequence
-  and a DPSK payload, so not comparable bit counts), and encrypted links - the 32-bit AES-CCM MIC is listed
-  apart from the information-byte limits and it was not checked whether it moves the maxima past 366.
+- **Not covered here:** encrypted links - the 32-bit AES-CCM MIC is listed apart from the
+  information-byte limits and it was not checked whether it moves the maxima past 366. The Enhanced Data Rate
+  types are in the next section.
+
+## NULL and POLL, and Enhanced Data Rate on the air - Table 6.2, 2.2.5, 6.5.1.2-3, 6.6.1
+
+Read from the Core v6.0 text (page = the page the text sits on).
+
+- **NULL 0000, POLL 0001, both 126 bits** (Table 6.2, p.521; 6.5.1.2-3, p.522). Same access code, same
+  54-bit header; only TYPE differs. The Central starts in even slots (CLK1=0), the Peripheral in odd
+  (CLK1=1) (2.2.5, p.471). POLL is the Central's only ("Peripherals shall not transmit the POLL packet"),
+  so a 126-bit burst in an odd slot is a NULL. A POLL must be answered in the next slot, by any packet type
+  ("shall respond with a packet even when [it] does not have any information to send", unless it has
+  scatternet commitments); NULL "does not require acknowledgment" and may carry ARQN or FLOW. POLL is not
+  part of the ARQ scheme and does not touch ARQN or SEQN. Not found in the text: whether a Peripheral must
+  answer a Central NULL.
+- **EDR guard time 4.75 to 5.25 us**, from the end of the last GFSK header symbol to the start of the sync
+  reference symbol (6.6.1 item 1, p.530). **Sync sequence 11 us = 11 DPSK symbols**: a reference symbol
+  (arbitrary phase) then ten, phase steps 3pi/4, -3pi/4, 3pi/4, -3pi/4, 3pi/4, -3pi/4, -3pi/4, 3pi/4, 3pi/4,
+  3pi/4 (EQ 13, Fig 6.11); symbol timing within +-1/4 us of the header's last GFSK symbol (p.530-531).
+  **Trailer: two all-zero symbols** after the payload ({00,00} pi/4-DQPSK, {000,000} 8DPSK) (p.531).
+- **TYPE alone cannot show EDR.** The codes are reused and selected by LMP ptt (Table 6.2): 0100 DH1/2-DH1,
+  0110 HV2/2-EV3, 0111 HV3/EV3/3-EV3, 1000 DV/3-DH1, 1010 DM3/2-DH3, 1011 DH3/3-DH3, 1100 EV4/2-EV5,
+  1101 EV5/3-EV5, 1110 DM5/2-DH5, 1111 DH5/3-DH5. NULL, POLL, FHS, DM1 and AUX1 are the same packet on
+  every link, and stay GFSK on an EDR link.
+- **EDR on-air lengths (derived, not tabulated in the spec).** Total = 72 + 54 + 5 + 11 + payload symbols
+  + 2 = 144 + payload symbols, in us (1 symbol = 1 us). Payload symbols = (8B+16)/2 for pi/4-DQPSK and
+  (8B+16)/3 for 8DPSK, B = information bytes including the 2-byte payload header, CRC 16, no FEC. The spec
+  text gives no 8DPSK padding rule; rounding up was assumed. Byte limits from 6.5.3-6.5.4 and Table 6.8-6.9.
+
+  | type | B | total (us) | type | B | total (us) |
+  |---|---|---|---|---|---|
+  | 2-DH1 | 2..56 | 160..376 | 3-DH1 | 2..85 | 155..376 |
+  | 2-DH3 | 2..369 | 160..1628 | 3-DH3 | 2..554 | 155..1627 |
+  | 2-DH5 | 2..681 | 160..2876 | 3-DH5 | 2..1023 | 155..2878 |
+  | 2-EV3 | 1..60 | 156..392 | 3-EV3 | 1..90 | 152..390 |
+  | 2-EV5 | 1..360 | 156..1592 | 3-EV5 | 1..540 | 152..1590 |
+
+- **Length does not separate BR from EDR**: the ranges overlap (2-DH1 160..376 against DH1 150..366, DM1
+  171..366, EV3 150..382). A 2-DH1 length is 152 + 4B, a multiple of 4; a DH1 length is 142 + 8B, 2 mod 4,
+  so those two never coincide; DM1 (141 + 15k) can. Only a length above BR's maximum for the slot count
+  (EV3 382 single slot, DH3 1622, DM5 2871) is certainly EDR. What the burst does show is the DPSK payload
+  after the guard and sync.
+- **Not checked:** 8DPSK padding; the AES-CCM MIC's effect on the maxima; the page of the Part A 3.2.1
+  modulation text; the spec's own byte limits against a second source.
 
 ## What this settles, and what it does not
 
