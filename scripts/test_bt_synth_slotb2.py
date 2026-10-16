@@ -1183,7 +1183,7 @@ def verify(cf32, json_path, n_pos=60, n_cfo=6, n_ids=60, n_dec=30):
           side['n_bursts'] == len(side['bursts']),
           'file: %d samples, %d bytes, %d bursts (%d rendered): the sidecar\'s n_samples and n_bursts' % (
               len(iq), os.path.getsize(cf32), len(side['bursts']), len(rendered(side))))
-    check_sidecar(side, label, drift=side['drift_ppm_signed'])
+    check_sidecar(side, label, off0=side.get('grid_offset_us_param', 50.25), drift=side['drift_ppm_signed'])
     check_channels(side, label)
     n_ov = check_overlap(side, label)
     print('  crossing none: %d crossings, %d overlaps of any two bursts' % (len(side['crossings']), n_ov))
