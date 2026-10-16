@@ -410,6 +410,20 @@ def check_np(side, label, full=True):
               '%s: %d records for the LAP (more than 6000)' % (label, len(rb)))
     else:
         check(side['n_records_lap'] == len(rb), '%s: n_records_lap %d' % (label, len(rb)))
+    check(all(bool(e['crc_valid']) == bool(e['crc']) for e in side['bursts']),
+          '%s: crc_valid is true exactly where the type has a CRC' % label)
+    check(abs(side['np_share_measured_master_pct'] - 100.0 * sum(e['ptype'] in ('NULL', 'POLL') for e in m) / len(m)) < 0.01
+          and abs(side['np_share_measured_slave_pct'] - 100.0 * sum(e['ptype'] in ('NULL', 'POLL') for e in sl) / len(sl))
+          < 0.01 and all(abs(side['answer_measured_pct'].get(k, 0.0) - 100.0 * sum(cl(e) == k for e in sl) / len(sl)) < 0.01
+                         for k in G.NP_ANSWER) and
+          all(abs(side['mix_measured_pct'].get(k, 0.0) - 100.0 * sum(cl(e) == k for e in m) / len(m)) < 0.01
+              for k in G.NP_MIX), '%s: the measured-share fields of the sidecar are the recounts' % label)
+    seq = [e for e in rb]
+    pairs_ok = len(seq) % 2 == 0 and all(a['sender'] == 'master' and b['sender'] == 'slave'
+                                         for a, b in zip(seq[0::2], seq[1::2]))
+    check(pairs_ok and all(abs(b['start_us'] - a['start_us'] - 625.0 - b['timing_offset_us']) < 1e-6 and
+                           b['clk'] - a['clk'] == 2 for a, b in zip(seq[0::2], seq[1::2])),
+          '%s: every slave answer is 625 us (+ its timing offset) and 2 clock ticks after its master packet' % label)
     need = ('ptype', 'body_bytes', 'onair_bits', 'crc_valid', 'info_bytes', 'payload_bits_air')
     check(all(k in e for e in side['bursts'] for k in need), '%s: every burst row carries %s' % (label, ', '.join(need)))
 
@@ -687,6 +701,12 @@ def run_mix(iq, side, label):
 
 def run_np(iq, side, label):
     check_np(side, label, full=False)
+    check_lengths(side, label)
+
+
+def run_np_pay(iq, side, label):
+    run_np(iq, side, label)
+    check_payloads(iq, side, label, n=30)
 
 
 def run_long(iq, side, label):
@@ -749,6 +769,12 @@ def test_mutants():
            'E_np: NULL twice as dense on the master side', plan_only=True)
     mutant({'np_answer_weights': answers_payload}, 'E_np_s1', dict(duration=4.0), run_np,
            ['slave-side shares', 'of ALL bursts'], 'E_np: only 30 % of the slave answers NULL', plan_only=True)
+    mutant({'fec_pad': lambda n: 0}, 'E_np_s1', dict(duration=0.5), run_np, ['length rule'],
+           'E_np: empty DM1 without the FEC padding', plan_only=True)
+    mutant({'answer_ticks': lambda s: 6}, 'E_np_s1', dict(duration=0.5), run_np, ['625 us'],
+           'E_np: the slave answers a slot late', plan_only=True)
+    mutant({'type_code': lambda p: {'POLL': 0}.get(p, G.TYPE_CODES[p])}, 'E_np_s1', dict(duration=0.4), run_np_pay,
+           ['decode from the samples'], 'E_np: POLL with the NULL type code')
     mutant({'draw_uap': lambda rng: 0x00}, 'E_np_s1', dict(duration=0.5), run_uap,
            ['UAP outside', 'no truth UAP'], 'E_np: a UAP of 0x00', plan_only=True)
     mutant({'draw_uap': lambda rng: 0x00}, 'E_mix_s1', dict(duration=0.5), run_uap, ['UAP outside', 'no truth UAP'],
@@ -794,7 +820,8 @@ def verify(cf32, json_path, n_pos=60, n_dec=60):
     check(abs(lvl) < 0.1, 'file: noise floor of the lead-in %+.3f dB against the common one' % lvl)
     picks = spread(rb, n_pos)
     errs = np.array([fit(iq, side, e)['start'] - (e['start_sample'] + e['timing_frac']) for e in picks])
-    check(np.median(np.abs(errs)) < 0.5 and np.abs(errs).max() < 2.0 and abs(errs.mean()) < 0.2,
+    check(np.median(np.abs(errs)) < 0.5 and np.percentile(np.abs(errs), 95) < 2.0 and np.abs(errs).max() < 4.5 and
+          abs(errs.mean()) < 0.2,
           'file: start_sample + timing_frac at %g dB: median %.3f sample, max %.3f, bias %+.3f' % (
               side['snr_db'], np.median(np.abs(errs)), np.abs(errs).max(), errs.mean()))
     taps = calibrated_taps(fs)

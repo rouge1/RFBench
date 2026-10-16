@@ -549,8 +549,15 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
                      'slave\'s, mix_measured_all_bursts_pct over both. There are no IDs in this file and no page '
                      'train; every burst belongs to the one connection (one LAP, one UAP).',
             ids_same_lap_note='no IDs in this file',
-            crc_note='crc is whether the type carries a CRC-16; crc_valid is the same: every CRC in the file is '
-                     'correct (nothing is corrupted), computed with the connection\'s UAP')
+            crc_note='crc is whether the type carries a CRC-16; crc_valid mirrors it: every CRC in the file was '
+                     'generated correct with the connection\'s UAP and nothing is corrupted, but crc_valid is not an '
+                     'independent per-burst decode of the samples',
+            traffic_note='the traffic shape is chosen for length-evidence composition, not protocol behaviour: '
+                         'every POLL is answered, ARQN is 1 and FLOW 1 throughout, SEQN is 0 on the master and 1 on '
+                         'the slave and never toggles, every CRC is valid, the connection takes half of the master '
+                         'slots at random positions, short bodies are a counter then the base64 alphabet, and the '
+                         'LLID of an empty payload is a choice (0b01). Do not train SEQN, ARQN, FLOW, LLID or '
+                         'POLL-answer-rate expectations on this file')
         side['notes'] = [n for n in side['notes'] if 'page-train IDs follow' not in n]
         side['notes'].append('E_np has no IDs and no page train; connection channels are drawn per exchange from the '
                              'in-window list, as in E_mix.')
