@@ -1005,6 +1005,24 @@ reviewed by Opus against the real files, write them; the files are not in git.
   6.5.4.7), so no real device sends it; an empty DH1/DM1 carries LLID 0b01, a choice the Core text does
   not make. Lengths are in [bluetooth-core-spec-citations.md](bluetooth-core-spec-citations.md#how-long-a-packet-is-on-air---table-62-and-651-to-654).
   Reviewed by Muse (no data or code bug; doc fixes made); delivered once, generator commit 406c29f, 18 GB.
+- **A NULL/POLL-heavy connection (`E_np_s1`, one more `endlen` file, 2026-10-16).** bluey keeps NULL/POLL
+  out of the payload-CRC evidence sample of a LAP (a uniform 1,500-packet reservoir) and had no truth-graded
+  case where the dilution matters: on its real captures NULL/POLL are 75 to 78 % of a LAP's records. One
+  connection, no IDs, one LAP 0x84B190 / UAP 0x6E, seed 9607, 12 s at 40 MS/s centre 2439.0, 20 dB, slotb2
+  conventions as `E_mix_s1` (grid 50.25 us, no tails, master -30 kHz, slave +30 kHz). 9,600 bursts for the LAP
+  (4,800 exchanges): the master side is POLL 33 %, NULL 33 %, and 34 % DH1/DM1 payload packets (empty and with
+  a body, 8.5 % each of DH1 and DM1; bodies 1..27 and 1..17 bytes); the slave answers NULL 90 % and the same
+  four payload classes 2.5 % each. **NULL/POLL are exactly 78.0 % of ALL bursts** (master 66, slave 90), the
+  payload packets 22 % (2,112), half empty. The shares are exact counts, not draws. The sidecar adds
+  `mix_measured_pct` (master), `answer_measured_pct`, `mix_measured_all_bursts_pct`, `np_share_*`, `n_records_lap`,
+  and per burst `crc_valid` (equal to `crc`: every CRC was generated correct; it is not a decode of the
+  samples). **The traffic shape is chosen for length-evidence composition, not protocol behaviour**: every POLL
+  is answered, ARQN and FLOW are 1 throughout, SEQN never toggles (master 0, slave 1), every CRC is valid, the
+  connection takes half of the master slots at random positions, short bodies are a counter then the base64
+  alphabet, and the LLID of an empty payload is a choice. `--stem E_np_s1`; `--set all` stays the six
+  delivered files, `--set E_np` is this one. Reviewed by Muse (no blocker; its test gaps were closed with a
+  length check, an answer-timing check, the sidecar recounts and three more mutants); the generator test now
+  runs 706 checks.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
