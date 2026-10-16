@@ -1023,6 +1023,24 @@ reviewed by Opus against the real files, write them; the files are not in git.
   delivered files, `--set E_np` is this one. Reviewed by Muse (no blocker; its test gaps were closed with a
   length check, an answer-timing check, the sidecar recounts and three more mutants); the generator test now
   runs 706 checks.
+- **The same-LAP set (`--set SL`, 29 files, 2026-10-16).** bluey's s4 audit found that its access-code search misses 82 %
+  of the page IDs of `X_bda_id87_s1` (LAP 0x0466AB, master -30 kHz, every burst at `start_sample % 40 = 10`) but not of
+  `X_bda_id50_s1` (LAP 0x662492), and the four existing files cannot separate carrier offset, symbol phase and the LAP's
+  sync word. The set is the `X_bda` construction on those two files' own schedules (schedule seeds 9523 and 9522, so the
+  LAP, UAP, clock, connection and train are theirs and the (-30 kHz, phase 10) cell is the existing file's schedule burst
+  for burst), with three things set per file: the master carrier offset (`c0`, `cm30`), the **symbol phase** of the first
+  IDs (`p`: `--offset-us` = 50 + p / 40, so `(start_sample + timing_frac) % 40` = p for every rendered ID and connection
+  burst) and the **noise seed** (`n`: the noise and each burst's carrier phase; separate from the schedule seed, so cells
+  with the same noise seed share one noise and carrier-phase realisation). Cells: both LAPs x {0, -30 kHz} x phase {0, 10} x
+  noise {1, 2} (16), phase {20, 30} x noise 1 (8), the low-density cell (`S_0466AB_cm30_p10_id10_n1`, share 10.0 %), and the
+  sweep p = 5, 15, 25, 35 on LAP 0x0466AB at -30 kHz (4). **What the files do not separate:** in the 0x0466AB schedule every
+  second ID of a TX slot is outside the 24 MHz window (only first IDs are rendered, 5,260 of them, at phase p); in the
+  0x662492 schedule both are (2,615 first at p, 2,625 second at p + 20), and its ID share is 50 against 87. LAP is therefore
+  confounded with the second-ID mix and the share: compare carrier offset and phase **within** a LAP. The X files' slaves have
+  no timing error (`timing_offset_us` 0), so every rendered burst sits at the cell's phase. `timing_frac` is 0 throughout
+  (whole-sample grid). A `cell` block in each sidecar names LAP, CFO, phase, offset, seeds and share target; `--set SL` writes
+  `manifest.json` and `SHA256SUMS.txt`. Reviewed by Muse (no defect; the LAP confound and a missing manifest test were its
+  findings, the test is added); the generator test runs 1,166 checks.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
