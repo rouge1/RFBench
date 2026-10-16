@@ -366,6 +366,54 @@ def check_mix(side, label, tol=3.0):
     check(no_fhs(side), '%s: no FHS and no page exchange' % label)
 
 
+def check_np(side, label, full=True):
+    """E_np: no IDs, exact class shares on each side, 78 % NULL/POLL of all bursts, real CRCs, truth in the sidecar."""
+    rb = rendered(side)
+    check(rb and not [e for e in side['bursts'] if e['ptype'] == 'ID'] and
+          all(e['role'] in ('master', 'slave') for e in side['bursts']),
+          '%s: no ID and no page-train burst: master and slave rows only' % label)
+    check(side['kind'] == 'endlen_np' and side['mix_target_pct'] == G.NP_MIX and
+          side['answer_target_pct'] == G.NP_ANSWER and side['np_share_target_all_pct'] == 78.0,
+          '%s: the sidecar says what the targets are' % label)
+
+    def cl(e):
+        return e['ptype'] + '_0' if e['ptype'] in ('DH1', 'DM1') and e['body_bytes'] == 0 else e['ptype']
+    m = [e for e in rb if e['sender'] == 'master']
+    sl = [e for e in rb if e['sender'] == 'slave']
+    n_slack = 1.0 if full else 6.0
+    for who, es, want in (('master', m, G.NP_MIX), ('slave', sl, G.NP_ANSWER)):
+        got = {k: 100.0 * sum(cl(e) == k for e in es) / len(es) for k in want}
+        worst = max(abs(got[k] - want[k]) for k in want)
+        check(worst <= n_slack, '%s: %s-side shares %s within %.0f point of the targets (worst %.2f)' % (
+            label, who, ', '.join('%s %.1f' % kv for kv in sorted(got.items())), n_slack, worst))
+        check(all(e['ptype'] in ('NULL', 'POLL', 'DH1', 'DM1') for e in es), '%s: %s ptypes are NULL, POLL, DH1, DM1'
+              % (label, who))
+    check(all(e['ptype'] != 'POLL' for e in sl), '%s: the slave never sends a POLL' % label)
+    npn = 100.0 * sum(e['ptype'] in ('NULL', 'POLL') for e in rb) / len(rb)
+    check(abs(npn - 78.0) <= (3.0 if full else 6.0) and abs(side['np_share_measured_all_pct'] - npn) < 0.01,
+          '%s: NULL/POLL are %.1f %% of ALL bursts of the LAP (target 78 +-3), the sidecar says so' % (label, npn))
+    pm = sum(e['ptype'] == 'POLL' for e in m)
+    nm = sum(e['ptype'] == 'NULL' for e in m)
+    check(abs(pm - nm) <= max(2, 0.02 * len(m)), '%s: master POLL : NULL is %d : %d (about 1 : 1)' % (label, pm, nm))
+    pay = [e for e in rb if e['ptype'] in ('DH1', 'DM1')]
+    emp = [e for e in pay if e['body_bytes'] == 0]
+    check(pay and abs(len(emp) - len(pay) / 2) <= max(3, 0.05 * len(pay)),
+          '%s: payload packets %d, half empty (%d) and half with a body' % (label, len(pay), len(emp)))
+    check(all(1 <= e['body_bytes'] <= MAXBODY[e['ptype']] for e in pay if e['body_bytes']),
+          '%s: bodies DH1 1..27 and DM1 1..17 bytes' % label)
+    check(all(e['crc'] and e['crc_valid'] for e in pay) and not any(e['crc'] for e in rb if e['ptype'] in ('NULL', 'POLL')),
+          '%s: every DH1/DM1 has a CRC, marked valid; NULL and POLL have none' % label)
+    check(all(e['lap'] == side['lap'] and e['uap'] == side['uap'] for e in side['bursts']),
+          '%s: one LAP / one UAP on every burst' % label)
+    if full:
+        check(len(rb) > 6000 and side['n_records_lap'] == len(rb),
+              '%s: %d records for the LAP (more than 6000)' % (label, len(rb)))
+    else:
+        check(side['n_records_lap'] == len(rb), '%s: n_records_lap %d' % (label, len(rb)))
+    need = ('ptype', 'body_bytes', 'onair_bits', 'crc_valid', 'info_bytes', 'payload_bits_air')
+    check(all(k in e for e in side['bursts'] for k in need), '%s: every burst row carries %s' % (label, ', '.join(need)))
+
+
 def no_fhs(side):
     return all(e['ptype'] != 'FHS' and e['role'] in ('id_page', 'master', 'slave') for e in side['bursts'])
 
@@ -453,7 +501,8 @@ def machinery(iq, side, label, n=20, nd=10):
     t2.check_sidecar(side, label)
     t2.check_positions(iq, side, label, n=n)
     t2.check_decode(iq, side, label, n=nd)
-    t2.check_ids(iq, side, label, n=6)
+    if any(e['ptype'] == 'ID' for e in side['bursts']):
+        t2.check_ids(iq, side, label, n=6)
     t2.check_channels(side, label)
     t2.check_sizes(iq, side, label)
     t2.check_overlap(side, label)
@@ -466,7 +515,7 @@ def machinery(iq, side, label, n=20, nd=10):
 def test_samples():
     print('== sample renders at 45 dB: the machinery, lengths, payloads', flush=True)
     for stem, dur in (('E_mix_s1', 0.5), ('E_ladder_s1', 0.6), ('E_long_s1', 0.9), ('E_mix_20msps_s1', 0.5),
-                      ('E_ladder_20msps_s1', 0.6)):
+                      ('E_ladder_20msps_s1', 0.6), ('E_np_s1', 0.6)):
         kw = dict(FAST, duration=dur)
         if stem.startswith('E_ladder'):
             kw['ladder_reps'] = 1
@@ -475,8 +524,10 @@ def test_samples():
                                                                  len(rendered(side)), secs), flush=True)
         machinery(iq, side, stem)
         t2.check_noise(iq, side, stem)
-        if stem in ('E_mix_s1', 'E_long_s1'):
+        if stem in ('E_mix_s1', 'E_long_s1', 'E_np_s1'):
             check_end(iq, side, stem + '@45dB', strict=True)
+        if stem == 'E_np_s1':
+            check_np(side, stem + '@0.6s', full=False)
         kinds = {e['ptype'] for e in rendered(side)}
         check(len(kinds) >= 3, '%s: ptypes in the samples: %s' % (stem, sorted(kinds)))
         if stem.endswith('_20msps_s1'):
@@ -524,6 +575,8 @@ def test_plans():
             check_40(side, stem)
         if G.SPECS[stem]['kind'] == 'mix':
             check_mix(side, stem)
+        elif G.SPECS[stem]['kind'] == 'np':
+            check_np(side, stem)
         elif G.SPECS[stem]['kind'] == 'ladder':
             check_ladder(side, stem)
         else:
@@ -632,6 +685,10 @@ def run_mix(iq, side, label):
     check_mix(side, label)
 
 
+def run_np(iq, side, label):
+    check_np(side, label, full=False)
+
+
 def run_long(iq, side, label):
     check_long(side, label)
     t2.check_overlap(side, label)
@@ -678,6 +735,22 @@ def test_mutants():
         return w
     mutant({'mix_weights': doubled}, 'E_mix_s1', dict(duration=4.0), run_mix, ['master-side shares'],
            'empty DH1 density x2 (share target missed)', plan_only=True)
+
+    def null_x2(w):
+        w = dict(w)
+        w['NULL'] = 2 * w['NULL']
+        return w
+
+    def answers_payload(w):
+        w = dict(w)
+        w['NULL'] = 30.0
+        return w
+    mutant({'np_weights': null_x2}, 'E_np_s1', dict(duration=4.0), run_np, ['master-side shares'],
+           'E_np: NULL twice as dense on the master side', plan_only=True)
+    mutant({'np_answer_weights': answers_payload}, 'E_np_s1', dict(duration=4.0), run_np,
+           ['slave-side shares', 'of ALL bursts'], 'E_np: only 30 % of the slave answers NULL', plan_only=True)
+    mutant({'draw_uap': lambda rng: 0x00}, 'E_np_s1', dict(duration=0.5), run_uap,
+           ['UAP outside', 'no truth UAP'], 'E_np: a UAP of 0x00', plan_only=True)
     mutant({'draw_uap': lambda rng: 0x00}, 'E_mix_s1', dict(duration=0.5), run_uap, ['UAP outside', 'no truth UAP'],
            'a UAP of 0x00', plan_only=True)
     mutant({'render_fs': lambda fs: 40e6}, 'E_mix_20msps_s1', dict(duration=0.3), run_20,
@@ -710,6 +783,8 @@ def verify(cf32, json_path, n_pos=60, n_dec=60):
     kind = side['kind']
     if kind.endswith('mix'):
         check_mix(side, label)
+    elif kind.endswith('np'):
+        check_np(side, label)
     elif kind.endswith('ladder'):
         check_ladder(side, label)
     else:

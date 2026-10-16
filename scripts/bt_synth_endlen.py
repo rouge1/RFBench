@@ -79,6 +79,11 @@ SLOTS = {'NULL': 1, 'POLL': 1, 'DM1': 1, 'DH1': 1, 'AUX1': 1, 'DM3': 3, 'DH3': 3
 MIX = {'ID': 20.0, 'NULL': 10.0, 'POLL': 5.0, 'DH1_0': 15.0, 'DM1_0': 15.0, 'AUX1': 10.0, 'DH1': 10.0,
        'DH1_full': 5.0, 'DM1': 5.0, 'DM1_full': 5.0}
 MIX_TOLERANCE = 3.0
+#: E_np (NULL/POLL-heavy connection, no IDs): master-side class mix and slave-answer mix, percent of each side.
+#: NULL/POLL are 66 % of the master packets and 90 % of the answers: 78 % of ALL bursts of the LAP, answers counted.
+NP_MIX = {'POLL': 33.0, 'NULL': 33.0, 'DH1_0': 8.5, 'DM1_0': 8.5, 'DH1': 8.5, 'DM1': 8.5}
+NP_ANSWER = {'NULL': 90.0, 'DH1_0': 2.5, 'DM1_0': 2.5, 'DH1': 2.5, 'DM1': 2.5}
+NP_TARGET_ALL, NP_TOLERANCE = 78.0, 3.0
 
 SPECS = {}
 
@@ -93,9 +98,11 @@ _add('E_ladder_s1', 9603, 'ladder', master_cfo_hz=-30e3)
 _add('E_mix_20msps_s1', 9604, 'mix', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 _add('E_long_s1', 9605, 'long', master_cfo_hz=-30e3)
 _add('E_ladder_20msps_s1', 9606, 'ladder', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
+_add('E_np_s1', 9607, 'np', master_cfo_hz=-30e3)
 SETS = {'E_mix': ['E_mix_s1', 'E_mix_s2'], 'E_ladder': ['E_ladder_s1'],
         'E_20': ['E_mix_20msps_s1', 'E_ladder_20msps_s1'], 'E_long': ['E_long_s1']}
-SETS['all'] = SETS['E_mix'] + SETS['E_ladder'] + SETS['E_20'] + SETS['E_long']
+SETS['E_np'] = ['E_np_s1']
+SETS['all'] = SETS['E_mix'] + SETS['E_ladder'] + SETS['E_20'] + SETS['E_long']      # the six delivered files; E_np is apart
 
 
 # --- hooks: what the truth and the samples are each made with (the test's mutants patch these) -----------------
@@ -130,6 +137,14 @@ def end_extra_symbols():
 
 
 def mix_weights(w):
+    return w
+
+
+def np_weights(w):
+    return w
+
+
+def np_answer_weights(w):
     return w
 
 
@@ -318,6 +333,39 @@ def plan_mix(spec, rng, t_rng, n_slots, fs, center, slave_cfo):
     return evs, info
 
 
+def np_class(cls, rng):
+    """(ptype, body bytes) of an E_np class: ``_0`` is empty (payload header + CRC), the others have a body."""
+    return {'NULL': ('NULL', 0), 'POLL': ('POLL', 0), 'DH1_0': ('DH1', 0), 'DM1_0': ('DM1', 0),
+            'DH1': ('DH1', int(rng.integers(1, 28))), 'DM1': ('DM1', int(rng.integers(1, 18)))}[cls]
+
+
+def plan_np(spec, rng, t_rng, n_slots, fs, center, slave_cfo):
+    """One connection of NULL/POLL-heavy traffic: no IDs, no page train; exact class counts on each side."""
+    chans = sb.a_channels(fs, center)
+    lap, uap, _, _, tries = draw_ident(rng, fs, center, K0, K0 + n_slots, False)
+    ks = np.arange(K0, K0 + n_slots)
+    m = int(CONN_DENSITY * n_slots)
+    used = sorted(int(k) for k in rng.permutation(ks)[:m])
+    counts = largest_remainder(m, np_weights(dict(NP_MIX)))
+    acounts = largest_remainder(m, np_answer_weights(dict(NP_ANSWER)))
+    classes = [c for c in sorted(counts) for _ in range(counts[c])]
+    classes = [classes[i] for i in rng.permutation(len(classes))]
+    answers = [c for c in sorted(acounts) for _ in range(acounts[c])]
+    answers = [answers[i] for i in rng.permutation(len(answers))]
+    clk_start = int(rng.integers(1 << 18, 1 << 26)) * 4
+    evs = []
+    for n, (k, cls, acls) in enumerate(zip(used, classes, answers)):
+        ch = int(chans[int(rng.integers(0, len(chans)))])
+        ptype, body_n = np_class(cls, rng)
+        a_type, a_body = np_class(acls, rng)
+        evs += exchange(k, ptype, body_n, 2 * n, ch, clk_start + 4 * (k - K0), lap, uap, a_type, a_body, t_rng,
+                        slave_cfo)
+    info = dict(lap=lap, uap=uap, tries=tries, n_conn=m, train_slots=0, free_slots=n_slots - m,
+                conn_clk_start=clk_start, mix_counts_planned=counts, answer_counts_planned=acounts,
+                channels=chans, train_clke_at_slot16=None)
+    return evs, info
+
+
 def plan_ladder(spec, rng, t_rng, n_slots, fs, center, slave_cfo, reps=None):
     chans = sb.a_channels(fs, center)
     lap, uap, _, _, tries = draw_ident(rng, fs, center, K0, K0 + n_slots, False)
@@ -387,6 +435,8 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     t_rng = np.random.default_rng([seed, 17])
     if spec['kind'] == 'mix':
         evs, info = plan_mix(spec, rng, t_rng, n_slots, fs, center, cfo)
+    elif spec['kind'] == 'np':
+        evs, info = plan_np(spec, rng, t_rng, n_slots, fs, center, cfo)
     elif spec['kind'] == 'ladder':
         evs, info = plan_ladder(spec, rng, t_rng, n_slots, fs, center, cfo, ladder_reps)
     else:
@@ -423,7 +473,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     def cls(e):
         if e['ptype'] in ('DH1', 'DM1') and e['body_bytes'] == 0:
             return e['ptype'] + '_0'
-        if e['ptype'] in ('DH1', 'DM1') and e['body_bytes'] == LONGEST[e['ptype']]:
+        if spec['kind'] != 'np' and e['ptype'] in ('DH1', 'DM1') and e['body_bytes'] == LONGEST[e['ptype']]:
             return e['ptype'] + '_full'
         return e['ptype']
     shares, shares_all = {}, {}
@@ -434,8 +484,8 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     side.update(
         generator='SDR scripts/bt_synth_endlen.py', name='endlen_' + spec['stem'], kind='endlen_' + spec['kind'],
         onair_counts=dict(sorted(counts.items())),
-        mix_target_pct=dict(MIX) if spec['kind'] == 'mix' else None,
-        mix_tolerance_points=MIX_TOLERANCE if spec['kind'] == 'mix' else None,
+        mix_target_pct=dict(MIX) if spec['kind'] == 'mix' else dict(NP_MIX) if spec['kind'] == 'np' else None,
+        mix_tolerance_points=MIX_TOLERANCE if spec['kind'] in ('mix', 'np') else None,
         mix_measured_pct={k: 100.0 * v / max(len(master), 1) for k, v in sorted(shares.items())},
         mix_measured_all_bursts_pct={k: 100.0 * v / max(len(allr), 1) for k, v in sorted(shares_all.items())},
         mix_note='measured over the rendered bursts of the MASTER side (page-train IDs and master packets); slave '
@@ -479,7 +529,33 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
                'Multi-slot packets (E_long): the slave answer row\'s slot_start_us / slot_offset_us name the '
                'master\'s LAST slot of the packet (offset 625 us); start_us is the absolute time and is the '
                'master start + 625 us x slots + timing_offset_us.'])
-    if spec['kind'] != 'mix':
+    if spec['kind'] == 'np':
+        sl = [e for e in allr if e['sender'] == 'slave']
+        for e in side['bursts']:
+            e['crc_valid'] = bool(e['crc'])         # every CRC is the true one: nothing in the file is corrupted
+        npn = lambda es: 100.0 * sum(e['ptype'] in ('NULL', 'POLL') for e in es) / max(len(es), 1)  # noqa: E731
+        side.update(
+            answer_target_pct=dict(NP_ANSWER),
+            answer_measured_pct={k: 100.0 * v / max(len(sl), 1) for k, v in sorted(
+                {c: sum(cls(e) == c for e in sl) for c in NP_ANSWER}.items())},
+            np_share_target_all_pct=NP_TARGET_ALL, np_share_tolerance_points=NP_TOLERANCE,
+            np_share_measured_master_pct=npn(master), np_share_measured_all_pct=npn(allr),
+            np_share_measured_slave_pct=npn(sl), n_records_lap=len(allr),
+            mix_note='E_np: the master side is POLL and NULL 1:1 (66 % together) and 34 % DH1/DM1 payload packets, '
+                     'half empty (payload header + CRC) and half with a body (DH1 1..27 bytes, DM1 1..17 bytes); '
+                     'the slave answers NULL 90 % of the time, the rest DH1/DM1 in the same four classes. NULL and '
+                     'POLL are then 78 % of ALL bursts of the LAP (np_share_measured_all_pct), the payload packets '
+                     '22 %. mix_measured_pct is over the rendered MASTER bursts, answer_measured_pct over the '
+                     'slave\'s, mix_measured_all_bursts_pct over both. There are no IDs in this file and no page '
+                     'train; every burst belongs to the one connection (one LAP, one UAP).',
+            ids_same_lap_note='no IDs in this file',
+            crc_note='crc is whether the type carries a CRC-16; crc_valid is the same: every CRC in the file is '
+                     'correct (nothing is corrupted), computed with the connection\'s UAP')
+        side['notes'] = [n for n in side['notes'] if 'page-train IDs follow' not in n]
+        side['notes'].append('E_np has no IDs and no page train; connection channels are drawn per exchange from the '
+                             'in-window list, as in E_mix.')
+        side['per_burst_keys'] = sorted(side['bursts'][0])
+    if spec['kind'] not in ('mix', 'np'):
         side.pop('mix_target_pct')
         side.pop('mix_tolerance_points')
     return plan
