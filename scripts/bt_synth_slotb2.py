@@ -923,7 +923,7 @@ def write_manifest(out_dir, stems, commands):
         row = dict(stem=stem, file=os.path.basename(base) + '.cf32', sidecar=os.path.basename(base) + '.json',
                    lap='0x%06X' % side['lap'], uap='0x%02X' % side['uap'], **side['cell'],
                    id_share_measured=side['id_share_measured'], n_bursts=side['n_bursts'], n_rendered=side['n_rendered'],
-                   n_samples=side['n_samples'], bytes=os.path.getsize(base + '.cf32'),
+                   n_samples=side['n_samples'], snr_db=side['snr_db'], bytes=os.path.getsize(base + '.cf32'),
                    generator_commit=side['generator_commit'])
         for ext in ('.cf32', '.json'):
             h = hashlib.sha256()

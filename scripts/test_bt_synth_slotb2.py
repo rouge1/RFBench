@@ -1006,6 +1006,27 @@ def test_samelap():
     with quiet() as failed:
         check_sl_cell(plan_full(g.sl_stem('0466AB', -30e3, 0, 1))['sidecar'], 'bad', '0466AB', -30e3, 10, 1, 87)
     check(failed, 'SL: the cell check fails on a phase-0 file claimed as phase 10 (%d checks failed)' % len(failed))
+    # the manifest and the checksums of a set written to a folder (two short files)
+    import hashlib
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        two = [g.sl_stem('0466AB', -30e3, 10, 1), g.sl_stem('662492', 0.0, 20, 1)]
+        with quiet():
+            for st_ in two:
+                g.write_file(st_, td, duration=0.2)
+        g.write_manifest(td, two, ['cmd'])
+        man = json.load(open(os.path.join(td, 'manifest.json')))
+        sums = dict(reversed(l.split('  ', 1)) for l in open(os.path.join(td, 'SHA256SUMS.txt')).read().split('\n') if l)
+        rows = {r['stem']: r for r in man['files']}
+        ok = set(rows) == set(two) and len(sums) == 4
+        for st_, r in rows.items():
+            f = os.path.join(td, r['file'])
+            ok = ok and sums[r['file']] == hashlib.sha256(open(f, 'rb').read()).hexdigest() == r['sha256_cf32'] and \
+                sums[r['sidecar']] == r['sha256_json'] and r['bytes'] == 8 * r['n_samples'] and r['snr_db'] == 20.0
+        check(ok and rows[two[0]]['lap'] == '0x%06X' % json.load(open(os.path.join(td, rows[two[0]]['sidecar'])))['lap'] and rows[two[0]]['cfo_hz'] == -30e3 and
+              rows[two[0]]['first_id_phase_samples'] == 10 and rows[two[0]]['schedule_seed'] == 9523 and
+              rows[two[1]]['lap_name'] == '662492' and rows[two[1]]['offset_us'] == 50.5 and rows[two[1]]['noise_seed'] == 1 and
+              rows[two[1]]['id_share_target'] == 50, 'SL: manifest.json and SHA256SUMS.txt (LAP, CFO, offset, seeds, share, sha256)')
     # samples: the noise follows the noise seed, the signal follows the cell
     print('  small renders (0.5 s)', flush=True)
     a, sa, _ = make(g.sl_stem('0466AB', -30e3, 0, 1), duration=0.5)
