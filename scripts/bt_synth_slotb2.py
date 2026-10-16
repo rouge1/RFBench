@@ -102,6 +102,17 @@ Per burst ``phase`` is ``page`` for IDs and ``connection`` otherwise.
 **P4: C_20msps, R_20msps_s1.**  20 samples per symbol on 2441.0 MHz, window +-8 MHz, 10 s; the centre channel is
 39.  ``C_20msps`` is the pager's IDs alone (the first train holds 43 and at least 4 in-window channels, and no
 train has 39); ``R_20msps_s1`` is the P1 construction.
+
+**P5: S_<LAP>_c<cfo>_p<phase>[_id10]_n<noise>** (``--set SL``, 29 files, bluey's s4 audit).  The X_bda construction on the
+schedule (``seed``) of ``X_bda_id87_s1`` (LAP 0x0466AB, share 87) or of ``X_bda_id50_s1`` (LAP 0x662492, share 50): the
+(-30 kHz, phase 10) cell is that file's schedule burst for burst.  Per file the **master/pager carrier offset** (``c0`` or
+``cm30``), the **symbol phase** of the first IDs (``p``: ``--offset-us`` = 50 + p / 40, so ``(start_sample + timing_frac) %
+40`` = p for every rendered connection burst and every first ID; a second ID is p + 20) and the **noise seed** (``n``: the
+noise and each burst's carrier phase, separate from the schedule seed) are set.  Cells: both LAPs x CFO {0, -30 kHz} x
+phase {0, 10} x noise {1, 2} (16), phase {20, 30} x noise 1 (8), the low-density cell (LAP 0x0466AB, -30 kHz, phase 10,
+share target 10, ``_id10``), and the sweep p = 5, 15, 25, 35 (LAP 0x0466AB, -30 kHz).  Per burst ``cfo_hz``, ``start_sample``
+and ``timing_frac`` (always 0 here: the grid is whole-sample) as in every file; a top-level ``cell`` block names the cell.
+``--set SL`` also writes ``manifest.json`` and ``SHA256SUMS.txt``.
 """
 import argparse
 import json
@@ -164,12 +175,40 @@ for _n, _share in enumerate((10, 10, 50, 50, 87, 87)):
          master_cfo_hz=-30e3 if _n % 2 == 0 else 30e3)
 for _n, _share in enumerate((10, 50, 87)):
     _add('X_bda_id%d_s1' % _share, 9521 + _n, 'X', mode='bda', share=_share, master_cfo_hz=-30e3)
+# P5, the same-LAP set for bluey's s4 audit: the X_bda construction on the schedule (seed) of X_bda_id87_s1 (LAP 0x0466AB,
+# UAP 0x5F, ID share 87) and of X_bda_id50_s1 (LAP 0x662492, UAP 0x15, ID share 50), with the master's carrier offset, the
+# symbol phase of the first IDs (``--offset-us`` = 50 + phase / 40, so start_sample % 40 = phase) and the noise seed set per
+# file.  The schedule seed fixes the LAP, UAP, clock, connection and train; the noise seed (noise, carrier phase of each burst)
+# is separate, so the cells of one LAP differ only in CFO, phase and noise.
+SL_SCHEDULES = {'0466AB': dict(seed=9523, share=87), '662492': dict(seed=9522, share=50)}
+SL_CELLS = []                      # (lap name, cfo_hz, phase, noise seed, share or None)
+for _lap in SL_SCHEDULES:
+    for _cfo in (0.0, -30e3):
+        for _ph, _noises in ((0, (1, 2)), (10, (1, 2)), (20, (1,)), (30, (1,))):
+            for _nz in _noises:
+                SL_CELLS.append((_lap, _cfo, _ph, _nz, None))
+SL_CELLS.append(('0466AB', -30e3, 10, 1, 10))                      # the low-density cell
+for _ph in (5, 15, 25, 35):                                         # the sweep
+    SL_CELLS.append(('0466AB', -30e3, _ph, 1, None))
+
+
+def sl_stem(lap, cfo, phase, noise, share=None):
+    return 'S_%s_c%s_p%d%s_n%d' % (lap, 'm30' if cfo < 0 else '0', phase, '' if share is None else '_id%d' % share, noise)
+
+
+for _lap, _cfo, _ph, _nz, _sh in SL_CELLS:
+    _sched = SL_SCHEDULES[_lap]
+    _add(sl_stem(_lap, _cfo, _ph, _nz, _sh), _sched['seed'], 'X', mode='bda', share=_sched['share'] if _sh is None else _sh,
+         master_cfo_hz=_cfo, offset_us=50.0 + _ph / 40.0, noise_seed=_nz, cell=dict(
+             lap_name=_lap, cfo_hz=_cfo, first_id_phase_samples=_ph, noise_seed=_nz, schedule_seed=_sched['seed']))
+
 _add('C_20msps', 9531, 'C', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 _add('R_20msps_s1', 9532, 'R', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 
 SETS = {'P1': ['R_s1', 'R_s2', 'R_s3'],
         'P2': [s for s in SPECS if s.startswith('X_')],
         'P4': ['C_20msps', 'R_20msps_s1']}
+SETS['SL'] = [sl_stem(*c) for c in SL_CELLS]
 SETS['all'] = SETS['P1'] + SETS['P2'] + SETS['P4']
 
 
@@ -697,11 +736,11 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
                                                                     extra_top.get('uap'))) +
         ' For an FHS whitening_clk6_1 is 32 + X (the Xprc input, bits 5..0 of the pseudo-clock (X|0x20) << 1 >> 1), '
         'not a clock; libbtbb is handed whitening_clk6_1 << 1.',
-        'symbol_phase_note': 'symbol_phase = start_sample %% %d, before timing_frac. offset 50.25 us puts first IDs at '
+        'symbol_phase_note': 'symbol_phase = start_sample %% %d, before timing_frac. offset %g us puts first IDs at '
                              'phase %d and second IDs at %d of %d (bluey\'s detector is blind at %d); a slave burst '
                              'carries its own timing offset, so its phase is whatever that gives' % (
-                                 sps, int(round(50.25 * ups)) % sps, int(round(50.25 * ups + 312.5 * ups)) % sps, sps,
-                                 sps // 2),
+                                 sps, float(off), int(round(float(off) * ups)) % sps,
+                                 int(round(float(off) * ups + 312.5 * ups)) % sps, sps, sps // 2),
         'hec_alias_note': sb.hec_alias_note(),
         'channels': extra_top.get('channels', {}), 'selection_note': extra_top['selection_note'],
         'crossings': crossings, 'n_bursts': len(entries), 'n_samples': total, 'n_rendered': len(jobs),
@@ -745,16 +784,17 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
 # --- the file --------------------------------------------------------------------------------------------
 
 def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift_ppm=None, slave_cfo_hz=None,
-              master_cfo_hz=None):
+              master_cfo_hz=None, noise_seed=None):
     """The sidecar and the render jobs of a file, no samples made. ``duration`` shortens a file for a test (the
     plan of its first part is that of the full file for the P1 and C files)."""
     spec = dict(SPECS[stem])
     if seed is not None:
         spec['seed'] = seed
     seed = spec['seed']
+    plan_seed = spec.get('noise_seed', seed) if noise_seed is None else noise_seed      # noise and carrier phases
     fs, center = spec['fs'], spec['center']
     dur = spec['duration'] if duration is None else duration
-    off = Fraction(str(OFFSET_US if offset_us is None else offset_us))
+    off = Fraction(str(spec.get('offset_us', OFFSET_US) if offset_us is None else offset_us))
     drift = 0.0 if drift_ppm is None else drift_ppm
     cfo = SLAVE_CFO_HZ if slave_cfo_hz is None else slave_cfo_hz
     n_slots = int(math.floor(dur * 1e6 / TX_SLOT_US + 1e-9))
@@ -809,7 +849,11 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     mcfo = spec['master_cfo_hz'] if master_cfo_hz is None else master_cfo_hz
     if spec['kind'] != 'R':
         cfo = mcfo                              # X: the slave answers use the master's offset; C: no slave
-    plan = finish(spec, evs, None, None, exch, seed, seed, fs, center, dur, snr_db, off, drift, cfo, draws_total, extra,
+    if 'cell' in spec:
+        extra['cell'] = dict(spec['cell'], schedule_seed=seed, noise_seed=plan_seed, offset_us=float(off),
+                             master_cfo_hz=float(spec['master_cfo_hz'] if master_cfo_hz is None else master_cfo_hz),
+                             id_share_target=spec['share'])
+    plan = finish(spec, evs, None, None, exch, plan_seed, seed, fs, center, dur, snr_db, off, drift, cfo, draws_total, extra,
                   master_cfo=mcfo)
     side = plan['sidecar']
     if spec['kind'] == 'X':
@@ -868,6 +912,33 @@ def write_file(stem, out_dir, **kw):
     return iq_path, side_path
 
 
+def write_manifest(out_dir, stems, commands):
+    """``manifest.json`` (per file: LAP, UAP, CFO, offset, phase, seeds, ID share, size, sha256) and ``SHA256SUMS.txt``
+    for the files of a set already written to ``out_dir``."""
+    import hashlib
+    rows, sums = [], []
+    for stem in stems:
+        base = os.path.join(out_dir, 'synth_slotb2_%s' % stem)
+        side = json.load(open(base + '.json'))
+        row = dict(stem=stem, file=os.path.basename(base) + '.cf32', sidecar=os.path.basename(base) + '.json',
+                   lap='0x%06X' % side['lap'], uap='0x%02X' % side['uap'], **side['cell'],
+                   id_share_measured=side['id_share_measured'], n_bursts=side['n_bursts'], n_rendered=side['n_rendered'],
+                   n_samples=side['n_samples'], bytes=os.path.getsize(base + '.cf32'),
+                   generator_commit=side['generator_commit'])
+        for ext in ('.cf32', '.json'):
+            h = hashlib.sha256()
+            with open(base + ext, 'rb') as f:
+                for blk in iter(lambda: f.read(1 << 26), b''):
+                    h.update(blk)
+            sums.append('%s  %s' % (h.hexdigest(), os.path.basename(base) + ext))
+            row['sha256' + ext.replace('.', '_')] = h.hexdigest()
+        rows.append(row)
+    with open(os.path.join(out_dir, 'manifest.json'), 'w') as f:
+        json.dump(dict(set='SL', generator='scripts/bt_synth_slotb2.py', commands=commands, files=rows), f, indent=1)
+    with open(os.path.join(out_dir, 'SHA256SUMS.txt'), 'w') as f:
+        f.write('\n'.join(sums) + '\n')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--set', choices=sorted(SETS), help='write a whole set (P1, P2, P4, all)')
@@ -876,7 +947,8 @@ def main(argv=None):
     ap.add_argument('--offset-us', type=float, help='grid offset in us (default 50.25)')
     ap.add_argument('--drift-ppm', type=float, help='+ = the transmitter fast (default 0)')
     ap.add_argument('--duration', type=float, help='seconds of content (a shortened file for a test)')
-    ap.add_argument('--seed', type=int)
+    ap.add_argument('--seed', type=int, help='the schedule seed (LAP, clock, connection, train, slave timing)')
+    ap.add_argument('--noise-seed', type=int, help='the noise and the carrier phase of each burst (default: the file\'s own)')
     ap.add_argument('--snr-db', type=float, default=20.0)
     ap.add_argument('--slave-cfo-hz', type=float, help='the paged device\'s carrier offset (default +30000)')
     ap.add_argument('--master-cfo-hz', type=float, help='the master/pager\'s carrier offset (default per file: -30000, '
@@ -886,12 +958,14 @@ def main(argv=None):
     if not stems:
         ap.error('give --set or --stem')
     kw = dict(snr_db=a.snr_db)
-    for k, v in (('offset_us', a.offset_us), ('drift_ppm', a.drift_ppm), ('duration', a.duration), ('seed', a.seed),
+    for k, v in (('offset_us', a.offset_us), ('drift_ppm', a.drift_ppm), ('duration', a.duration), ('seed', a.seed), ('noise_seed', a.noise_seed),
                  ('slave_cfo_hz', a.slave_cfo_hz), ('master_cfo_hz', a.master_cfo_hz)):
         if v is not None:
             kw[k] = v
     for stem in stems:
         write_file(stem, a.out, **kw)
+    if a.set == 'SL' and not kw.keys() - {'snr_db'}:
+        write_manifest(a.out, stems, ['python -B scripts/bt_synth_slotb2.py --set SL --out %s' % a.out])
 
 
 if __name__ == '__main__':

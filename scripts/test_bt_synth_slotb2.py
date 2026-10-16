@@ -931,6 +931,100 @@ def test_p2_samples():
         del iq
 
 
+def sl_keys(side):
+    return [(e['role'], e['ptype'], e['channel'], e['clk'], e['lap'], e['uap'], e['rendered']) for e in side['bursts']]
+
+
+def check_sl_cell(side, label, lap_name, cfo, phase, noise, share, other=None):
+    """One same-LAP cell: LAP, CFO, phase of every rendered burst, noise seed, the share, the cell block; and, against
+    ``other`` (a sidecar of the same LAP), the same schedule moved by exactly the phase difference."""
+    cell = side['cell']
+    check(side['lap'] == int(lap_name, 16) and cell['lap_name'] == lap_name, '%s: LAP 0x%s' % (label, lap_name))
+    check(all(e['cfo_hz'] == cfo for e in side['bursts']) and side['master_cfo_hz'] == cfo and cell['cfo_hz'] == cfo,
+          '%s: every burst has cfo_hz %g (one device pair)' % (label, cfo))
+    ph = lambda e: (e['start_sample'] + e['timing_frac']) % 40
+    rend = rendered(side)
+    pk = [e for e in rend if e['role'] in ('master', 'slave')]
+    ids = [e for e in rend if e['role'] == 'id_page']
+    check(pk and all(ph(e) == phase for e in pk) and all(e['timing_offset_us'] == 0.0 for e in side['bursts']),
+          '%s: %d connection bursts, all at (start_sample + timing_frac) %% 40 = %d, no timing error' % (label, len(pk), phase))
+    check(ids and all(ph(e) == (phase + (20 if e['half'] == 'second' else 0)) % 40 for e in ids),
+          '%s: %d IDs at the phase (first) or the phase + 20 (second)' % (label, len(ids)))
+    check(cell['first_id_phase_samples'] == phase and abs(cell['offset_us'] - (50 + phase / 40.0)) < 1e-12 and
+          side['grid_offset_us_param'] == cell['offset_us'], '%s: the cell block and the offset (50 + %d / 40 us)' % (label, phase))
+    check(side['noise_seed'] == noise == cell['noise_seed'] and side['seed'] == cell['schedule_seed'],
+          '%s: noise seed %d, schedule seed %d' % (label, noise, side['seed']))
+    check(abs(side['id_share_measured'] - share) < 0.5 and cell['id_share_target'] == share,
+          '%s: ID share %.2f %% (target %d)' % (label, side['id_share_measured'], share))
+    if other is not None:
+        d = {e['start_sample'] - o['start_sample'] for e, o in zip(side['bursts'], other['bursts'])}
+        dp = cell['first_id_phase_samples'] - other['cell']['first_id_phase_samples']
+        check(sl_keys(side) == sl_keys(other) and len(side['bursts']) == len(other['bursts']) and d == {dp},
+              '%s: the same schedule as %s, every burst moved by %d samples' % (label, other['stem'], dp))
+        check([e['carrier_phase_rad'] for e in side['bursts']] == [e['carrier_phase_rad'] for e in other['bursts']]
+              if other['noise_seed'] == side['noise_seed'] else
+              [e['carrier_phase_rad'] for e in side['bursts']] != [e['carrier_phase_rad'] for e in other['bursts']],
+              '%s: carrier phases follow the noise seed' % label)
+
+
+def test_samelap():
+    print('== P5: the same-LAP set (29 files): cells, schedules, phase, CFO, noise seed, the share', flush=True)
+    stems = g.SETS['SL']
+    check(len(stems) == 29 and len(set(stems)) == 29 and all(s in g.SPECS for s in stems),
+          'SL: 29 distinct stems (%d)' % len(stems))
+    cells = [g.SPECS[s]['cell'] for s in stems]
+    core = [c for c in cells if c['lap_name'] in ('0466AB', '662492')]
+    n = lambda **kv: sum(all(c[k] == v for k, v in kv.items()) for c in cells)
+    check(n(first_id_phase_samples=0) == 8 and n(first_id_phase_samples=10) == 9 and n(first_id_phase_samples=20) == 4 and
+          n(first_id_phase_samples=30) == 4 and sum(c['first_id_phase_samples'] in (5, 15, 25, 35) for c in cells) == 4 and
+          n(noise_seed=2) == 8 and n(lap_name='662492') == 12 and len(core) == 29,
+          'SL: phases 0 x8, 10 x9 (8 + the low-density cell), 20 x4, 30 x4, sweep x4; noise seed 2 x8; 12 files on 662492')
+    base = {}
+    for lap, ref in (('0466AB', 'X_bda_id87_s1'), ('662492', 'X_bda_id50_s1')):
+        r = plan_full(ref)['sidecar']
+        base[lap] = r
+        c = plan_full(g.sl_stem(lap, -30e3, 10, 1))['sidecar']
+        check(sl_keys(c) == sl_keys(r) and [e['start_sample'] for e in c['bursts']] == [e['start_sample'] for e in r['bursts']] and
+              c['x_plan']['conn_clk_start'] == r['x_plan']['conn_clk_start'] and c['uap'] == r['uap'] and c['id_share_measured'] == r['id_share_measured'],
+              'SL %s: the (-30 kHz, phase 10) cell has the schedule of %s, burst for burst' % (lap, ref))
+    for lap, share in (('0466AB', 87), ('662492', 50)):
+        first = None
+        for cfo in (0.0, -30e3):
+            for ph, nz in ((0, 1), (0, 2), (10, 1), (10, 2), (20, 1), (30, 1)):
+                st = g.sl_stem(lap, cfo, ph, nz)
+                side = plan_full(st)['sidecar']
+                check_sl_cell(side, st, lap, cfo, ph, nz, share, other=first)
+                first = first or side
+    for ph in (5, 15, 25, 35):
+        st = g.sl_stem('0466AB', -30e3, ph, 1)
+        check_sl_cell(plan_full(st)['sidecar'], st, '0466AB', -30e3, ph, 1, 87, other=plan_full(g.sl_stem('0466AB', -30e3, 10, 1))['sidecar'])
+    low = plan_full(g.sl_stem('0466AB', -30e3, 10, 1, 10))['sidecar']
+    check_sl_cell(low, 'SL low-density', '0466AB', -30e3, 10, 1, 10)
+    check(low['uap'] == base['0466AB']['uap'] and low['seed'] == 9523 and low['x_plan']['clke_at_slot16'] == base['0466AB']['x_plan']['clke_at_slot16'],
+          'SL low-density: the LAP, UAP and clock of the primary schedule (%.2f %% IDs)' % low['id_share_measured'])
+    # the checker fails on a wrong cell
+    with quiet() as failed:
+        check_sl_cell(plan_full(g.sl_stem('0466AB', -30e3, 0, 1))['sidecar'], 'bad', '0466AB', -30e3, 10, 1, 87)
+    check(failed, 'SL: the cell check fails on a phase-0 file claimed as phase 10 (%d checks failed)' % len(failed))
+    # samples: the noise follows the noise seed, the signal follows the cell
+    print('  small renders (0.5 s)', flush=True)
+    a, sa, _ = make(g.sl_stem('0466AB', -30e3, 0, 1), duration=0.5)
+    b, sb_, _ = make(g.sl_stem('0466AB', -30e3, 0, 2), duration=0.5)
+    c, sc, _ = make(g.sl_stem('0466AB', 0.0, 20, 1), duration=0.5)
+    pre = int(0.015 * 40e6)
+    check(np.array_equal(a[:pre], c[:pre]) and not np.array_equal(a[:pre], b[:pre]),
+          'SL samples: the first 15 ms (noise only) are the same for noise seed 1 in two cells and differ for seed 2')
+    for st_, iq, side, cfo, ph, nz in ((g.sl_stem('0466AB', -30e3, 0, 1), a, sa, -30e3, 0, 1),
+                                       (g.sl_stem('0466AB', 0.0, 20, 1), c, sc, 0.0, 20, 1)):
+        check_sidecar(side, st_, off0=50 + ph / 40.0)
+        check_positions(iq, side, st_, n=24)
+        check_decode(iq, side, st_, n=10)
+        check_ids(iq, side, st_, n=8)
+        check_x(side, st_, 87, 'bda')
+        check_cfo_plain(iq, side, st_)
+    del a, b, c
+
+
 def test_regen():
     print('== regeneration and the noise', flush=True)
     for stem, kw in (('R_s1', dict(duration=0.5)), ('X_first_id50_s1', dict(duration=0.2))):
@@ -1173,7 +1267,7 @@ def main():
     t0 = time.time()
     steps = []
     for name, fn in (('p1_samples', test_p1_samples), ('p1_plans', test_p1_plans), ('p4', test_p4_samples),
-                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('regen', test_regen),
+                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('regen', test_regen),
                      ('mutants', test_mutants)):
         t = time.time()
         fn()
