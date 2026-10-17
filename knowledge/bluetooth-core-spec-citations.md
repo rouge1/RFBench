@@ -136,8 +136,72 @@ Read from the Core v6.0 text (page = the page the text sits on).
   so those two never coincide; DM1 (141 + 15k) can. Only a length above BR's maximum for the slot count
   (EV3 382 single slot, DH3 1622, DM5 2871) is certainly EDR. What the burst does show is the DPSK payload
   after the guard and sync.
-- **Not checked:** 8DPSK padding; the AES-CCM MIC's effect on the maxima; the page of the Part A 3.2.1
+- **Not checked:** 8DPSK padding; the AES-CCM MIC's effect on the maxima (open, see the packet-type section below); the page of the Part A 3.2.1
   modulation text; the spec's own byte limits against a second source.
+
+## Every packet type on the air, and the length classes - Table 6.2, 6.5, 6.7, 7, 8.4.3, 8.11 (2026-10-17)
+
+Asked by bluey-ox-walker against its length classes: ID 68 | NP 126 | MID (126 < len < 366) | L366 (about 366,
+here taken as 364..376) | LONG (above 376, the switch is at 377). Page = the page the text sits on; "derived"
+= computed here, not read. Total bits = 72 + 54 + payload as sent (FEC padding as in 7.5); EDR in us.
+
+| type | TYPE code, link | slots | total bits | FEC | payload CRC | payload header | classes it can fall in | cite |
+|---|---|---|---|---|---|---|---|---|
+| ID | none | 1 | 68 | - | - | - | ID | 6.5.1.1 p.522 |
+| NULL, POLL | 0000, 0001 (POLL not on CPB) | 1 | 126 | - | - | - | NP | 6.5.1.2-3 p.522 |
+| FHS | 0010, SCO and ACL | 1 | 366 | 2/3 | yes | none | L366 | 6.5.1.4 p.522-523 |
+| DM1 | 0011, SCO, ACL, CPB | 1 | 171..366 (steps of 15) | 2/3 | yes | 1 | MID, L366 | 6.5.4.1 p.527 |
+| DH1 | 0100, ACL, CPB | 1 | 150..366 (steps of 8) | none | yes | 1 | MID, L366 | 6.5.4.2 p.527 |
+| HV1, HV2, HV3 | 0101, 0110, 0111, SCO | 1 | 366 | 1/3, 2/3, none | no | none | L366 | 6.5.2.1-3 p.525 |
+| DV | 1000, SCO (in place of HV1) | 1 | 251..356 (derived) | 2/3 on the data field | data field only | 1, in the data field | MID | 6.5.2.4 p.525, Fig 6.10 |
+| AUX1 | 1001, ACL, test mode only | 1 | 134..366 (steps of 8) | none | no | 1 | MID, L366 | 6.5.4.7 p.528 |
+| EV3 | 0111, eSCO 1 Mb/s | 1 | 150..382 (steps of 8) | none | yes | none | MID, L366, LONG | 6.5.3.1 p.526 |
+| EV4 | 1100, eSCO 1 Mb/s | up to 3 | 171..1596 (derived) | 2/3 | yes | none | MID, L366, LONG | 6.5.3.2 p.526 |
+| EV5 | 1101, eSCO 1 Mb/s | up to 3 | 150..1582 | none | yes | none | MID, L366, LONG | 6.5.3.3 p.526 |
+| DM3, DH3 | 1010, 1011 | 3 | 186..1626, 158..1622 | 2/3, none | yes | 2 | MID, L366, LONG | 6.5.4.3-4 p.528 |
+| DM5, DH5 | 1110, 1111 | 5 | 186..2871, 158..2870 | 2/3, none | yes | 2 | MID, L366, LONG | 6.5.4.5-6 p.528 |
+| synchronization train packet | DM3, LT_ADDR 0 | 3 | 516 fixed (derived) | 2/3 | yes | 2 | LONG | 8.11.2 p.603, Table 8.11 |
+
+The EDR rows are in the section above (all ten types run MID through L366; all but 2-DH1 and 3-DH1 reach
+LONG). Information bytes in the spec count the payload header ("1 to 18" for DM1); Table 6.8 p.535 lists the
+user bytes without it (DM1 0-17, DH1 0-27, DM3 0-121, DH3 0-183, DM5 0-224, DH5 0-339).
+
+- **TYPE codes by link** (Table 6.2, p.521): 0 NULL; 1 POLL; 2 FHS (SCO, ACL); 3 DM1 (SCO, ACL, CPB);
+  4 DH1 / 2-DH1; 5 HV1; 6 HV2 / 2-EV3; 7 HV3 / EV3 / 3-EV3; 8 DV (SCO) / 3-DH1 (ACL ptt=1, CPB EDR);
+  9 AUX1; 10 DM3 / 2-DH3; 11 DH3 / 3-DH3; 12 EV4 / 2-EV5; 13 EV5 / 3-EV5; 14 DM5 / 2-DH5; 15 DH5 / 3-DH5.
+  The header TYPE alone is ambiguous between BR and EDR (4, 8, 10, 11, 14, 15), between SCO, eSCO and EDR
+  eSCO (6, 7, 12, 13) and between DV and 3-DH1 (8): the link type (LMP ptt, the eSCO setup) or the DPSK part
+  after the header decides. Slot count is fixed by the code (segments 1, 3, 5 slots, p.519-520).
+- **CRC.** Present in FHS, DM1, DH1, DM3-DH5, all EDR ACL and eSCO types, EV3-EV5, and in DV for the data field
+  only (6.5.2, p.524-525); absent in ID, NULL, POLL, HV1-3 and AUX1. In the Connection state the CRC is
+  initialised with the Central's UAP (7.1 p.538; eSCO 6.6.1 item 4 p.531); in a page response with the paged
+  device's, in an inquiry response (FHS, EIR) with the DCI (7.1 p.538, 6.4.6 p.519). A set of "CRC types" that
+  names only 2, 3, 4, 10, 11, 14, 15 is the BR ACL types; EV3/EV4/EV5 (7, 12, 13), 2-EV3 (6), DV (8) and the
+  EDR types also carry a CRC, but only a known link type says which packet a code is.
+- **A full EV3 is 382 bits in one slot** (30 bytes + CRC, no payload header). EV3 at 29 bytes is 374, at 28
+  bytes 366. So LONG is not "multi-slot": it holds EV3 at 30 bytes and 2-EV3, 3-EV3 above 376 (2-EV3 from
+  B=57, 3-EV3 from B=86; derived). MID and L366 are not "one slot" either: DM3, DH3, DM5, DH5, EV4, EV5 and the
+  EDR multi-slot types start at 158 to 186 bits, and their slot extent follows the TYPE, not the burst
+  (p.519; Fig 2.14 p.484: the next packet's slot follows the type's slots).
+- **EDR and 366.** All one-slot EDR types end at 376 (L366 band). The 3-x types reach exactly 366 at B=81 (222
+  symbols, derived, rounding up assumed); the 2-x lengths are 152 + 4B (multiples of 4), never 366.
+- **Other bursts** (BR/EDR; none beyond Table 6.2 and the ID was found):
+  - Synchronization train packet: "a basic rate ACL packet with type DM3 and LT_ADDR of zero", body 28 bytes,
+    2-byte payload header, HEC and CRC initialised with the Central's UAP, **no whitening, no encryption**
+    (8.11.2 p.603; 7, p.537 forbids whitening them); channels 0, 24, 78 only (2.6.4.8 p.494); the scanner's
+    correlator is matched to the Central's channel access code (8.11.1 p.602). Total 126 + 390 = 516 bits
+    (derived). Receivers accept 28 to 121 bytes (p.604).
+  - Extended inquiry response packet: DM1, DM3, DM5, DH1, DH3 or DH5, LT_ADDR 0, body at most 240 bytes, sent
+    on the same frequency 1250 us after the start of the FHS, HEC and CRC initialised with the DCI, whitening
+    as for the FHS (8.4.3 p.569).
+  - CPB logical transport (Table 6.2 CPB columns): 1 Mb/s NULL, DM1, DH1, DM3, DH3, DM5, DH5; EDR NULL, DM1,
+    2-DH1, 3-DH1, 2-DH3, 3-DH3, 2-DH5, 3-DH5. No POLL (6.5.1.3), FHS, AUX1, HV, EV or DV.
+  - Role switch: ID and FHS (6.5.1.1 p.522). AUX1: test mode only, discarded otherwise (6.5.4.7).
+- **Encryption.** With E0 "the entire payload shall be encrypted" (p.537, Fig 7.2: CRC, then encryption), so
+  a passive receiver cannot check a CRC without the key (derived). With AES-CCM only the payload body and MIC
+  are encrypted, the payload header and CRC are not (p.537), so the CRC is checkable. **Not found:** whether the
+  32-bit MIC counts inside the information-byte limits (6.5.4 lists it apart; Table 6.8 footnote C.1). If it
+  is on top, an encrypted DM1 could reach 426 and a DH1 398 bits (derived), LONG either way.
 
 ## What this settles, and what it does not
 
