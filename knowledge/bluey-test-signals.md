@@ -1167,8 +1167,11 @@ reviewed by Opus against the real files, write them; the files are not in git.
   h 0.28 and 0.35 for 0x4426BB and 0x885614 (p10, d23). **Every file has its own noise seed** (3001-3032), so the
   files no longer share one noise array. The new options (`h`, `drift_ppm`, `exchange_ids` in a spec) are opt-in: a
   test renders R_s1, two SL/LT files and an endlen file byte-identical to main's code. The test also measures h from the
-  samples (the peak deviation scales 0.880 / 1.091 of h 0.32's, against 0.875 / 1.094). The generator test runs 1,346
-  checks (53 for this set).
+  samples (the peak deviation scales 0.880 / 1.090 of h 0.32's, against 0.875 / 1.094). The generator test runs 1,350
+  checks (57 for this set). Reviewed by a Claude subagent: the selection re-run reproduced the six LAPs and its
+  pre-filter is conservative; older files byte-identical; it found the d23 sidecars still carrying the fixed-grid text
+  (`drift_law`, `symbol_phase_note`, `notes`) and two loose test checks (exchange_id pairing, h only on IDs), all fixed;
+  every FR sidecar now has `exchange_id_meaning`.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.

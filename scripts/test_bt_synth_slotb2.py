@@ -1146,6 +1146,24 @@ print(json.dumps(out))
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
+def exchange_pairs_ok(side):
+    """exchange_id: exactly one master packet and its answer per id, the id is their TX slot (the master's clk counts
+    from the connection's start clock in steps of 4 per TX slot from slot 16), the answer on the master's channel with
+    clk + 2; null on IDs."""
+    con = [e for e in side['bursts'] if e['role'] in ('master', 'slave')]
+    by = collections.defaultdict(list)
+    for e in con:
+        by[e['exchange_id']].append(e)
+    c0 = side['x_plan']['conn_clk_start']
+    for k, v in by.items():
+        m = [e for e in v if e['role'] == 'master']
+        a = [e for e in v if e['role'] == 'slave']
+        if not (len(m) == 1 and len(a) == 1 and k == g.K0 + (m[0]['clk'] - c0) // 4 and
+                a[0]['channel'] == m[0]['channel'] and a[0]['clk'] == m[0]['clk'] + 2):
+            return False
+    return all(e['exchange_id'] is None for e in side['bursts'] if e['role'] == 'id_page') and len(by) == len(con) // 2
+
+
 def test_freshset():
     print('== P7: the carrier-threshold fresh set (32 files)', flush=True)
     stems = g.SETS['FR']
@@ -1175,7 +1193,7 @@ def test_freshset():
                 all(e['half'] == 'first' for e in ids) and {e['channel'] for e in ids} in allowed and \
                 len(ids) == sel[lap]['n_ids'] and side['modulation']['h'] == c['h'] and \
                 all(e['exchange_id'] is None for e in side['bursts'] if e['role'] == 'id_page') and \
-                set(exc.values()) <= {1, 2} and all(e['cfo_hz'] == 0.0 for e in side['bursts'])
+                all(e['cfo_hz'] == 0.0 for e in side['bursts']) and exchange_pairs_ok(side)
             if c['fr_cell'] == 'd23':
                 cell_ok = abs(side['drift_ppm_signed'] - 23.0) < 1e-9 and len(ph) == 40
                 what = 'drift +23 ppm, IDs at all 40 symbol phases'
@@ -1195,7 +1213,7 @@ def test_freshset():
     for st in ('F_885614_p10_n3002', 'F_885614_p10_h28_n3029', 'F_885614_p10_h35_n3031'):
         iq, side, _ = make(st, duration=0.3)
         vals = []
-        for e in [e for e in rendered(side) if e['role'] == 'id_page'][:20]:
+        for e in [e for e in rendered(side) if e['role'] == 'id_page'][:12] + [e for e in rendered(side) if e['role'] in ('master', 'slave')][:8]:
             s0 = int(e['start_sample'] + 40)
             seg = iq[s0:s0 + 60 * 40] * np.exp(-2j * np.pi * (e['channel_mhz'] - side['center_mhz']) * 1e6 / 40e6 * np.arange(s0, s0 + 2400))
             f = np.angle(seg[40:] * np.conj(seg[:-40])) / (2 * np.pi) * 1e6       # over one symbol: the noise averages out
@@ -1203,7 +1221,7 @@ def test_freshset():
         devs[side['modulation']['h']] = float(np.median(vals))
     r28, r35 = devs[0.28] / devs[0.32], devs[0.35] / devs[0.32]
     check(abs(r28 - 0.28 / 0.32) < 0.02 and abs(r35 - 0.35 / 0.32) < 0.02,
-          'FR h from the samples: the IDs\' peak deviation scales as h (0.28: %.3f of 0.32\'s, want %.3f; 0.35: %.3f, want %.3f)' % (
+          'FR h from the samples (IDs and connection packets): the peak deviation scales as h (0.28: %.3f of 0.32\'s, want %.3f; 0.35: %.3f, want %.3f)' % (
               r28, 0.28 / 0.32, r35, 0.35 / 0.32))
     # the existing files are unchanged: the same samples and sidecars as main's code makes
     cases = [('slotb2', 'R_s1', dict(duration=0.3, snr_db=HIGH)), ('slotb2', 'S_0466AB_cm30_p10_n1', dict(duration=0.2)),
@@ -1233,6 +1251,23 @@ def test_freshset():
               rows[two[1]]['isolated_0'] == 12 and rows[two[0]]['lap_class'] == 'balanced_1' and
               len(open(os.path.join(td, 'SHA256SUMS.txt')).read().split()) == 8,
               'FR: manifest.json names the set and carries class, word statistics, h and drift; SHA256SUMS.txt has 4 lines')
+    # p10b against p10: other noise, the same bursts where the truth says
+    a10, s10, _ = make('F_885614_p10_n3002', duration=0.3)
+    b10, s10b, _ = make('F_885614_p10b_n3003', duration=0.3)
+    pre = int(0.015 * 40e6)
+    check(not np.array_equal(a10[:pre], b10[:pre]) and sl_keys(s10) == sl_keys(s10b) and
+          [e['start_sample'] for e in s10['bursts']] == [e['start_sample'] for e in s10b['bursts']],
+          'FR p10b: another noise realisation (the noise-only lead-ins differ), the same bursts at the same samples')
+    check_positions(b10, s10b, 'F_885614_p10b_n3003', n=16)
+    del a10, b10
+    d = plan_full('F_885614_d23_n3004')['sidecar']
+    p = plan_full('F_885614_p10_n3002')['sidecar']
+    check('+23 ppm' in d['drift_law'] and 'one grid throughout' not in d['drift_law'] and 'every phase' in d['symbol_phase_note']
+          and 'drifting at +23 ppm' in d['notes'][0] and 'Not modelled: drift' not in d['notes'][1] and
+          'one grid throughout' in p['drift_law'] and 'Not modelled: drift' in p['notes'][1] and
+          'exchange_id_meaning' in d and 'exchange_id_meaning' in p,
+          'FR: the d23 sidecars describe their drift (drift_law, symbol_phase_note, notes); the p10 sidecars keep the fixed-grid '
+          'text; both explain exchange_id')
     # one short render checked from the samples
     st_ = 'F_885614_d23_n3004'
     iq, side, _ = make(st_, duration=0.5)

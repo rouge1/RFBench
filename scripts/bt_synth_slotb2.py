@@ -21,7 +21,8 @@ transmits and nothing opens a radio.
 file microsecond ``20000 + offset + 1250 (k - 16) / (1 + drift e-6)``, with ``offset`` 50.25 us and ``drift`` 0
 in every file (``--offset-us``, ``--drift-ppm`` exist as in slotb).  At 40 MS/s that puts first IDs at symbol phase
 10 and second IDs at 30 (away from bluey's dead zone at 20), at 20 MS/s at 5 and 15.  Grid and drift are *not* the
-subject of these files (slotb's are); each file has one grid throughout.  Per burst the truth keys of slotb
+subject of these files (slotb's are); each file has one grid throughout.  (The exception: P7's ``d23``
+files, +23 ppm.)  Per burst the truth keys of slotb
 (``slot_start_us``, ``grid_offset_us``, ``grid_offset_unwrapped_us``, ``start_us``, ``start_mod_625_us``,
 ``header_bits_18``, ``whitening_clk6_1``, ``header_air_bits_54`` ...) are as there; ``slot_offset_us`` (0, 312.5,
 625 or 937.5: the burst's half-slot in its parent TX slot, whose start ``slot_start_us`` is) and
@@ -869,6 +870,24 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
         'bursts': entries,
     }
     side.update({k: v for k, v in extra_top.items() if k not in ('lap', 'uap', 'channels', 'selection_note')})
+    if d1 != 0:
+        # a drift copy (P7 d23): the fixed-grid wording above does not hold for it
+        side['drift_law'] = ('as bt_synth_slotb: TX slot k begins at file microsecond 20000 + offset + 1250 (k - 16) / (1 + '
+                             'drift e-6), offset %g us at slot 16 and drift %+g ppm (+ = the transmitter fast, its slots '
+                             'shorter in file time): the grid walks against the file\'s samples, so the symbol phase of '
+                             'the bursts runs through all %d values' % (float(off), float(1e6 * d1), sps))
+        side['symbol_phase_note'] = ('symbol_phase = start_sample %% %d, before timing_frac. The grid drifts (%+g ppm), so the '
+                                     'first IDs start at phase %d at slot 16 and then take every phase in turn'
+                                     % (sps, float(1e6 * d1), int(round(float(off) * ups)) % sps))
+        side['notes'] = ['Modelled: the master\'s TX slot grid drifting at %+g ppm against the file (one crystal, the slotb '
+                         'law), constant 20 dB SNR, white constant noise through the whole file, random carrier phase per '
+                         'burst, every ID cut by br.gfsk\'s ramp (no tail).' % float(1e6 * d1)] + side['notes'][1:]
+        side['notes'][1] = side['notes'][1].replace('Not modelled: drift (slotb has it), fading', 'Not modelled: fading')
+    if spec.get('exchange_ids'):
+        side['exchange_id_meaning'] = ('exchange_id (per burst) = the TX slot index k of a connection exchange: the master '
+                                       'packet and its answer in the same TX slot share it; null on page IDs. The older key '
+                                       '"exchange" is the P1 page-exchange number and is null on every X burst: key on '
+                                       'exchange_id')
     side['per_burst_keys'] = sorted(entries[0]) if entries else []
     plan = dict(sidecar=side, jobs=jobs, total=total, fs=rfs, center=center, noise_seed=plan_seed)
     return plan

@@ -22,8 +22,8 @@ burst goes through a detector):
 * Taken: the first 2 ``negative``, the first 2 ``positive``, the first ``balanced_1`` and the first ``balanced_0``.
 * The h variants (0.28, 0.35) go to the first ``balanced_1`` and the first ``negative``.
 
-Run: ``python -B scripts/bt_freshset_select.py`` prints every qualifying seed it meets until all six are found, then the
-selection, and writes nothing.
+Run: ``python -B scripts/bt_freshset_select.py`` prints each seed it TAKES (a qualifying seed of a class already full is
+not printed) until all six are found, then the selection, and writes nothing.
 """
 import json
 import os
