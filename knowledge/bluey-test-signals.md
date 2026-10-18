@@ -1108,6 +1108,28 @@ reviewed by Opus against the real files, write them; the files are not in git.
   0.35}, to bound real-device yields. bluey's own next step is a registered threshold-fix candidate (a carrier estimate
   that does not depend on the word, e.g. a two-pass threshold at the midpoint of the decided bits' levels) and an arg()
   discriminator re-slice to split the remainder.
+- **A receiver's own offset on a delivered file (`scripts/bt_rx_offset.py`, 2026-10-17).** Every offset in the synthetic
+  files is the transmitter's (per burst `cfo_hz`); bluey's carrier census reads about -58 kHz on one cluster of real bursts
+  and cannot tell that from a term common to the receiver. The tool turns a delivered slotb2 or endlen file into what a
+  receiver with a wrong reference would have recorded: `--rx-ppm` (**+ = the receiver FAST**; one reference drives LO and
+  sample clock, so **+23.8 ppm reads about -58.1 kHz at 2441 MHz** and stretches time, 286 us over 12 s), `--rx-offset-hz`
+  (a pure rotation, an IF or metadata error: with no ppm it is exactly bluey's `oracle_shift`, `exp(+j 2 pi f n / fs)` with
+  the absolute index; the test's bound is 1e-5, measured 6e-7) and `--dc-spur-db` (a constant at 0 Hz that does not move). The resampler is a 64-tap
+  Kaiser windowed sinc, 4096 phases, flat to about 0.425 fs (-74 dB or better: 17 MHz at 40 MS/s, every channel of the
+  window; 0.47 fs is its -6 dB point), 2.7 Msps (3 min per 12 s file); the first and last ~32 samples are interpolated
+  against zeros (noise lead-in and lead-out).
+  **The truth moves:** `start_sample`, `timing_frac` and every `*_sample` key are receiver samples; `*_us` keys stay true
+  time; `cfo_hz` stays the transmitter's and a new per-burst **`cfo_observed_hz`** is what the receiver reads, exact; a
+  `receiver` block records settings, source and hash; `symbol_phase` is recomputed as the generator defines it,
+  `lead_in_samples` is scaled, and the source's formula notes (`id_end_note`, `grid_offset_definition`, ...) are marked
+  as holding in source samples. A burst is also longer in receiver samples by ppm times its length
+  (0.35 sample for a 366 us packet at 23.8 ppm), so a refit with an unstretched model lands about half that late; the test
+  allows for it. Sidecars of other generators are refused (the rewrite was tested on these two only). The test
+  (`scripts/test_bt_rx_offset.py`, 33 checks) refits bursts, decodes bits, measures the carrier alone and paired against the
+  source, checks `cfo_observed_hz` against a long tone off the centre channel (where its `eps (f_ch - fc)` term is not
+  zero), runs a slow receiver with an offset, and checks the noise, the spur and the manifest. Reviewed by a Claude
+  subagent (Muse was unavailable): no defect in the samples; the sidecar bookkeeping, the flatness claim and the test gaps
+  it found are fixed.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
