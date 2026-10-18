@@ -186,7 +186,7 @@ def plan_piconet(dev, seed, total):
 
 # --- the plan --------------------------------------------------------------------------------
 
-def count_opportunities(entries, not_rendered, band):
+def count_opportunities(entries):
     """Wrong-role opportunities, from plan indices: a rendered one-slot slave burst, then the same piconet's next
     master starting at its piconet_slot + 1 on the same channel, also rendered."""
     by_slot = {}
@@ -295,10 +295,12 @@ def plan_setn(seed=9701, blocks=BLOCKS, block_samples=BLOCK_SAMPLES, level_range
         else:
             entry['burst_phase'] = None
             not_rendered.append(entry)
+    j_final = {jd['id']: [] for jd in joiners}
     for jd, entries in zip(joiners, j_entries):
         for e in entries:
             inside = e['rendered'] and e['channel'] in band
             entry = mx.joiner_entry(e, jd, e['_bits'] if e['rendered'] else None)
+            j_final[jd['id']].append(entry)
             entry.update(sender=e['role'], afh=False, exchange_id=jd['id'] * EXCHANGE_BASE + 0)
             if inside:
                 job = dict(e['_job'])
@@ -312,6 +314,16 @@ def plan_setn(seed=9701, blocks=BLOCKS, block_samples=BLOCK_SAMPLES, level_range
                     entry['outside_band'] = True
                 entry['burst_phase'] = None
                 not_rendered.append(entry)
+    for jd, info in zip(joiners, j_infos):
+        # bt_synth_conf's window counts, recounted over THIS file's band (setn_c renders 31-47 only)
+        bs = j_final[jd['id']]
+        fol = [b for b in bs if b['role'] in ('followup_master', 'followup_slave')]
+        info['n_bursts_in_window'] = sum(b['rendered'] for b in bs)
+        info['fhs_in_window'] = any(b['ptype'] == 'FHS' and b['rendered'] for b in bs)
+        info['id_in_window'] = sum(b['ptype'] == 'ID' and b['role'] == 'id_page' and b['rendered'] for b in bs)
+        info['first_poll_in_window'] = next(b for b in bs if b['role'] == 'followup_master')['rendered']
+        info['n_followup_in_window'] = sum(b['rendered'] for b in fol)
+        info['window_counts_note'] = 'counted over this file\'s band_channels'
     flat.sort(key=lambda t: (t[0]['start_sample'] + t[0]['timing_frac'], t[0]['device'], t[0]['channel']))
     entries = [e for e, _ in flat]
     jobs = [j for _, j in flat]
@@ -373,7 +385,7 @@ def plan_setn(seed=9701, blocks=BLOCKS, block_samples=BLOCK_SAMPLES, level_range
             exchanges.setdefault(e['exchange_id'], []).append(e['rendered'])
     one_rendered = sum(1 for v in exchanges.values() if len(v) == 2 and sum(v) == 1)
     basic = [d for d in devices if not d['afh']][0]
-    opp = count_opportunities(entries, not_rendered, band)
+    opp = count_opportunities(entries)
     sidecar = {
         'generator': 'SDR scripts/bt_synth_multislot.py',
         'generator_commit': bt_synth.commit(),
@@ -480,9 +492,11 @@ def halve_truth(side):
         for o in e.get('overlaps', []):
             o['overlap_samples'] = o['overlap_samples'] / 2.0
     for d in out['devices']:
-        for key in ('slot_grid_offset_samples', 'slot_grid_offset_int', 'slot_grid_offset_frac'):
-            if key in d:
-                d[key] = d[key] / 2.0
+        if 'slot_grid_offset_samples' in d:
+            d['slot_grid_offset_samples'] = d['slot_grid_offset_samples'] / 2.0
+        if 'slot_grid_offset_int' in d:
+            d['slot_grid_offset_int'] = int(math.floor(d['slot_grid_offset_samples']))
+            d['slot_grid_offset_frac'] = d['slot_grid_offset_samples'] - d['slot_grid_offset_int']
         if d.get('exchange'):
             for key in ('origin_sample', 'tick_samples'):
                 d['exchange'][key] = d['exchange'][key] / 2.0
@@ -496,7 +510,7 @@ def halve_truth(side):
         rendered_at_sample_rate=FS, factor=2, taps=DECIM_TAPS, kaiser_beta=DECIM_BETA, cutoff_mhz=DECIM_CUTOFF_MHZ,
         alignment='output sample n is input sample 2n (odd, centred FIR, zeros beyond the file)',
         truth='start_sample + timing_frac, end_sample, slot_boundary_sample, overlap_samples, the devices\' slot grid '
-              'offsets and the joiners\' origin_sample and tick_samples are halved; symbol_phase = int(start_sample % 20); '
+              'offsets (int and frac recomputed from the halved total) and the joiners\' origin_sample and tick_samples are halved; symbol_phase = int(start_sample % 20); '
               'noise_block_samples is the 40 MS/s render\'s (the noise is made at 40 MS/s and filtered)',
         noise='the floor is white at 40 MS/s and filtered with DC gain 1: noise_1mhz holds in the passband; above about '
               '8.6 MHz it rolls off')

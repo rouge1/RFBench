@@ -1,7 +1,7 @@
 """Tests of scripts/bt_synth_multislot.py (SET-N).
 
 The plans of the four files are checked whole (traffic shares, slot rules, the AFH and the basic channel rule,
-exchange ids, sender, the band, the opportunities recounted another way); short renders (0.31 s, a high level so a
+exchange ids, sender, the band, the opportunities recounted from sample positions); short renders (0.31 s, a high level so a
 burst's position can be refitted to a tenth of a sample) check the samples at 40 MS/s, after the decimation to
 20 MS/s and with the interferer.
 
@@ -98,23 +98,24 @@ def check_plan(name, side):
           'without an answer), even' % name)
     # channels: AFH same channel; basic f(k) and f(k + L)
     ok_afh, ok_basic, same_basic, n_basic = True, True, 0, 0
-    hop_afh = {d: ms.channel_fn(dict(dev[d], afh=True)) for d in dev if dev[d]['kind'] == 'piconet' and dev[d]['afh']}
     for v in by_ex.values():
         m = [x for x in v if x['role'] == 'master'][0]
         s = [x for x in v if x['role'] == 'slave']
         d = dev[m['device']]
         addr = d['uap'] << 24 | d['lap']
         if d['afh']:
-            ok_afh = ok_afh and m['channel'] == int(hop_afh[d['id']](m['clk'])) and m['channel'] in ms.MAP and \
+            mask = int(d['hop_map']['used_channels_mask_hex'], 16)
+            ok_afh = ok_afh and m['channel'] == bt_hop.hop_channel(m['clk'], addr, mask) and m['channel'] in ms.MAP and \
                 (not s or (s[0]['channel'] == m['channel'] and s[0]['hop_clk'] == m['clk']))
         else:
-            ok_basic = ok_basic and m['channel'] == bt_hop.hop_channel(m['clk'], addr) and \
-                (not s or (s[0]['channel'] == bt_hop.hop_channel(s[0]['clk'], addr) and
+            ok_basic = ok_basic and m['channel'] == bt_hop.hop_channel(m['clk'], addr) and m['hop_clk'] == m['clk'] and \
+                (not s or (s[0]['channel'] == bt_hop.hop_channel(s[0]['clk'], addr) and s[0]['hop_clk'] == s[0]['clk'] and
                            s[0]['clk'] == (m['clk'] + 2 * m['slots']) & 0x0FFFFFFF))
             if s:
                 n_basic += 1
                 same_basic += s[0]['channel'] == m['channel']
-    check(ok_afh, '%s: AFH piconets: the master on the adapted sequence over 31-50, the answer on the master\'s channel' % name)
+    check(ok_afh, '%s: AFH piconets: the master on bt_hop.hop_channel(clk, address, the sidecar\'s mask), the answer on the '
+          'master\'s channel with the master\'s hop_clk' % name)
     check(ok_basic and n_basic > 100 and same_basic / n_basic < 0.05,
           '%s: the non-AFH piconet (device %d): the master on the basic sequence at its clock, the answer on the basic '
           'sequence at the clock of its own first slot (s + L); same channel in %d of %d exchanges' % (
@@ -136,16 +137,27 @@ def check_plan(name, side):
           '%s: non_afh_burst_indices lists the non-AFH piconet\'s rendered bursts (%d)' % (name, len(side['non_afh_burst_indices'])))
     # opportunities recounted from the exchanges
     opp = collections.Counter()
-    slot_master = {(e['device'], e['piconet_slot']): e for e in rend if e.get('kind') == 'traffic' and e['role'] == 'master'}
+    # recounted from sample positions, not slot numbers: the master whose slot boundary is one slot after the answer's
+    slot_len = side['slot_samples']
+    by_boundary = {(e['device'], round(e['slot_boundary_sample'] / slot_len, 6)): e for e in rend
+                   if e.get('kind') == 'traffic' and e['role'] == 'master'}
     for e in rend:
         if e.get('kind') == 'traffic' and e['role'] == 'slave' and e['slots'] == 1:
-            nxt = slot_master.get((e['device'], e['piconet_slot'] + 1))
+            nxt = by_boundary.get((e['device'], round(e['slot_boundary_sample'] / slot_len + 1, 6)))
             if nxt is not None and nxt['channel'] == e['channel']:
-                opp['afh' if e['afh'] else 'basic'] += 1
-    check(opp['afh'] == side['opportunities']['afh'] and opp['basic'] == side['opportunities']['basic'] and
-          side['opportunities']['afh'] >= 70,
-          '%s: %d wrong-role opportunities (AFH) and %d (non-AFH), recounted (%d collision-free)' % (
-              name, opp['afh'], opp['basic'], side['opportunities']['afh_collision_free']))
+                k = 'afh' if e['afh'] else 'basic'
+                opp[k] += 1
+                opp[k + '_collision_free'] += not e['collision'] and not nxt['collision']
+    st = side['opportunities']
+    check(all(opp[k] == st[k] for k in ('afh', 'afh_collision_free', 'basic', 'basic_collision_free')) and st['afh'] >= 70,
+          '%s: wrong-role opportunities %d AFH (%d collision-free) and %d non-AFH, recounted from slot boundaries in '
+          'samples' % (name, opp['afh'], opp['afh_collision_free'], opp['basic']))
+    joi = [d for d in side['devices'] if d['kind'] == 'joiner']
+    allb = side['bursts'] + side['bursts_not_rendered']
+    check(all(d['exchange']['n_bursts_in_window'] == sum(b['rendered'] for b in allb if b['device'] == d['id']) and
+              d['exchange']['fhs_in_window'] == any(b['rendered'] and b['ptype'] == 'FHS' for b in allb if b['device'] == d['id'])
+              for d in joi),
+          '%s: the joiners\' window counts are counted over this file\'s band' % name)
     one = sum(1 for v in by_ex.values() if len(v) == 2 and sum(x['rendered'] for x in v) == 1)
     check(one == side['n_exchanges_one_member_rendered'], '%s: %d exchanges with one member rendered (the anchorless case)' % (name, one))
 
@@ -328,6 +340,24 @@ def test_samples():
     check(all(e['channel'] in ms.BAND_20 for e in h20['bursts']) and
           all(e['symbol_phase'] == int(e['start_sample'] % 20) for e in h20['bursts']),
           '20 MS/s: every rendered burst is on 31-47; symbol_phase = int(start_sample % 20)')
+    ok = True
+    for a, b in zip(side20['bursts'] + side20['bursts_not_rendered'], h20['bursts'] + h20['bursts_not_rendered']):
+        ok = ok and abs((b['start_sample'] + b['timing_frac']) * 2 - (a['start_sample'] + a['timing_frac'])) < 1e-9
+        for key in ('end_sample', 'slot_boundary_sample'):
+            if a.get(key) is not None:
+                ok = ok and abs(b[key] * 2 - a[key]) < 1e-9
+        ok = ok and [o['overlap_samples'] * 2 for o in b['overlaps']] == [o['overlap_samples'] for o in a['overlaps']]
+    for a, b in zip(side20['devices'], h20['devices']):
+        ok = ok and abs(b['slot_grid_offset_samples'] * 2 - a['slot_grid_offset_samples']) < 1e-9
+        if 'slot_grid_offset_int' in b:
+            ok = ok and isinstance(b['slot_grid_offset_int'], int) and 0 <= b['slot_grid_offset_frac'] < 1 and \
+                abs(b['slot_grid_offset_int'] + b['slot_grid_offset_frac'] - b['slot_grid_offset_samples']) < 1e-9
+        if a.get('exchange'):
+            ok = ok and b['exchange']['origin_sample'] * 2 == a['exchange']['origin_sample'] and \
+                b['exchange']['tick_samples'] * 2 == a['exchange']['tick_samples']
+    check(ok and h20['slot_samples'] * 2 == side20['slot_samples'] and h20['grid_base_samples'] * 2 == side20['grid_base_samples'],
+          '20 MS/s: every sample key of the truth is the 40 MS/s plan\'s halved (positions, ends, slot boundaries, overlaps, '
+          'grid offsets with an integer int part, the joiners\' origin and tick)')
     # alignment and passband of the decimator on a tone
     t = np.exp(2j * np.pi * 7.3e6 / ms.FS * np.arange(1 << 16)).astype(np.complex64)
     yt = np.concatenate(list(ms.decimate_blocks([t[:30000], t[30000:]], len(t))))

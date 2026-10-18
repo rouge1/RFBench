@@ -1056,10 +1056,15 @@ reviewed by Opus against the real files, write them; the files are not in git.
   truth's sample keys halved), `setn_d` (setn_a plus the interf set's bursty Wi-Fi noise moved to +2..+11 MHz, +20 dB
   per MHz while on, 30 % duty; equal to setn_a where no frame is on). Truth adds a file-unique `exchange_id` (`pair`
   restarts per device), `sender`, `afh`, out-of-band bursts in `bursts_not_rendered`, and the interferer keys in
-  `setn_d`. The test (`scripts/test_bt_synth_multislot.py`, 63 checks) checks the four whole plans (shares, slot and
-  parity rules, both channel rules, ids, the band, the opportunities recounted), that bursts rebuilt from their sidecar
-  keys alone are the rendered samples (40 MS/s, and at 20 MS/s from the halved truth to 1.1 % RMS), the 20 MS/s file
-  against an independent numpy decimation, the noise, and the interferer's pairing, level and truth.
+  `setn_d`. The test (`scripts/test_bt_synth_multislot.py`, 68 checks) checks the four whole plans (shares, slot and
+  parity rules, both channel rules against `bt_hop` with the sidecar's own map, ids, the band, the opportunities and
+  the joiners' window counts recounted), that bursts rebuilt from their sidecar keys alone are the rendered samples
+  (40 MS/s, and at 20 MS/s from the halved truth to 1.1 % RMS), every halved 20 MS/s key, the 20 MS/s file against an
+  independent numpy decimation, the noise, and the interferer's pairing, level and truth. Reviewed by a Claude subagent
+  (Muse unavailable): the 40 MS/s files and the interferer sound; it found the joiners' window counts in `setn_c` still
+  counted over mixed's 27-51 gate, the 20 MS/s grid offset's int part left non-integer, and test gaps, all fixed. The
+  non-AFH piconet has no wrong-role opportunities (0 of about 400 transitions land on the same channel, about 1/79):
+  it tests the parity filter where the answer is on another channel, not the wrong-role case.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
