@@ -1046,6 +1046,53 @@ def test_samelap():
     del a, b, c
 
 
+def test_laptest():
+    print('== P6: the LAP test (6 files): two more schedules on 0x0466AB\'s recipe', flush=True)
+    stems = g.SETS['LT']
+    check(len(stems) == 6 and len(set(stems)) == 6 and all(s in g.SPECS for s in stems) and not set(stems) & set(g.SETS['SL']),
+          'LT: 6 distinct stems, none of them in SL (%d)' % len(stems))
+    check(all('sync_word_ones' not in g.SPECS[s]['cell'] for s in g.SETS['SL']),
+          'LT: the SL cells are as before (no sync_word_ones key)')
+    for lap, seed, ones, n_ids in (('2044EF', 10426, 24, 5568), ('0AA176', 9872, 32, 5260)):
+        first = None
+        for cfo, ph in ((0.0, 0), (0.0, 10), (-30e3, 10)):
+            st = g.sl_stem(lap, cfo, ph, 1)
+            side = plan_full(st)['sidecar']
+            check_sl_cell(side, st, lap, cfo, ph, 1, 87, other=first)
+            ids = [e for e in rendered(side) if e['role'] == 'id_page']
+            check(side['seed'] == seed and side['cell']['sync_word_ones'] == ones == sum(br.sync_word(int(lap, 16))) and
+                  len(ids) == n_ids and all(e['half'] == 'first' for e in ids),
+                  '%s: schedule seed %d, %d ones in the sync word, %d IDs rendered, all first IDs' % (st, seed, ones, n_ids))
+            first = first or side
+    ref = plan_full(g.sl_stem('0466AB', 0.0, 0, 1))['sidecar']
+    nconn = lambda s: sum(e['role'] != 'id_page' for e in rendered(s))
+    check(nconn(plan_full(g.sl_stem('0AA176', 0.0, 0, 1))['sidecar']) == nconn(ref) == 786,
+          'LT: 0x0AA176 has 0x0466AB\'s counts (5,260 first IDs, 786 connection bursts)')
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        two = [g.sl_stem('2044EF', 0.0, 10, 1), g.sl_stem('0AA176', -30e3, 10, 1)]
+        with quiet():
+            for st_ in two:
+                g.write_file(st_, td, duration=0.2)
+        g.write_manifest(td, two, ['cmd'], 'LT')
+        man = json.load(open(os.path.join(td, 'manifest.json')))
+        rows = {r['stem']: r for r in man['files']}
+        check(man['set'] == 'LT' and set(rows) == set(two) and rows[two[0]]['sync_word_ones'] == 24 and
+              rows[two[1]]['sync_word_ones'] == 32 and rows[two[1]]['cfo_hz'] == -30e3 and rows[two[1]]['schedule_seed'] == 9872 and
+              len(open(os.path.join(td, 'SHA256SUMS.txt')).read().split()) == 8,
+              'LT: manifest.json names the set and carries sync_word_ones; SHA256SUMS.txt has 4 lines')
+    print('  small render (0.5 s)', flush=True)
+    st_ = g.sl_stem('2044EF', 0.0, 10, 1)
+    iq, side, _ = make(st_, duration=0.5)
+    check_sidecar(side, st_, off0=50 + 10 / 40.0)
+    check_positions(iq, side, st_, n=24)
+    check_decode(iq, side, st_, n=10)
+    check_ids(iq, side, st_, n=8)
+    check_x(side, st_, 87, 'bda')
+    check_cfo_plain(iq, side, st_)
+    del iq
+
+
 def test_regen():
     print('== regeneration and the noise', flush=True)
     for stem, kw in (('R_s1', dict(duration=0.5)), ('X_first_id50_s1', dict(duration=0.2))):
@@ -1288,7 +1335,7 @@ def main():
     t0 = time.time()
     steps = []
     for name, fn in (('p1_samples', test_p1_samples), ('p1_plans', test_p1_plans), ('p4', test_p4_samples),
-                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('regen', test_regen),
+                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('regen', test_regen),
                      ('mutants', test_mutants)):
         t = time.time()
         fn()

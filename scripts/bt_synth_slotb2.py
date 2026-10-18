@@ -113,6 +113,13 @@ phase {0, 10} x noise {1, 2} (16), phase {20, 30} x noise 1 (8), the low-density
 share target 10, ``_id10``), and the sweep p = 5, 15, 25, 35 (LAP 0x0466AB, -30 kHz).  Per burst ``cfo_hz``, ``start_sample``
 and ``timing_frac`` (always 0 here: the grid is whole-sample) as in every file; a top-level ``cell`` block names the cell.
 ``--set SL`` also writes ``manifest.json`` and ``SHA256SUMS.txt``.
+
+**P6: the LAP test, S_2044EF_* and S_0AA176_*** (``--set LT``, 6 files, bluey's check of whether the sync word's imbalance
+is in the 0x0466AB loss at negative CFO).  P5's construction and 0x0466AB's recipe (share 87, the train's second IDs all
+out of the window, so first IDs only) on two schedules found by a plan-only search of the schedule seed: 0x2044EF (seed
+10426, UAP 0x61, 24 ones of 64, mean of the +-1 word -0.25, first half -0.31: the mirror of 0x0466AB's +0.25 / +0.56) and
+0x0AA176 (seed 9872, UAP 0xB0, 32 ones, mean 0).  Cells per LAP: CFO 0 at phases 0 and 10, and -30 kHz at phase 10, noise
+seed 1.  The cell block also holds ``sync_word_ones``.  ``--set LT`` writes ``manifest.json`` and ``SHA256SUMS.txt``.
 """
 import argparse
 import json
@@ -196,11 +203,20 @@ def sl_stem(lap, cfo, phase, noise, share=None):
     return 'S_%s_c%s_p%d%s_n%d' % (lap, 'm30' if cfo < 0 else '0', phase, '' if share is None else '_id%d' % share, noise)
 
 
-for _lap, _cfo, _ph, _nz, _sh in SL_CELLS:
-    _sched = SL_SCHEDULES[_lap]
+# P6, the LAP test (bluey's check of whether the sync word's imbalance is in the 0x0466AB loss): 0x0466AB's recipe (share 87,
+# first IDs only in the window) on two more schedules found by a plan-only seed search, 0x2044EF (24 ones of 64, mean of the
+# +-1 word -0.25, the mirror of 0x0466AB's +0.25) and 0x0AA176 (32 ones, mean 0); CFO 0 at phases 0 and 10 (bluey shifts these
+# digitally) and one rendered -30 kHz phase-10 file per LAP to check that a shift and a rendered offset agree.
+LT_SCHEDULES = {'2044EF': dict(seed=10426, share=87), '0AA176': dict(seed=9872, share=87)}
+LT_CELLS = [(_lap, _cfo, _ph, 1, None) for _lap in LT_SCHEDULES for _cfo, _ph in ((0.0, 0), (0.0, 10), (-30e3, 10))]
+
+for _lap, _cfo, _ph, _nz, _sh in SL_CELLS + LT_CELLS:
+    _sched = SL_SCHEDULES.get(_lap) or LT_SCHEDULES[_lap]
+    _cell = dict(lap_name=_lap, cfo_hz=_cfo, first_id_phase_samples=_ph, noise_seed=_nz, schedule_seed=_sched['seed'])
+    if _lap in LT_SCHEDULES:
+        _cell['sync_word_ones'] = sum(br.sync_word(int(_lap, 16)))
     _add(sl_stem(_lap, _cfo, _ph, _nz, _sh), _sched['seed'], 'X', mode='bda', share=_sched['share'] if _sh is None else _sh,
-         master_cfo_hz=_cfo, offset_us=50.0 + _ph / 40.0, noise_seed=_nz, cell=dict(
-             lap_name=_lap, cfo_hz=_cfo, first_id_phase_samples=_ph, noise_seed=_nz, schedule_seed=_sched['seed']))
+         master_cfo_hz=_cfo, offset_us=50.0 + _ph / 40.0, noise_seed=_nz, cell=_cell)
 
 _add('C_20msps', 9531, 'C', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 _add('R_20msps_s1', 9532, 'R', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
@@ -209,6 +225,7 @@ SETS = {'P1': ['R_s1', 'R_s2', 'R_s3'],
         'P2': [s for s in SPECS if s.startswith('X_')],
         'P4': ['C_20msps', 'R_20msps_s1']}
 SETS['SL'] = [sl_stem(*c) for c in SL_CELLS]
+SETS['LT'] = [sl_stem(*c) for c in LT_CELLS]
 SETS['all'] = SETS['P1'] + SETS['P2'] + SETS['P4']
 
 
@@ -912,7 +929,7 @@ def write_file(stem, out_dir, **kw):
     return iq_path, side_path
 
 
-def write_manifest(out_dir, stems, commands):
+def write_manifest(out_dir, stems, commands, set_name='SL'):
     """``manifest.json`` (per file: LAP, UAP, CFO, offset, phase, seeds, ID share, size, sha256) and ``SHA256SUMS.txt``
     for the files of a set already written to ``out_dir``."""
     import hashlib
@@ -934,7 +951,7 @@ def write_manifest(out_dir, stems, commands):
             row['sha256' + ext.replace('.', '_')] = h.hexdigest()
         rows.append(row)
     with open(os.path.join(out_dir, 'manifest.json'), 'w') as f:
-        json.dump(dict(set='SL', generator='scripts/bt_synth_slotb2.py', commands=commands, files=rows), f, indent=1)
+        json.dump(dict(set=set_name, generator='scripts/bt_synth_slotb2.py', commands=commands, files=rows), f, indent=1)
     with open(os.path.join(out_dir, 'SHA256SUMS.txt'), 'w') as f:
         f.write('\n'.join(sums) + '\n')
 
@@ -964,8 +981,8 @@ def main(argv=None):
             kw[k] = v
     for stem in stems:
         write_file(stem, a.out, **kw)
-    if a.set == 'SL' and not kw.keys() - {'snr_db'}:
-        write_manifest(a.out, stems, ['python -B scripts/bt_synth_slotb2.py --set SL --out %s' % a.out])
+    if a.set in ('SL', 'LT') and not kw.keys() - {'snr_db'}:
+        write_manifest(a.out, stems, ['python -B scripts/bt_synth_slotb2.py --set %s --out %s' % (a.set, a.out)], a.set)
 
 
 if __name__ == '__main__':

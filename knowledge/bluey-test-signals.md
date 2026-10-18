@@ -1041,6 +1041,18 @@ reviewed by Opus against the real files, write them; the files are not in git.
   (whole-sample grid). A `cell` block in each sidecar names LAP, CFO, phase, offset, seeds and share target; `--set SL` writes
   `manifest.json` and `SHA256SUMS.txt`. Reviewed by Muse (no defect; the LAP confound and a missing manifest test were its
   findings, the test is added); the generator test runs 1,166 checks.
+- **The LAP test (`--set LT`, 6 files, 2026-10-17).** bluey's 0x0466AB loss appears only at negative carrier offsets, and
+  SDR's review lead was the sync word's imbalance: 0x0466AB has 40 ones of 64 (mean of the +-1 word +0.25, first half
+  +0.56). The prediction to test is that a word with the opposite imbalance loses IDs at *positive* offsets. The set is the
+  same construction and 0x0466AB's recipe (share 87, every second ID out of the window, so first IDs only) on two schedules
+  found by a plan-only search of the schedule seed: **0x2044EF** (seed 10426, 24 ones, mean -0.25, first half -0.31;
+  5,568 first IDs) and **0x0AA176** (seed 9872, 32 ones, mean 0; 5,260 first IDs and 786 connection bursts, 0x0466AB's own
+  counts). A different LAP is a different page hop schedule, so the LAP decides which IDs fall in the window; the search
+  kept only schedules with no second ID in it. Per LAP: CFO 0 at phases 0 and 10 (bluey shifts these digitally, as in its
+  FR-A and R2-A1 runs) and a rendered -30 kHz phase-10 file to check that a shift and a rendered offset agree (white noise,
+  a random carrier phase per burst, the slaves carrying the master's offset: they should). The cell block adds
+  `sync_word_ones`; `--set LT` writes `manifest.json` (with `"set": "LT"`) and `SHA256SUMS.txt`. The generator test runs
+  1,263 checks (97 for this set).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
