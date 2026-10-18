@@ -107,8 +107,9 @@ Read from the Core v6.0 text (page = the page the text sits on).
   so a 126-bit burst in an odd slot is a NULL. A POLL must be answered in the next slot, by any packet type
   ("shall respond with a packet even when [it] does not have any information to send", unless it has
   scatternet commitments); NULL "does not require acknowledgment" and may carry ARQN or FLOW. POLL is not
-  part of the ARQ scheme and does not touch ARQN or SEQN. Not found in the text: whether a Peripheral must
-  answer a Central NULL.
+  part of the ARQ scheme and does not touch ARQN or SEQN. A Peripheral need not answer a Central NULL: "the
+  Peripheral is not forced to respond to the NULL packet from the Central. If the Central requires a response,
+  it sends a POLL packet" (4.5.1.5 "Default packet types", p.504).
 - **EDR guard time 4.75 to 5.25 us**, from the end of the last GFSK header symbol to the start of the sync
   reference symbol (6.6.1 item 1, p.530). **Sync sequence 11 us = 11 DPSK symbols**: a reference symbol
   (arbitrary phase) then ten, phase steps 3pi/4, -3pi/4, 3pi/4, -3pi/4, 3pi/4, -3pi/4, -3pi/4, 3pi/4, 3pi/4,
@@ -203,11 +204,69 @@ user bytes without it (DM1 0-17, DH1 0-27, DM3 0-121, DH3 0-183, DM5 0-224, DH5 
   32-bit MIC counts inside the information-byte limits (6.5.4 lists it apart; Table 6.8 footnote C.1). If it
   is on top, an encrypted DM1 could reach 426 and a DH1 398 bits (derived), LONG either way.
 
+## Slots, channels, who answers, and whose clock - 1.3, 2.2.5, 2.4.3, 2.6.1, 4.5.1.5, 8.6 (2026-10-17)
+
+Asked while answering bluey-ox-walker's questions on pairing a master packet with its answer (a slot-parity
+filter, same-channel pairs, rows with no anchor). Page = the page the text sits on in the v6.0 PDF; Part B
+unless marked Part A.
+
+- **Slot parity.** "The Central transmission shall always start at even numbered time slots (CLK1=0) and the
+  Peripheral transmission shall always start at odd numbered time slots (CLK1=1)"; with multi-slot packets
+  "Central transmission may continue in odd numbered slots and Peripheral transmission may continue in even
+  numbered slots" (2.2.5, p.471-472). After an
+  L-slot master packet (L = 1, 3, 5) the answer starts at s + L, odd: parity holds with or without AFH.
+- **Who answers.** "Only the Peripheral that is addressed by one of its LT_ADDRs (primary or secondary) may
+  return a packet in the next Peripheral-to-Central slot. If no valid packet header is received, the
+  Peripheral may only respond in its reserved SCO or eSCO Peripheral-to-Central slot. In the case of a
+  broadcast message, no Peripheral shall return a packet" (8.6.1, p.571). On SCO the Peripheral "is allowed to
+  transmit in the slot reserved for its SCO logical transport unless a packet with the correct access code was
+  received in the preceding slot and the LT_ADDR did not address this Peripheral" (8.6.2, p.573). A NULL need
+  not be answered (4.5.1.5, p.504; see the NULL and POLL section). So a true Peripheral burst can have no
+  Central packet before it (SCO/eSCO reserved slots), and a Central packet can have no answer (NULL,
+  broadcast).
+- **The frequency of a multi-slot packet and of the slot after it.** "The RF frequency shall remain fixed for
+  the duration of the packet. The RF frequency for the packet shall be derived from the Bluetooth clock value in
+  the first slot of the packet. The RF frequency in the first slot after a multi-slot packet shall use the
+  frequency as determined by the Bluetooth clock value for that slot" (2.6.1, p.484, Fig 2.14). Without AFH
+  the answer to an L-slot packet is on f(k+L), not on the Central's channel.
+- **The same channel mechanism is AFH's.** With the adapted sequence "the Peripheral responds with its packet
+  on the same RF channel that was used by the Central to address that Peripheral ... This is called the same
+  channel mechanism of AFH ... shall be used whenever the adapted channel hopping sequence is selected" (2.6.1,
+  p.485, Fig 2.15); with adaptation disabled "the same channel mechanism shall not be used" (8.6.7, p.580). A
+  rule that pairs a Central packet with an answer on the same channel is therefore an AFH rule.
+- **Page timing.** "In a single TX slot interval, the paging device shall transmit on two different hop
+  frequencies ... The first transmission starts where CLK0 = 0 and the second transmission starts where
+  CLK0 = 1" (2.4.3, p.476): page IDs sit at 0 and +312.5 us, half a slot apart. Hop rate: at most 1600 hops/s in
+  the Connection state, 3200 in Inquiry and Page (2.1, p.469).
+- **Whose clock a LAP's bursts run on.** "The channel access code shall be derived from the LAP of the Central's
+  BD_ADDR" (1.3, p.467), and the device access code of a page, including the Central's FHS in Central Page
+  Response, is the paged device's (1.3; see the page section above). So one piconet = one Central's LAP and
+  clock; a role switch moves the link to the new Central's LAP (a different LAP, derived); another piconet of a
+  scatternet has its own LAP. The case that puts **two clocks under one LAP** is paging: a device X that is a
+  Central of its own piconet, and a pager paging X, whose IDs and FHS carry X's LAP on the pager's timing
+  (derived from 1.3).
+- **Timing tolerances.** "The average timing of packet transmission shall not drift faster than 20 ppm relative
+  to the ideal slot timing of 625 us. The instantaneous timing shall not deviate more than 1 us from the average
+  timing" (2.2.5, p.472; Hold and Sniff use the LMP parameters instead). 20 ppm is about 0.64 slot in 20 s
+  (derived).
+- **Carrier tolerances** (Part A, Radio). "The transmitted initial center frequency shall be within +-75 kHz
+  from Fc", drift not included (3.1.3, p.436); maximum drift +-25 kHz in a one-slot packet, +-40 kHz in a three-
+  or five-slot packet, maximum drift rate 400 Hz/us "anywhere in a packet" (p.436); for EDR the initial
+  accuracy is +-75 kHz and "the maximum excursion from Fc (frequency offset plus drift) shall not exceed +-75 kHz"
+  (3.2.3, p.440). A -58 kHz carrier offset is within the BR transmitter specification.
+- **What follows for a receiver that pairs packets (derived, as sent to bluey-ox-walker on 2026-10-17):** a
+  master-slot parity filter is sound in the Connection state; a same-channel pair rule finds no true pairs on
+  a non-AFH link (and finds chance coincidences there, about 1/79); rows with no anchor are legitimate (SCO/eSCO,
+  a missed or out-of-window Central packet, or on a non-AFH link a Central channel outside the capture while the
+  answer's channel is inside); a one-slot-back scan cannot recover a multi-slot Central packet (one slot before
+  its answer is the packet's own last slot, where there is no access code); a per-LAP slot-grid estimate must
+  leave out IDs (half-slot offsets) and FHS packets (another device's clock).
+
 ## What this settles, and what it does not
 
 - The FHS-on-the-paged-LAP rule of `bt_synth_slotb2` and the DCI answer ("can an inquiry LAP have UAP 0x00:
   yes, always") rest on the sentences above, not on `apps/bt_fhs.py` alone.
-- Not checked against the text: the +-1 us timing jitter a slave may have around its nominal answer (stated
-  from memory in the `slotb2` notes), and whether v6.0 has newer LE or EIR wording beyond these sentences.
+- The +-1 us timing jitter of the `slotb2` notes is now checked: 2.2.5, p.472 (the slots section above).
+  Not checked against the text: whether v6.0 has newer LE or EIR wording beyond these sentences.
 - A reviewer pack (`.swarm/specs/p1/`) holds hop selection and Part G only. A reviewer who is to judge a
   packet-format claim needs the sections above added to its pack.
