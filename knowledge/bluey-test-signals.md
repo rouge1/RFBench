@@ -1041,18 +1041,24 @@ reviewed by Opus against the real files, write them; the files are not in git.
   (whole-sample grid). A `cell` block in each sidecar names LAP, CFO, phase, offset, seeds and share target; `--set SL` writes
   `manifest.json` and `SHA256SUMS.txt`. Reviewed by Muse (no defect; the LAP confound and a missing manifest test were its
   findings, the test is added); the generator test runs 1,166 checks.
-- **The LAP test (`--set LT`, 6 files, 2026-10-17).** bluey's 0x0466AB loss appears only at negative carrier offsets, and
-  SDR's review lead was the sync word's imbalance: 0x0466AB has 40 ones of 64 (mean of the +-1 word +0.25, first half
-  +0.56). The prediction to test is that a word with the opposite imbalance loses IDs at *positive* offsets. The set is the
-  same construction and 0x0466AB's recipe (share 87, every second ID out of the window, so first IDs only) on two schedules
-  found by a plan-only search of the schedule seed: **0x2044EF** (seed 10426, 24 ones, mean -0.25, first half -0.31;
-  5,568 first IDs) and **0x0AA176** (seed 9872, 32 ones, mean 0; 5,260 first IDs and 786 connection bursts, 0x0466AB's own
-  counts). A different LAP is a different page hop schedule, so the LAP decides which IDs fall in the window; the search
-  kept only schedules with no second ID in it. Per LAP: CFO 0 at phases 0 and 10 (bluey shifts these digitally, as in its
-  FR-A and R2-A1 runs) and a rendered -30 kHz phase-10 file to check that a shift and a rendered offset agree (white noise,
-  a random carrier phase per burst, the slaves carrying the master's offset: they should). The cell block adds
-  `sync_word_ones`; `--set LT` writes `manifest.json` (with `"set": "LT"`) and `SHA256SUMS.txt`. The generator test runs
-  1,263 checks (97 for this set).
+- **The LAP test (`--set LT`, 9 files, 2026-10-17).** bluey's 0x0466AB loss appears only at negative carrier offsets, and
+  SDR's review lead was the sync word's imbalance: 0x0466AB has 40 ones of 64 (mean of the +-1 word +0.25, halves +0.56 /
+  -0.06). The prediction to test is that a word with the opposite imbalance loses IDs at *positive* offsets. The set is the
+  same construction and 0x0466AB's recipe (share 87, every second ID out of the window, so first IDs only) on three
+  schedules found by a plan-only search of 90,000 schedule seeds: **0x4073AD** (seed 48957, 24 ones, mean -0.25, halves
+  -0.50 / 0.00: the closest mirror found; 5,809 IDs, 868 connection bursts), **0x2044EF** (seed 10426, 24 ones, mean -0.25,
+  halves -0.31 / -0.19: the overall mean reversed, the first half only partly; 5,568 / 832) and the control **0x2626FE**
+  (seed 81442, 32 ones, halves 0 / 0; 5,247 / 784). If only 0x4073AD loses at positive offsets, the early part of the word
+  is what matters. **The channels are part of the design:** a LAP is its page hop schedule, so it decides which channels
+  the IDs use. 0x0466AB's IDs are on -5..+11 MHz of the centre (mean +3.1 MHz); 0x2626FE's on the same channels, 0x4073AD's
+  and 0x2044EF's on -7..+11 (one more channel low). A first choice of control, 0x0AA176, was dropped after the review: its
+  IDs were the mirror image, -11..+5 MHz, so a difference could have come from the band edge. Per LAP: CFO 0 at phases 0 and
+  10 (bluey shifts these digitally, as in its FR-A and R2-A1 runs) and a rendered -30 kHz phase-10 file to check that a shift
+  and a rendered offset agree (white noise, a random carrier phase per burst, the slaves carrying the master's offset; the
+  review found them sample for sample the same, up to one phase per burst, at a 200 dB SNR). The cell block adds
+  `sync_word_ones`; `--set LT` writes `manifest.json` (with `"set": "LT"`) and `SHA256SUMS.txt`. Reviewed by a Claude subagent (Muse was unavailable): no
+  defect; the channel mirror, the word "mirror" for 0x2044EF and two test gaps were its findings, all taken up. The
+  generator test runs 1,293 checks (127 for this set).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.

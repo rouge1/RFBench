@@ -1047,30 +1047,34 @@ def test_samelap():
 
 
 def test_laptest():
-    print('== P6: the LAP test (6 files): two more schedules on 0x0466AB\'s recipe', flush=True)
+    print('== P6: the LAP test (9 files): three more schedules on 0x0466AB\'s recipe', flush=True)
     stems = g.SETS['LT']
-    check(len(stems) == 6 and len(set(stems)) == 6 and all(s in g.SPECS for s in stems) and not set(stems) & set(g.SETS['SL']),
-          'LT: 6 distinct stems, none of them in SL (%d)' % len(stems))
+    check(len(stems) == 9 and len(set(stems)) == 9 and all(s in g.SPECS for s in stems) and not set(stems) & set(g.SETS['SL']),
+          'LT: 9 distinct stems, none of them in SL (%d)' % len(stems))
     check(all('sync_word_ones' not in g.SPECS[s]['cell'] for s in g.SETS['SL']),
           'LT: the SL cells are as before (no sync_word_ones key)')
-    for lap, seed, ones, n_ids in (('2044EF', 10426, 24, 5568), ('0AA176', 9872, 32, 5260)):
+    off = lambda s: sorted({int(round(e['channel_mhz'] - s['center_mhz'])) for e in rendered(s) if e['role'] == 'id_page'})
+    ref = plan_full(g.sl_stem('0466AB', 0.0, 0, 1))['sidecar']
+    check(off(ref) == list(range(-5, 12, 2)), 'LT: 0x0466AB\'s IDs are on -5..+11 MHz of the centre (%s)' % off(ref))
+    for lap, seed, ones, half1, n_ids, n_conn, span in (('4073AD', 48957, 24, -0.5, 5809, 868, (-7, 11)),
+                                                         ('2044EF', 10426, 24, -0.3125, 5568, 832, (-7, 11)),
+                                                         ('2626FE', 81442, 32, 0.0, 5247, 784, (-5, 11))):
         first = None
+        w = np.array(br.sync_word(int(lap, 16))) * 2 - 1
         for cfo, ph in ((0.0, 0), (0.0, 10), (-30e3, 10)):
             st = g.sl_stem(lap, cfo, ph, 1)
             side = plan_full(st)['sidecar']
             check_sl_cell(side, st, lap, cfo, ph, 1, 87, other=first)
             ids = [e for e in rendered(side) if e['role'] == 'id_page']
             check(side['seed'] == seed and side['cell']['sync_word_ones'] == ones == sum(br.sync_word(int(lap, 16))) and
-                  len(ids) == n_ids and all(e['half'] == 'first' for e in ids),
-                  '%s: schedule seed %d, %d ones in the sync word, %d IDs rendered, all first IDs' % (st, seed, ones, n_ids))
+                  w[:32].mean() == half1 and len(ids) == n_ids and all(e['half'] == 'first' for e in ids) and
+                  sum(e['role'] != 'id_page' for e in rendered(side)) == n_conn and off(side) == list(range(span[0], span[1] + 1, 2)),
+                  '%s: seed %d, %d ones (first half %+.3f), %d IDs all first, %d connection bursts, IDs on %+d..%+d MHz' % (
+                      st, seed, ones, half1, n_ids, n_conn, span[0], span[1]))
             first = first or side
-    ref = plan_full(g.sl_stem('0466AB', 0.0, 0, 1))['sidecar']
-    nconn = lambda s: sum(e['role'] != 'id_page' for e in rendered(s))
-    check(nconn(plan_full(g.sl_stem('0AA176', 0.0, 0, 1))['sidecar']) == nconn(ref) == 786,
-          'LT: 0x0AA176 has 0x0466AB\'s counts (5,260 first IDs, 786 connection bursts)')
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        two = [g.sl_stem('2044EF', 0.0, 10, 1), g.sl_stem('0AA176', -30e3, 10, 1)]
+        two = [g.sl_stem('4073AD', 0.0, 10, 1), g.sl_stem('2626FE', -30e3, 10, 1)]
         with quiet():
             for st_ in two:
                 g.write_file(st_, td, duration=0.2)
@@ -1078,11 +1082,20 @@ def test_laptest():
         man = json.load(open(os.path.join(td, 'manifest.json')))
         rows = {r['stem']: r for r in man['files']}
         check(man['set'] == 'LT' and set(rows) == set(two) and rows[two[0]]['sync_word_ones'] == 24 and
-              rows[two[1]]['sync_word_ones'] == 32 and rows[two[1]]['cfo_hz'] == -30e3 and rows[two[1]]['schedule_seed'] == 9872 and
+              rows[two[1]]['sync_word_ones'] == 32 and rows[two[1]]['cfo_hz'] == -30e3 and rows[two[1]]['schedule_seed'] == 81442 and
               len(open(os.path.join(td, 'SHA256SUMS.txt')).read().split()) == 8,
               'LT: manifest.json names the set and carries sync_word_ones; SHA256SUMS.txt has 4 lines')
+        g.write_manifest(td, two, ['cmd'])
+        check(json.load(open(os.path.join(td, 'manifest.json')))['set'] == 'SL', 'LT: write_manifest\'s default set name is SL')
+    with tempfile.TemporaryDirectory() as td:
+        orig = g.write_file
+        with quiet(), mock.patch.object(g, 'write_file', lambda stem, out, **kw: orig(stem, out, **dict(kw, duration=0.05))):
+            g.main(['--set', 'LT', '--out', td])
+        man = json.load(open(os.path.join(td, 'manifest.json')))
+        check(man['set'] == 'LT' and [r['stem'] for r in man['files']] == stems and '--set LT' in man['commands'][0],
+              'LT: main(--set LT) writes the manifest of the 9 files, named LT, with its command')
     print('  small render (0.5 s)', flush=True)
-    st_ = g.sl_stem('2044EF', 0.0, 10, 1)
+    st_ = g.sl_stem('4073AD', 0.0, 10, 1)
     iq, side, _ = make(st_, duration=0.5)
     check_sidecar(side, st_, off0=50 + 10 / 40.0)
     check_positions(iq, side, st_, n=24)

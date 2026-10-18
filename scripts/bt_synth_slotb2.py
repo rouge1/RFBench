@@ -114,12 +114,16 @@ share target 10, ``_id10``), and the sweep p = 5, 15, 25, 35 (LAP 0x0466AB, -30 
 and ``timing_frac`` (always 0 here: the grid is whole-sample) as in every file; a top-level ``cell`` block names the cell.
 ``--set SL`` also writes ``manifest.json`` and ``SHA256SUMS.txt``.
 
-**P6: the LAP test, S_2044EF_* and S_0AA176_*** (``--set LT``, 6 files, bluey's check of whether the sync word's imbalance
-is in the 0x0466AB loss at negative CFO).  P5's construction and 0x0466AB's recipe (share 87, the train's second IDs all
-out of the window, so first IDs only) on two schedules found by a plan-only search of the schedule seed: 0x2044EF (seed
-10426, UAP 0x61, 24 ones of 64, mean of the +-1 word -0.25, first half -0.31: the mirror of 0x0466AB's +0.25 / +0.56) and
-0x0AA176 (seed 9872, UAP 0xB0, 32 ones, mean 0).  Cells per LAP: CFO 0 at phases 0 and 10, and -30 kHz at phase 10, noise
-seed 1.  The cell block also holds ``sync_word_ones``.  ``--set LT`` writes ``manifest.json`` and ``SHA256SUMS.txt``.
+**P6: the LAP test, S_4073AD_*, S_2044EF_*, S_2626FE_*** (``--set LT``, 9 files, bluey's check of whether the sync word's
+imbalance is in the 0x0466AB loss at negative CFO).  P5's construction and 0x0466AB's recipe (share 87, the train's second
+IDs all out of the window, so first IDs only) on three schedules found by a plan-only search of the schedule seed.  0x0466AB
+has 40 ones of 64 (mean of the +-1 word +0.25; halves +0.56 / -0.06) and IDs on -5..+11 MHz of the centre.  0x4073AD (seed
+48957, UAP 0xCE): 24 ones, mean -0.25, halves -0.50 / 0.00, IDs on -7..+11 MHz.  0x2044EF (seed 10426, UAP 0x61): 24 ones,
+mean -0.25, halves -0.31 / -0.19 (the overall mean reversed, the first half only partly), -7..+11 MHz.  0x2626FE (seed
+81442, UAP 0x03), the control: 32 ones, halves 0 / 0, IDs on 0x0466AB's own channels.  A LAP is its page hop schedule, so it
+decides which channels the IDs use; the search kept schedules whose ID channels lie on 0x0466AB's side of the window.
+Cells per LAP: CFO 0 at phases 0 and 10, and -30 kHz at phase 10, noise seed 1.  The cell block also holds
+``sync_word_ones``.  ``--set LT`` writes ``manifest.json`` and ``SHA256SUMS.txt``.
 """
 import argparse
 import json
@@ -204,10 +208,12 @@ def sl_stem(lap, cfo, phase, noise, share=None):
 
 
 # P6, the LAP test (bluey's check of whether the sync word's imbalance is in the 0x0466AB loss): 0x0466AB's recipe (share 87,
-# first IDs only in the window) on two more schedules found by a plan-only seed search, 0x2044EF (24 ones of 64, mean of the
-# +-1 word -0.25, the mirror of 0x0466AB's +0.25) and 0x0AA176 (32 ones, mean 0); CFO 0 at phases 0 and 10 (bluey shifts these
-# digitally) and one rendered -30 kHz phase-10 file per LAP to check that a shift and a rendered offset agree.
-LT_SCHEDULES = {'2044EF': dict(seed=10426, share=87), '0AA176': dict(seed=9872, share=87)}
+# first IDs only in the window) on three more schedules found by a plan-only seed search (90,000 seeds): 0x4073AD (24 ones of
+# 64, mean of the +-1 word -0.25, halves -0.50 / 0.00 against 0x0466AB's +0.56 / -0.06; ID channels -7..+11 MHz), 0x2044EF
+# (24 ones, halves -0.31 / -0.19; -7..+11 MHz) and the control 0x2626FE (32 ones, halves 0 / 0; ID channels -5..+11 MHz, 0x0466AB's
+# own); CFO 0 at phases 0 and 10 (bluey shifts these digitally) and one rendered -30 kHz phase-10 file per LAP to check that a
+# shift and a rendered offset agree.
+LT_SCHEDULES = {'4073AD': dict(seed=48957, share=87), '2044EF': dict(seed=10426, share=87), '2626FE': dict(seed=81442, share=87)}
 LT_CELLS = [(_lap, _cfo, _ph, 1, None) for _lap in LT_SCHEDULES for _cfo, _ph in ((0.0, 0), (0.0, 10), (-30e3, 10))]
 
 for _lap, _cfo, _ph, _nz, _sh in SL_CELLS + LT_CELLS:
