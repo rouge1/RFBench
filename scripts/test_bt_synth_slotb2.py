@@ -35,6 +35,7 @@ never taken from the generator's own bookkeeping:
 
 Needs libbtbb (``bt_ota_check.libbtbb``); the checks that need it are skipped, and said so, without it.
 """
+import collections
 import contextlib
 import hashlib
 import json
@@ -1106,6 +1107,141 @@ def test_laptest():
     del iq
 
 
+def fr_selection():
+    """The committed output of the LAP selection (knowledge/freshset/selection_output.txt), by LAP."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'knowledge', 'freshset', 'selection_output.txt')
+    rows = {}
+    for line in open(path):
+        line = line.strip()
+        if line.startswith('{') and line.endswith('}'):
+            r = json.loads(line)
+            rows[r['lap'][2:]] = r
+    return rows
+
+
+def main_reference(stems_kw):
+    """sha256 of the samples and of the sidecar (less generator_commit) that MAIN's code makes for short files, from a
+    `git archive main` in a temporary folder: the opt-in options of the fresh set must leave them unchanged."""
+    import subprocess
+    import tempfile
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    td = tempfile.mkdtemp()
+    subprocess.run('git -C %s archive main | tar -x -C %s' % (repo, td), shell=True, check=True)
+    code = r"""
+import sys, json, hashlib
+sys.path.insert(0, '.')
+import numpy as np
+from scripts import bt_synth_slotb2 as g, bt_synth_endlen as ge
+out = {}
+for mod, stem, kw in %r:
+    m = g if mod == 'slotb2' else ge
+    iq, side = m.synthesise(stem, **kw)
+    side.pop('generator_commit', None)
+    out[stem] = [hashlib.sha256(np.ascontiguousarray(iq).tobytes()).hexdigest(),
+                 hashlib.sha256(json.dumps(side, sort_keys=True).encode()).hexdigest()]
+print(json.dumps(out))
+""" % (stems_kw,)
+    r = subprocess.run([sys.executable, '-B', '-c', code], cwd=td, capture_output=True, text=True, check=True)
+    subprocess.run(['rm', '-rf', td])
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def test_freshset():
+    print('== P7: the carrier-threshold fresh set (32 files)', flush=True)
+    stems = g.SETS['FR']
+    seeds = [g.SPECS[s]['noise_seed'] for s in stems]
+    check(len(stems) == 32 and len(set(stems)) == 32 and seeds == list(range(g.FR_NOISE0, g.FR_NOISE0 + 32)),
+          'FR: 32 distinct stems, a noise seed of its own each (3001..3032 in order)')
+    sel = fr_selection()
+    ok = set(sel) == set(g.FR_SCHEDULES)
+    for lap, (seed, cls) in g.FR_SCHEDULES.items():
+        r = sel[lap]
+        w = g.word_stats(int(lap, 16))
+        ok = ok and r['seed'] == seed and r['cls'] == cls and r['ones'] == w['sync_word_ones'] and \
+            r['iso1'] == w['isolated_1'] and r['iso0'] == w['isolated_0'] and abs(r['half1'] - w['sync_half1']) < 1e-12
+    check(ok, 'FR: the six LAPs, seeds and classes are the committed selection\'s (selection_output.txt), word statistics recomputed')
+    allowed = (set(range(32, 49, 2)), set(range(30, 49, 2)))
+    for lap, (seed, cls) in g.FR_SCHEDULES.items():
+        mine = [s for s in stems if g.SPECS[s]['cell']['lap_name'] == lap]
+        plans = {s: plan_full(s)['sidecar'] for s in mine}
+        ref = plans[[s for s in mine if g.SPECS[s]['cell']['fr_cell'] == 'p10' and 'h' not in g.SPECS[s]][0]]
+        for st, side in plans.items():
+            c = g.SPECS[st]['cell']
+            ids = [e for e in rendered(side) if e['role'] == 'id_page']
+            con = [e for e in side['bursts'] if e['role'] in ('master', 'slave')]
+            exc = collections.Counter(e['exchange_id'] for e in con)
+            ph = {int((e['start_sample'] + e['timing_frac']) % 40) for e in ids}
+            base_ok = side['lap'] == int(lap, 16) and side['seed'] == seed and side['noise_seed'] == c['noise_seed'] and \
+                all(e['half'] == 'first' for e in ids) and {e['channel'] for e in ids} in allowed and \
+                len(ids) == sel[lap]['n_ids'] and side['modulation']['h'] == c['h'] and \
+                all(e['exchange_id'] is None for e in side['bursts'] if e['role'] == 'id_page') and \
+                set(exc.values()) <= {1, 2} and all(e['cfo_hz'] == 0.0 for e in side['bursts'])
+            if c['fr_cell'] == 'd23':
+                cell_ok = abs(side['drift_ppm_signed'] - 23.0) < 1e-9 and len(ph) == 40
+                what = 'drift +23 ppm, IDs at all 40 symbol phases'
+            else:
+                cell_ok = side['drift_ppm_signed'] == 0.0 and ph == {c['first_id_phase_samples']} and \
+                    sl_keys(side) == sl_keys(ref)
+                what = 'IDs at symbol phase %d, the schedule of the p10 copy' % c['first_id_phase_samples']
+            check(base_ok and cell_ok, 'FR %s: LAP 0x%s (%s), %d first IDs on channels %s, h %.2f, noise %d, exchange_id per '
+                  'exchange; %s' % (st, lap, cls, len(ids), sorted({e['channel'] for e in ids})[0:1] + ['..'] +
+                                    sorted({e['channel'] for e in ids})[-1:], c['h'], c['noise_seed'], what))
+        b = [s for s in mine if g.SPECS[s]['cell']['fr_cell'] == 'p10b'][0]
+        check([e['carrier_phase_rad'] for e in plans[b]['bursts']] != [e['carrier_phase_rad'] for e in ref['bursts']] and
+              plans[b]['noise_seed'] != ref['noise_seed'],
+              'FR 0x%s: the p10b copy is the p10 schedule with another noise realisation and carrier phases' % lap)
+    # h from the samples: the frequency of the IDs scales with h (same schedule, 45 dB, 0.3 s)
+    devs = {}
+    for st in ('F_885614_p10_n3002', 'F_885614_p10_h28_n3029', 'F_885614_p10_h35_n3031'):
+        iq, side, _ = make(st, duration=0.3)
+        vals = []
+        for e in [e for e in rendered(side) if e['role'] == 'id_page'][:20]:
+            s0 = int(e['start_sample'] + 40)
+            seg = iq[s0:s0 + 60 * 40] * np.exp(-2j * np.pi * (e['channel_mhz'] - side['center_mhz']) * 1e6 / 40e6 * np.arange(s0, s0 + 2400))
+            f = np.angle(seg[40:] * np.conj(seg[:-40])) / (2 * np.pi) * 1e6       # over one symbol: the noise averages out
+            vals.append(np.percentile(np.abs(f), 95))
+        devs[side['modulation']['h']] = float(np.median(vals))
+    r28, r35 = devs[0.28] / devs[0.32], devs[0.35] / devs[0.32]
+    check(abs(r28 - 0.28 / 0.32) < 0.02 and abs(r35 - 0.35 / 0.32) < 0.02,
+          'FR h from the samples: the IDs\' peak deviation scales as h (0.28: %.3f of 0.32\'s, want %.3f; 0.35: %.3f, want %.3f)' % (
+              r28, 0.28 / 0.32, r35, 0.35 / 0.32))
+    # the existing files are unchanged: the same samples and sidecars as main's code makes
+    cases = [('slotb2', 'R_s1', dict(duration=0.3, snr_db=HIGH)), ('slotb2', 'S_0466AB_cm30_p10_n1', dict(duration=0.2)),
+             ('slotb2', 'S_4073AD_c0_p0_n1', dict(duration=0.2)), ('endlen', 'E_mix_s1', dict(duration=0.2))]
+    ref = main_reference(cases)
+    mine = {}
+    from scripts import bt_synth_endlen as ge
+    for mod, stem, kw in cases:
+        m = g if mod == 'slotb2' else ge
+        iq, side = m.synthesise(stem, **kw)
+        side.pop('generator_commit', None)
+        mine[stem] = [hashlib.sha256(np.ascontiguousarray(iq).tobytes()).hexdigest(),
+                      hashlib.sha256(json.dumps(side, sort_keys=True).encode()).hexdigest()]
+    check(mine == ref, 'FR: R_s1, S_0466AB_cm30_p10_n1, S_4073AD_c0_p0_n1 and E_mix_s1 render byte-identical samples and '
+          'sidecars with this tree and with main\'s code (the h, drift and exchange_id options are opt-in)')
+    # the manifest
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        two = ['F_4426BB_p10_h35_n3027', 'F_A9A2FB_d23_n3024']
+        with quiet():
+            for st_ in two:
+                g.write_file(st_, td, duration=0.2)
+        g.write_manifest(td, two, ['cmd'], 'FR')
+        man = json.load(open(os.path.join(td, 'manifest.json')))
+        rows = {r['stem']: r for r in man['files']}
+        check(man['set'] == 'FR' and rows[two[0]]['h'] == 0.35 and rows[two[1]]['drift_ppm'] == 23.0 and
+              rows[two[1]]['isolated_0'] == 12 and rows[two[0]]['lap_class'] == 'balanced_1' and
+              len(open(os.path.join(td, 'SHA256SUMS.txt')).read().split()) == 8,
+              'FR: manifest.json names the set and carries class, word statistics, h and drift; SHA256SUMS.txt has 4 lines')
+    # one short render checked from the samples
+    st_ = 'F_885614_d23_n3004'
+    iq, side, _ = make(st_, duration=0.5)
+    check_positions(iq, side, st_, n=24)
+    check_decode(iq, side, st_, n=10)
+    check_ids(iq, side, st_, n=8)
+    del iq
+
+
 def test_regen():
     print('== regeneration and the noise', flush=True)
     for stem, kw in (('R_s1', dict(duration=0.5)), ('X_first_id50_s1', dict(duration=0.2))):
@@ -1348,7 +1484,7 @@ def main():
     t0 = time.time()
     steps = []
     for name, fn in (('p1_samples', test_p1_samples), ('p1_plans', test_p1_plans), ('p4', test_p4_samples),
-                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('regen', test_regen),
+                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('freshset', test_freshset), ('regen', test_regen),
                      ('mutants', test_mutants)):
         t = time.time()
         fn()

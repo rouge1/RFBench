@@ -839,7 +839,7 @@ def render_burst(job, fs, center):
     sample index with the whole cycles dropped before the cast to radians; a C2 tail's amplitude step is a
     raised-cosine ramp from the end of symbol 68."""
     sps = fs / 1e6
-    burst, lead = br.gfsk(job['bits'], fs, h=br.GFSK_H, delay=job['frac'])
+    burst, lead = br.gfsk(job['bits'], fs, h=job.get('h', br.GFSK_H), delay=job['frac'])
     lo = job['start'] - lead
     n = np.arange(lo, lo + len(burst))
     if job['step_at'] is not None and job['gain'] != 1.0:

@@ -124,6 +124,17 @@ mean -0.25, halves -0.31 / -0.19 (the overall mean reversed, the first half only
 decides which channels the IDs use; the search kept schedules whose ID channels lie on 0x0466AB's side of the window.
 Cells per LAP: CFO 0 at phases 0 and 10, and -30 kHz at phase 10, noise seed 1.  The cell block also holds
 ``sync_word_ones``.  ``--set LT`` writes ``manifest.json`` and ``SHA256SUMS.txt``.
+
+**P7: the carrier-threshold fresh set, F_<LAP>_<cell>[_h28|_h35]_n<noise>** (``--set FR``, 32 files, bluey's s4-carrier-thr
+A1.13).  The LT recipe (X_bda, share 87, first IDs only, CFO 0) on six LAPs chosen by the mechanical rule of
+``scripts/bt_freshset_select.py`` (committed before its search; its output in ``knowledge/freshset/``): 2 negative, 2
+positive, 2 balanced (more isolated 1s / more isolated 0s).  Per LAP ``p0`` (offset 50 us), ``p10`` (50.25 us), ``p10b``
+(p10's schedule, another noise realisation) and ``d23`` (+23 ppm drift: the symbol phase walks through all 40 samples);
+for 0x4426BB and 0x885614 also h 0.28 and 0.35 at p10 and d23.  Every file has a noise seed of its own (3001.. in
+``FR_CELLS`` order).  Opt-in spec keys, absent from every older spec so older files are unchanged: ``h`` (passed to
+the renderer as ``job['h']``, recorded in ``modulation.h`` and the cell), ``drift_ppm`` (as ``--drift-ppm``) and
+``exchange_ids`` (``exchange_id`` = the TX slot of a master packet and its answer; null on IDs).  The cell block holds
+the class and the word statistics (ones, mean, halves, isolated 1s and 0s, longest run).
 """
 import argparse
 import json
@@ -224,6 +235,57 @@ for _lap, _cfo, _ph, _nz, _sh in SL_CELLS + LT_CELLS:
     _add(sl_stem(_lap, _cfo, _ph, _nz, _sh), _sched['seed'], 'X', mode='bda', share=_sched['share'] if _sh is None else _sh,
          master_cfo_hz=_cfo, offset_us=50.0 + _ph / 40.0, noise_seed=_nz, cell=_cell)
 
+# P7, the carrier-threshold fresh set (bluey's s4-carrier-thr A1.13; LAPs by the mechanical rule of
+# scripts/bt_freshset_select.py, committed before its search): per LAP p0, p10, p10 with a second noise realisation (p10b)
+# and a +23 ppm drift copy (d23); h 0.28 / 0.35 for one balanced and one negative LAP (p10, d23); a noise seed of its own
+# per file (FR_NOISE0 + its place in FR_CELLS); exchange_id on every connection burst.
+FR_SCHEDULES = {  # lap name: (schedule seed, class)
+    '885614': (115125, 'negative'), '20C0AA': (122348, 'negative'), 'EED5EF': (103366, 'positive'),
+    'DBB3FB': (107603, 'positive'), '4426BB': (105619, 'balanced_1'), 'A9A2FB': (108529, 'balanced_0')}
+FR_H_LAPS = ('4426BB', '885614')
+FR_NOISE0 = 3001
+FR_CELLS = []                       # (lap name, cell, offset us, drift ppm, h or None)
+for _lap in FR_SCHEDULES:
+    FR_CELLS += [(_lap, 'p0', 50.0, 0.0, None), (_lap, 'p10', 50.25, 0.0, None), (_lap, 'p10b', 50.25, 0.0, None),
+                 (_lap, 'd23', 50.25, 23.0, None)]
+for _lap in FR_H_LAPS:
+    for _h in (0.28, 0.35):
+        FR_CELLS += [(_lap, 'p10', 50.25, 0.0, _h), (_lap, 'd23', 50.25, 23.0, _h)]
+
+
+def fr_stem(lap, cell, h, noise):
+    return 'F_%s_%s%s_n%d' % (lap, cell, '' if h is None else '_h%d' % int(round(h * 100)), noise)
+
+
+def word_stats(lap):
+    """Ones, mean of the +-1 word, halves, isolated 1s and 0s (preamble / trailer as neighbours), the longest run."""
+    ac = br.access_code(lap, trailer=True)
+    s = ac[4:68]
+    d = [2 * b - 1 for b in s]
+    runs, c = [], 1
+    for i in range(1, 64):
+        if s[i] == s[i - 1]:
+            c += 1
+        else:
+            runs.append(c)
+            c = 1
+    runs.append(c)
+    return dict(sync_word_ones=sum(s), sync_mean=sum(d) / 64.0, sync_half1=sum(d[:32]) / 32.0, sync_half2=sum(d[32:]) / 32.0,
+                isolated_1=sum(1 for k in range(64) if ac[4 + k] == 1 and ac[3 + k] == 0 and ac[5 + k] == 0),
+                isolated_0=sum(1 for k in range(64) if ac[4 + k] == 0 and ac[3 + k] == 1 and ac[5 + k] == 1),
+                longest_run=max(runs))
+
+
+for _i, (_lap, _cell, _off, _drift, _h) in enumerate(FR_CELLS):
+    _seed, _cls = FR_SCHEDULES[_lap]
+    _nz = FR_NOISE0 + _i
+    _extra = dict(h=_h) if _h is not None else {}
+    _add(fr_stem(_lap, _cell, _h, _nz), _seed, 'X', mode='bda', share=87, master_cfo_hz=0.0, offset_us=_off,
+         drift_ppm=_drift, noise_seed=_nz, exchange_ids=True, cell=dict(
+             lap_name=_lap, cfo_hz=0.0, first_id_phase_samples=int(round((_off - 50.0) * 40)) if _drift == 0 else None,
+             noise_seed=_nz, schedule_seed=_seed, lap_class=_cls, fr_cell=_cell, drift_ppm=_drift,
+             h=_h if _h is not None else br.GFSK_H, **word_stats(int(_lap, 16))), **_extra)
+
 _add('C_20msps', 9531, 'C', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 _add('R_20msps_s1', 9532, 'R', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 
@@ -232,6 +294,7 @@ SETS = {'P1': ['R_s1', 'R_s2', 'R_s3'],
         'P4': ['C_20msps', 'R_20msps_s1']}
 SETS['SL'] = [sl_stem(*c) for c in SL_CELLS]
 SETS['LT'] = [sl_stem(*c) for c in LT_CELLS]
+SETS['FR'] = [fr_stem(c[0], c[1], c[4], FR_NOISE0 + i) for i, c in enumerate(FR_CELLS)]
 SETS['all'] = SETS['P1'] + SETS['P2'] + SETS['P4']
 
 
@@ -696,6 +759,13 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
             jobs.append(dict(index=idx, bits=ev['bits'], start=int(start_s), frac=frac_s, phase=float(phases[idx]),
                              amp=amp, mhz=2402.0 + ev['channel'], cfo_hz=float(sample_cfo_hz(ev['cfo_hz'], ev['sender'])),
                              gain=1.0, step_at=None))
+            if 'h' in spec:
+                jobs[-1]['h'] = float(spec['h'])
+    if spec.get('exchange_ids'):
+        # SET-N's keys: a connection exchange (the master packet at TX slot k and its answer in the same TX slot) shares
+        # exchange_id = k; page IDs have none
+        for e, ev in zip(entries, evs):
+            e['exchange_id'] = int(ev['k']) if e['role'] in ('master', 'slave') else None
     # the offset law and the crossings (none for the fixed grid: kept for --drift-ppm)
     d1 = 1 / t_scale - 1
     crossings = []
@@ -721,7 +791,7 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
         'name': 'slotb2_' + spec['stem'], 'stem': spec['stem'], 'kind': spec['kind'],
         'lap': int(extra_top.get('lap')), 'uap': int(extra_top.get('uap')),
         'sample_rate': fs, 'center_mhz': center, 'samples_per_symbol': sps,
-        'modulation': {'scheme': 'GFSK', 'bt': br.GFSK_BT, 'h': br.GFSK_H, 'symbol_rate': br.SYMBOL_RATE},
+        'modulation': {'scheme': 'GFSK', 'bt': br.GFSK_BT, 'h': float(spec.get('h', br.GFSK_H)), 'symbol_rate': br.SYMBOL_RATE},
         'snr_db': float(snr_db), 'snr_bw_hz': 1e6, 'noise_1mhz': NOISE_1MHZ, 'noise_seed': plan_seed,
         'noise_block_samples': NOISE_BLOCK, 'cfo_hz': float(master_cfo),
         'master_cfo_hz': float(master_cfo), 'slave_cfo_hz': float(slave_cfo) if spec['kind'] != 'C' else None,
@@ -818,7 +888,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     fs, center = spec['fs'], spec['center']
     dur = spec['duration'] if duration is None else duration
     off = Fraction(str(spec.get('offset_us', OFFSET_US) if offset_us is None else offset_us))
-    drift = 0.0 if drift_ppm is None else drift_ppm
+    drift = spec.get('drift_ppm', 0.0) if drift_ppm is None else drift_ppm
     cfo = SLAVE_CFO_HZ if slave_cfo_hz is None else slave_cfo_hz
     n_slots = int(math.floor(dur * 1e6 / TX_SLOT_US + 1e-9))
     rng = np.random.default_rng([seed, 11])
@@ -987,7 +1057,7 @@ def main(argv=None):
             kw[k] = v
     for stem in stems:
         write_file(stem, a.out, **kw)
-    if a.set in ('SL', 'LT') and not kw.keys() - {'snr_db'}:
+    if a.set in ('SL', 'LT', 'FR') and not kw.keys() - {'snr_db'}:
         write_manifest(a.out, stems, ['python -B scripts/bt_synth_slotb2.py --set %s --out %s' % (a.set, a.out)], a.set)
 
 

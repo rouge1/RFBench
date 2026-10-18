@@ -1154,6 +1154,21 @@ reviewed by Opus against the real files, write them; the files are not in git.
   counted over mixed's 27-51 gate, the 20 MS/s grid offset's int part left non-integer, and test gaps, all fixed. The
   non-AFH piconet has no wrong-role opportunities (0 of about 400 transitions land on the same channel, about 1/79):
   it tests the parity filter where the answer is on another channel, not the wrong-role case.
+- **The carrier-threshold fresh set (`--set FR`, 32 files, 2026-10-18).** bluey's s4-carrier-thr amendment A1.13 asked for
+  data its candidate threshold has not seen, to turn an exploratory pass into a replication on this generator family. The
+  six LAPs were chosen by a **mechanical rule committed before the search** (`scripts/bt_freshset_select.py` at 3a4272e;
+  its output in `knowledge/freshset/selection_output.txt`): seeds from 100000 up, the LT recipe, first IDs only, the ID
+  channels exactly 0x0466AB's 32-48 (or plus 30), 4,500-6,500 IDs, a new LAP; the first 2 negative (24 ones), 2 positive
+  (40), 1 balanced with isolated 1s >= isolated 0s + 3 and 1 the reverse. Found in seeds 100000-122348: 0x885614,
+  0x20C0AA (negative), 0xEED5EF, 0xDBB3FB (positive), 0x4426BB, 0xA9A2FB (balanced). The rule found the new words'
+  imbalance in their second halves, unlike 0x0466AB's first-half +0.56. Per LAP: p0, p10, p10b (another noise
+  realisation of the p10 schedule, for the wipeout cells) and **d23: +23 ppm of clock drift**, which walks the symbol
+  phase through all 40 samples. That replaces the "uniform timing_frac" first asked for, which is only 1/40 of a symbol.
+  h 0.28 and 0.35 for 0x4426BB and 0x885614 (p10, d23). **Every file has its own noise seed** (3001-3032), so the
+  files no longer share one noise array. The new options (`h`, `drift_ppm`, `exchange_ids` in a spec) are opt-in: a
+  test renders R_s1, two SL/LT files and an endlen file byte-identical to main's code. The test also measures h from the
+  samples (the peak deviation scales 0.880 / 1.091 of h 0.32's, against 0.875 / 1.094). The generator test runs 1,346
+  checks (53 for this set).
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
