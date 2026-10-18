@@ -1,0 +1,237 @@
+{"seed": 103366, "lap": "0xEED5EF", "uap": "0xF2", "n_ids": 5715, "n_conn": 854, "id_channels": [30, 32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-7, -5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 40, "mean": 0.25, "half1": 0.125, "half2": 0.375, "iso1": 7, "iso0": 12, "longest_run": 5, "cls": "positive"}
+{"seed": 105619, "lap": "0x4426BB", "uap": "0x84", "n_ids": 5100, "n_conn": 762, "id_channels": [32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 32, "mean": 0.0, "half1": 0.0625, "half2": -0.0625, "iso1": 11, "iso0": 8, "longest_run": 6, "cls": "balanced_1"}
+{"seed": 107603, "lap": "0xDBB3FB", "uap": "0xA7", "n_ids": 5193, "n_conn": 776, "id_channels": [32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 40, "mean": 0.25, "half1": 0.125, "half2": 0.375, "iso1": 5, "iso0": 8, "longest_run": 8, "cls": "positive"}
+{"seed": 108529, "lap": "0xA9A2FB", "uap": "0x10", "n_ids": 5528, "n_conn": 826, "id_channels": [32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 32, "mean": 0.0, "half1": -0.125, "half2": 0.125, "iso1": 9, "iso0": 12, "longest_run": 7, "cls": "balanced_0"}
+{"seed": 115125, "lap": "0x885614", "uap": "0xE7", "n_ids": 5100, "n_conn": 762, "id_channels": [32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 24, "mean": -0.25, "half1": -0.1875, "half2": -0.3125, "iso1": 10, "iso0": 5, "longest_run": 6, "cls": "negative"}
+{"seed": 122348, "lap": "0x20C0AA", "uap": "0x22", "n_ids": 5715, "n_conn": 854, "id_channels": [30, 32, 34, 36, 38, 40, 42, 44, 46, 48], "id_offsets_mhz": [-7, -5, -3, -1, 1, 3, 5, 7, 9, 11], "ones": 24, "mean": -0.25, "half1": -0.1875, "half2": -0.3125, "iso1": 10, "iso0": 7, "longest_run": 7, "cls": "negative"}
+
+searched seeds 100000..122348
+h variants: 0x4426BB (first balanced_1) and 0x885614 (first negative)
+[
+ {
+  "seed": 115125,
+  "lap": "0x885614",
+  "uap": "0xE7",
+  "n_ids": 5100,
+  "n_conn": 762,
+  "id_channels": [
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 24,
+  "mean": -0.25,
+  "half1": -0.1875,
+  "half2": -0.3125,
+  "iso1": 10,
+  "iso0": 5,
+  "longest_run": 6,
+  "cls": "negative"
+ },
+ {
+  "seed": 122348,
+  "lap": "0x20C0AA",
+  "uap": "0x22",
+  "n_ids": 5715,
+  "n_conn": 854,
+  "id_channels": [
+   30,
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -7,
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 24,
+  "mean": -0.25,
+  "half1": -0.1875,
+  "half2": -0.3125,
+  "iso1": 10,
+  "iso0": 7,
+  "longest_run": 7,
+  "cls": "negative"
+ },
+ {
+  "seed": 103366,
+  "lap": "0xEED5EF",
+  "uap": "0xF2",
+  "n_ids": 5715,
+  "n_conn": 854,
+  "id_channels": [
+   30,
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -7,
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 40,
+  "mean": 0.25,
+  "half1": 0.125,
+  "half2": 0.375,
+  "iso1": 7,
+  "iso0": 12,
+  "longest_run": 5,
+  "cls": "positive"
+ },
+ {
+  "seed": 107603,
+  "lap": "0xDBB3FB",
+  "uap": "0xA7",
+  "n_ids": 5193,
+  "n_conn": 776,
+  "id_channels": [
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 40,
+  "mean": 0.25,
+  "half1": 0.125,
+  "half2": 0.375,
+  "iso1": 5,
+  "iso0": 8,
+  "longest_run": 8,
+  "cls": "positive"
+ },
+ {
+  "seed": 105619,
+  "lap": "0x4426BB",
+  "uap": "0x84",
+  "n_ids": 5100,
+  "n_conn": 762,
+  "id_channels": [
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 32,
+  "mean": 0.0,
+  "half1": 0.0625,
+  "half2": -0.0625,
+  "iso1": 11,
+  "iso0": 8,
+  "longest_run": 6,
+  "cls": "balanced_1"
+ },
+ {
+  "seed": 108529,
+  "lap": "0xA9A2FB",
+  "uap": "0x10",
+  "n_ids": 5528,
+  "n_conn": 826,
+  "id_channels": [
+   32,
+   34,
+   36,
+   38,
+   40,
+   42,
+   44,
+   46,
+   48
+  ],
+  "id_offsets_mhz": [
+   -5,
+   -3,
+   -1,
+   1,
+   3,
+   5,
+   7,
+   9,
+   11
+  ],
+  "ones": 32,
+  "mean": 0.0,
+  "half1": -0.125,
+  "half2": 0.125,
+  "iso1": 9,
+  "iso0": 12,
+  "longest_run": 7,
+  "cls": "balanced_0"
+ }
+]
