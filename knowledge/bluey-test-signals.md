@@ -1041,6 +1041,21 @@ reviewed by Opus against the real files, write them; the files are not in git.
   (whole-sample grid). A `cell` block in each sidecar names LAP, CFO, phase, offset, seeds and share target; `--set SL` writes
   `manifest.json` and `SHA256SUMS.txt`. Reviewed by Muse (no defect; the LAP confound and a missing manifest test were its
   findings, the test is added); the generator test runs 1,166 checks.
+- **A receiver's own offset on a delivered file (`scripts/bt_rx_offset.py`, 2026-10-17).** Every offset in the synthetic
+  files is the transmitter's (per burst `cfo_hz`); bluey's carrier census reads about -58 kHz on one cluster of real bursts
+  and cannot tell that from a term common to the receiver. The tool turns a delivered slotb2 or endlen file into what a
+  receiver with a wrong reference would have recorded: `--rx-ppm` (**+ = the receiver FAST**; one reference drives LO and
+  sample clock, so **+23.8 ppm reads about -58.1 kHz at 2441 MHz** and stretches time, 286 us over 12 s), `--rx-offset-hz`
+  (a pure rotation, an IF or metadata error: with no ppm it is exactly bluey's `oracle_shift`, `exp(+j 2 pi f n / fs)` with
+  the absolute index, tested to 6e-7) and `--dc-spur-db` (a constant at 0 Hz that does not move). The resampler is a 64-tap
+  Kaiser windowed sinc, 4096 phases, flat to 0.47 fs (about -80 dB error on a tone), 2.7 Msps (3 min per 12 s file).
+  **The truth moves:** `start_sample`, `timing_frac` and every `*_sample` key are receiver samples; `*_us` keys stay true
+  time; `cfo_hz` stays the transmitter's and a new per-burst **`cfo_observed_hz`** is what the receiver reads, exact; a
+  `receiver` block records settings, source and hash. A burst is also longer in receiver samples by ppm times its length
+  (0.35 sample for a 366 us packet at 23.8 ppm), so a refit with an unstretched model lands about half that late; the test
+  allows for it. Sidecars of other generators are refused (the rewrite was tested on these two only). The test
+  (`scripts/test_bt_rx_offset.py`, 24 checks) refits bursts, decodes bits, measures the carrier alone and paired against the
+  source, and checks the noise, the spur and the manifest.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
