@@ -1041,6 +1041,73 @@ reviewed by Opus against the real files, write them; the files are not in git.
   (whole-sample grid). A `cell` block in each sidecar names LAP, CFO, phase, offset, seeds and share target; `--set SL` writes
   `manifest.json` and `SHA256SUMS.txt`. Reviewed by Muse (no defect; the LAP confound and a missing manifest test were its
   findings, the test is added); the generator test runs 1,166 checks.
+- **The LAP test (`--set LT`, 9 files, 2026-10-17).** bluey's 0x0466AB loss appears only at negative carrier offsets, and
+  SDR's review lead was the sync word's imbalance: 0x0466AB has 40 ones of 64 (mean of the +-1 word +0.25, halves +0.56 /
+  -0.06). The prediction to test is that a word with the opposite imbalance loses IDs at *positive* offsets. The set is the
+  same construction and 0x0466AB's recipe (share 87, every second ID out of the window, so first IDs only) on three
+  schedules found by a plan-only search of 90,000 schedule seeds: **0x4073AD** (seed 48957, 24 ones, mean -0.25, halves
+  -0.50 / 0.00: the closest mirror found; 5,809 IDs, 868 connection bursts), **0x2044EF** (seed 10426, 24 ones, mean -0.25,
+  halves -0.31 / -0.19: the overall mean reversed, the first half only partly; 5,568 / 832) and the control **0x2626FE**
+  (seed 81442, 32 ones, halves 0 / 0; 5,247 / 784). If only 0x4073AD loses at positive offsets, the early part of the word
+  is what matters. **The channels are part of the design:** a LAP is its page hop schedule, so it decides which channels
+  the IDs use. 0x0466AB's IDs are on -5..+11 MHz of the centre (mean +3.1 MHz); 0x2626FE's on the same channels, 0x4073AD's
+  and 0x2044EF's on -7..+11 (one more channel low). A first choice of control, 0x0AA176, was dropped after the review: its
+  IDs were the mirror image, -11..+5 MHz, so a difference could have come from the band edge. Per LAP: CFO 0 at phases 0 and
+  10 (bluey shifts these digitally, as in its FR-A and R2-A1 runs) and a rendered -30 kHz phase-10 file to check that a shift
+  and a rendered offset agree (white noise, a random carrier phase per burst, the slaves carrying the master's offset; the
+  review found them sample for sample the same, up to one phase per burst, at a 200 dB SNR). The cell block adds
+  `sync_word_ones`; `--set LT` writes `manifest.json` (with `"set": "LT"`) and `SHA256SUMS.txt`. Reviewed by a Claude subagent (Muse was unavailable): no
+  defect; the channel mirror, the word "mirror" for 0x2044EF and two test gaps were its findings, all taken up. The
+  generator test runs 1,293 checks (127 for this set).
+- **What bluey found with the LAP test (2026-10-18), and what it means for the files.** Delivered 2026-10-17 to
+  `sdr-synth-tmp/laptest/` (9 files, 33 GB, generator a894e02, `sha256sum -c` 18/18 on worklaptop1). bluey's registered
+  run (phase 10, dual grid, a digital shift of the CFO-0 files; R = IDs found at the shift / found at 0 Hz):
+
+  | LAP | -58 kHz | +35 kHz | +58 kHz |
+  |---|---|---|---|
+  | 0x4073AD (24 ones) | 0.956 | 0.188 | 0.000 (0 of 5,809) |
+  | 0x2044EF (24 ones) | 0.974 | 0.429 | 0.000 (0 of 5,568) |
+  | 0x0466AB (40 ones) | 0.000 | 1.008 | 0.896 |
+  | 0x2626FE (32 ones, control) | 0.090 | 0.993 | 0.401 |
+
+  **The prediction held in sign**: the negative-imbalance words lose at positive offsets and keep at negative ones, the
+  mirror of 0x0466AB. bluey's registered label is MIXED-BORDER, because 0x0466AB at +58 sat just under its 0.9 bar and
+  the balanced control was not clean. bluey's model of its own receiver chain (M0, frozen before the runs, no free
+  parameter) predicted all 16 verdict cells within 0.056, including the control's loss.
+  **The mechanism, as SDR read it from bluey's re-slices (post-hoc, in bluey's packet):** the slicer's reference has to
+  be the CARRIER.
+  - bluey's threshold (a 129-sample centred boxcar mean of the discriminator) tracks only about half of a carrier offset
+    for a 68-bit ID, so it lags the carrier by roughly half the offset.
+  - A burst's own mean equals the carrier only for a balanced word: re-slicing at the burst's own mean rescued 96 % of
+    the control's lost IDs at both signs, but about 0 % of an imbalanced word's on its bad sign (82-83 % on its good
+    sign).
+  - A best fixed threshold per burst (the midpoint of the 1 and 0 levels, roughly the carrier) rescued 80-93 % on the
+    bad sign. Telling the searcher the LAP in advance rescued none: the loss is bit errors, not discovery.
+  - So the imbalance decides which sign is fatal, and the polarity of the weakest bits shapes the rest: the control has
+    9 isolated 1s and 4 isolated 0s, so a negative offset hurts it more (0.09 against 0.40).
+  - The 7-20 % that no threshold rescues at phase 10 is an eye effect of the offset. Candidates: the discriminator
+    Im(x x*) compressing large phase steps at 1 sps, or the channel filter's roll-off beyond +-218 kHz. Not yet split.
+  **Where SDR was wrong along the way:**
+  - SDR's lead first called "alpha = 1" (tracking the burst MEAN) full tracking, and the registration took the own-mean
+    re-slice as the test of the lead. The mean is the wrong reference for an imbalanced word.
+  - SDR's margin numbers (weakest 1 at +62 / +92 kHz, D = 156 kHz) came from an ideal one-symbol boxcar at 40 MS/s. bluey's
+    chain gives 15-36 kHz at 0 Hz.
+  - SDR's first worked fit of the partial-tracking model to the cell yields did not fit quantitatively; bluey's
+    whole-chain model did.
+  - A sign was reversed in one review suggestion (bluey's implementer caught it).
+  **What the files cannot say:**
+  - Every LT and samelap n1 file shares ONE noise array (noise seed 1, same length), so IDs of different LAPs in the
+    same TX slot see the same noise samples. Comparisons are paired; the effective N is one realisation.
+  - `timing_frac` is 0, so every ID of a cell sits at exactly its sub-sample phase. Phase 10 is the worst dual-grid phase
+    (both grids a quarter symbol off). Real traffic averages over phases: the p0 cells are milder (0x0466AB at -58: 0.139
+    at p0, 0.000 at p10). Do not quote the p10 zeros as a real-device rate.
+  - h = 0.32 exactly, BT = 0.5, no drift. The weakest-bit margin scales with h, so the magnitudes would move for a real
+    transmitter; the sign pattern should not.
+  - If bluey's M0 modulator shares SDR's idealisation, M0's match validates bluey's chain model, not real devices.
+  **Possible next files (only on request and approval):** an LT variant with a uniform `timing_frac` and h in {0.28,
+  0.35}, to bound real-device yields. bluey's own next step is a registered threshold-fix candidate (a carrier estimate
+  that does not depend on the word, e.g. a two-pass threshold at the midpoint of the decided bits' levels) and an arg()
+  discriminator re-slice to split the remainder.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
