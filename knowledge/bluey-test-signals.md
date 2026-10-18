@@ -1130,6 +1130,30 @@ reviewed by Opus against the real files, write them; the files are not in git.
   zero), runs a slow receiver with an offset, and checks the noise, the spur and the manifest. Reviewed by a Claude
   subagent (Muse was unavailable): no defect in the samples; the sidecar bookkeeping, the flatness claim and the test gaps
   it found are fixed.
+- **SET-N, multi-slot traffic for bluey's part B2 (`scripts/bt_synth_multislot.py`, `--set setn`, 4 files, 2026-10-17).**
+  bluey's one-slot-back scan recovers a master packet from the answer after it; its graded sets had no slave multi-slot
+  answers, no link without AFH, and endlen's five fixed channels inflate the wrong-role rows (a one-slot answer followed
+  at once by the next master packet on the same channel: 1 in 5 there; on the adapted kernel over 31-50 the measured
+  chance is 0.024 / 0.028 / 0.038 at a next-master gap of 2 / 4 / 6 slots). A new module on `bt_synth_mixed.py`'s pieces,
+  which is not changed: 6 piconets (5 on AFH over 31-50, the legal minimum of 20 channels; 1 on the basic 79-channel
+  sequence, whose answer to an L-slot packet is on f(clock of slot s + L)), mixed's 3 page joiners, levels 8-22 dB.
+  Traffic: master L = 1/3/5 at 40/30/30 %, answer L' likewise (slaves send DM3/DH3, DM5/DH5 too), busy masters
+  (p_master_tx 0.80-0.95 on AFH, 0.5 without) for bluey's floor of 100 wrong-role rows: the plans hold 125 / 125 / 96 /
+  125 opportunities (`opportunities` in the sidecar), about 360 rows at bluey's measured 0.77 rows per opportunity;
+  about 16 % of bursts collide. Files: `setn_a`, `setn_b` (40 MS/s, seeds 9701, 9702), `setn_c` (seed 9703, rendered
+  at 40 MS/s with only channels 31-47, then a 161-tap FIR and decimation by 2 to 20 MS/s, output n = input 2n, the
+  truth's sample keys halved), `setn_d` (setn_a plus the interf set's bursty Wi-Fi noise moved to +2..+11 MHz, +20 dB
+  per MHz while on, 30 % duty; equal to setn_a where no frame is on). Truth adds a file-unique `exchange_id` (`pair`
+  restarts per device), `sender`, `afh`, out-of-band bursts in `bursts_not_rendered`, and the interferer keys in
+  `setn_d`. The test (`scripts/test_bt_synth_multislot.py`, 68 checks) checks the four whole plans (shares, slot and
+  parity rules, both channel rules against `bt_hop` with the sidecar's own map, ids, the band, the opportunities and
+  the joiners' window counts recounted), that bursts rebuilt from their sidecar keys alone are the rendered samples
+  (40 MS/s, and at 20 MS/s from the halved truth to 1.1 % RMS), every halved 20 MS/s key, the 20 MS/s file against an
+  independent numpy decimation, the noise, and the interferer's pairing, level and truth. Reviewed by a Claude subagent
+  (Muse unavailable): the 40 MS/s files and the interferer sound; it found the joiners' window counts in `setn_c` still
+  counted over mixed's 27-51 gate, the 20 MS/s grid offset's int part left non-integer, and test gaps, all fixed. The
+  non-AFH piconet has no wrong-role opportunities (0 of about 400 transitions land on the same channel, about 1/79):
+  it tests the parity filter where the answer is on another channel, not the wrong-role case.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
