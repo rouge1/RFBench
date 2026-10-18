@@ -58,7 +58,7 @@ def positions(iq, side, label, n=24, tol=0.1):
     """Refit bursts and compare with the truth.  Under a clock error a burst is also LONGER in receiver samples by
     ``eps`` times its length, and the fit's model is the unstretched burst: its best start lies about half the stretch
     late, so the tolerance carries ``eps * length / 2``."""
-    eps = rx.eps_of(side.get('receiver', {}).get('rx_ppm', 0.0))
+    eps = abs(rx.eps_of(side.get('receiver', {}).get('rx_ppm', 0.0)))
     sps = side['sample_rate'] / 1e6
     picks = t2.spread([e for e in t2.rendered(side) if e['ptype'] != 'AUX1'], n)
     errs, tols = [], []
@@ -147,6 +147,40 @@ def main():
               abs(s['first_id_sample'] - side['first_id_sample'] * (1 + e_)) < 1e-6,
               'ppm sidecar: the receiver block, *_us unchanged (true time), top-level *_sample scaled')
 
+        check(all(b['symbol_phase'] == int(b['start_sample'] % 40) for b in s['bursts']) and
+              s['lead_in_samples'] == side['lead_in_samples'] * (1 + e_) and 'cfo_observed_hz' in s['per_burst_keys'] and
+              s['id_end_note'].endswith('(1 + eps) times as many]'),
+              'ppm sidecar: symbol_phase = int(start_sample % 40) as the generator defines it, lead_in_samples scaled, '
+              'cfo_observed_hz listed, the source\'s formula notes marked')
+
+        print('== the formula off the centre channel, measured on a long tone', flush=True)
+        # an independent check of cfo_observed_hz where the eps (f_ch - fc) term is not zero: a pure tone at the
+        # baseband frequency of channel 2449 MHz + cfo in a 2439 MHz capture, processed, its frequency measured from the
+        # phase slope over 0.1 s, less the nominal channel offset
+        f_ch, fc0, cfo, off_hz, ppm = 2449e6, 2439e6, -30e3, 5e3, 23.8
+        nn = 4_000_000
+        tone = np.exp(2j * np.pi * ((f_ch - fc0 + cfo) / 40e6) * np.arange(nn)).astype(np.complex64)
+        yt = np.concatenate(list(rx.process(tone, ppm, off_hz, 40e6, fc0)))[1000:-1000]
+        ph = np.unwrap(np.angle(yt.astype(np.complex128) * np.exp(-2j * np.pi * (f_ch - fc0) / 40e6 * np.arange(1000, 1000 + len(yt)))))
+        meas = np.polyfit(np.arange(len(ph)) / 40e6, ph, 1)[0] / (2 * np.pi)
+        want = rx.observed_cfo_hz(cfo, f_ch / 1e6, fc0 / 1e6, ppm, off_hz)
+        naive = cfo + off_hz - ppm * 1e-6 * fc0            # what dropping the channel term would give
+        check(abs(meas - want) < 2.0 and abs(want - naive) > 200,
+              'formula: a tone at 2449 MHz in a 2439 MHz capture, +23.8 ppm, +5 kHz offset, reads %.2f Hz against %.2f from '
+              'cfo_observed_hz (the eps (f_ch - fc) term is %.0f Hz of it)' % (meas, want, want - naive))
+
+        print('== a SLOW receiver and an offset together (-23.8 ppm, +20 kHz)', flush=True)
+        p = rx.write(src, out, rx_ppm=-23.8, rx_offset_hz=20e3)
+        y, s = load(p)
+        check(len(y) == rx.out_length(len(x), -23.8) < len(x), 'slow: %d samples from %d (shorter)' % (len(y), len(x)))
+        sv = observed_view(s)
+        positions(y, sv, 'slow + offset')
+        picks = t2.spread(t2.rendered(sv), 8)
+        check(all(abs(t2.measured_cfo(y, sv, e) - e['cfo_observed_hz']) < 1000 for e in picks) and
+              all(abs(e['cfo_observed_hz'] - (side['bursts'][e['index']]['cfo_hz'] + 20e3 + 23.8e-6 * e['channel_mhz'] * 1e6)) < 5 for e in picks),
+              'slow + offset: the measured carrier is cfo_observed_hz (about cfo + 20 kHz + 58 kHz) within 1 kHz')
+        t2.check_decode(y, sv, 'slow + offset', n=8)
+
         print('== endlen, refusal, manifest', flush=True)
         with quiet():
             esrc, _ = ge.write_file('E_mix_s1', os.path.join(td, 'esrc'), duration=DUR, snr_db=t2.HIGH)
@@ -174,10 +208,10 @@ def main():
         rx.write_manifest(out)
         man = json.load(open(os.path.join(out, 'manifest.json')))
         sums = dict(reversed(l.split('  ', 1)) for l in open(os.path.join(out, 'SHA256SUMS.txt')).read().split('\n') if l)
-        check(len(man['files']) == 4 and len(sums) == 8 and
+        check(len(man['files']) == 5 and len(sums) == 10 and
               all(sums[r['file']] == hashlib.sha256(open(os.path.join(out, r['file']), 'rb').read()).hexdigest() == r['sha256_cf32']
                   for r in man['files']),
-              'manifest.json and SHA256SUMS.txt over the 4 processed files')
+              'manifest.json and SHA256SUMS.txt over the 5 processed files')
     failed = [w for ok, w in RESULTS if not ok]
     print('\n%d checks, %.0f s' % (len(RESULTS), time.time() - t0))
     for w in failed:

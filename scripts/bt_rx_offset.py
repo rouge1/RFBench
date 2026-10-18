@@ -22,13 +22,19 @@ fs)`` with the absolute sample index ``n`` and nothing else: the operation bluey
 **How.**  Output sample ``m`` is the input at position ``m / (1 + eps)``, by a windowed-sinc interpolator (``TAPS`` taps,
 Kaiser beta ``BETA``, cutoff ``CUTOFF`` of the sample rate, ``PHASES`` quantised fractional positions, every phase's taps
 summing to 1); then ``exp(+j 2 pi (rx_offset_hz - eps fc) t_m)`` with ``t_m = m / (fs (1 + eps))`` the true time.  The
-interpolator keeps the band to +-``CUTOFF`` fs (18.8 MHz at 40 MS/s, 9.4 at 20) flat and rolls the white noise off above
-it.  With ``rx_ppm`` 0 there is no interpolation.  An optional **DC spur** (``dc_spur_db`` over the noise in 1 MHz, a
-constant added last) is the receiver's own LO leak: it stays at 0 Hz whatever the offset.
+interpolator is flat to about 0.425 fs (an error of -74 dB or better: 17 MHz at 40 MS/s, 8.5 at 20, which holds every
+channel of the window) and ``CUTOFF`` is its -6 dB point (18.8 MHz at 40 MS/s); white noise above 0.425 fs rolls off.  The
+first and last ~32 output samples are interpolated against zeros beyond the file (they lie in the noise lead-in and
+lead-out).  With ``rx_ppm`` 0 there is no interpolation.  An optional **DC spur** (``dc_spur_db`` over the noise in 1 MHz,
+a constant added last) is the receiver's own LO leak: it stays at 0 Hz whatever the offset.
 
 **The truth.**  The sidecar is the source's with: per burst ``start_sample`` / ``timing_frac`` (their sum scaled by ``1 +
-eps``), every other per-burst and top-level key ending in ``_sample`` scaled (receiver samples), ``symbol_phase``
-recomputed, and **``cfo_observed_hz``** added per burst (exact, the formula above).  ``cfo_hz`` stays the TRANSMITTER's
+eps``), every other per-burst and top-level key ending in ``_sample`` and ``lead_in_samples`` scaled (receiver samples),
+``symbol_phase`` recomputed as the generator defines it (``int(start_sample % samples_per_symbol)``), and
+**``cfo_observed_hz``** added per burst (exact, the formula above).  ``samples_per_symbol`` stays nominal (the receiver
+believes its clock); a symbol is ``(1 + eps)`` times that in receiver samples, so the formula notes of the source
+(``id_end_note``, ``end_note``, ``grid_offset_definition``, ``noise_note``) hold in source samples, not here: each is
+marked so.  ``cell.first_id_phase_samples`` is the source's design value.  ``cfo_hz`` stays the TRANSMITTER's
 offset; a grader of a processed file must read ``cfo_observed_hz``.  Keys ending in ``_us`` stay in TRUE time, so under
 ``rx_ppm`` ``start_sample / fs`` is no longer ``start_us``.  ``n_samples`` is the new length and ``slot_samples`` the
 receiver samples per slot; a ``receiver`` block records the settings, the source and its hash.  Only sidecars of
@@ -130,14 +136,21 @@ def rewrite_sidecar(side, rx_ppm=0.0, rx_offset_hz=0.0, dc_spur_db=None, n_out=N
             if key.endswith('_sample') and key != 'start_sample' and isinstance(v, (int, float)) and v is not None:
                 b[key] = v * k
         if 'symbol_phase' in b:
-            b['symbol_phase'] = pos % sps
+            b['symbol_phase'] = int(b['start_sample'] % sps)
         ch = b.get('channel_mhz', 2402 + b['channel'])
         b['cfo_observed_hz'] = observed_cfo_hz(b['cfo_hz'], ch, out['center_mhz'], rx_ppm, rx_offset_hz)
     for key, v in list(out.items()):
         if key.endswith('_sample') and isinstance(v, (int, float)) and not isinstance(v, bool):
             out[key] = v * k
-    if 'slot_samples' in out:
-        out['slot_samples'] = out['slot_samples'] * k
+    for key in ('slot_samples', 'lead_in_samples'):
+        if key in out:
+            out[key] = out[key] * k
+    if isinstance(out.get('per_burst_keys'), list) and 'cfo_observed_hz' not in out['per_burst_keys']:
+        out['per_burst_keys'] = sorted(out['per_burst_keys'] + ['cfo_observed_hz'])
+    stale = ' [bt_rx_offset: this formula holds in the SOURCE file\'s samples; here samples are receiver samples, (1 + eps) times as many]'
+    for key in ('id_end_note', 'end_note', 'grid_offset_definition', 'noise_note'):
+        if isinstance(out.get(key), str) and e != 0.0:
+            out[key] = out[key] + stale
     if n_out is not None:
         out['n_samples'] = n_out
     obs = [b['cfo_observed_hz'] for b in out['bursts']]
