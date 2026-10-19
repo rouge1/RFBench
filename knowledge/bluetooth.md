@@ -170,6 +170,11 @@ code:
 - **Pad before any receiver.** +10 dBm into a HackRF is 15 dB past its
   −5 dBm limit; see
   [the bench](ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).
+  The VSG60A-to-BB60D bench for bluey has no pad (a bare SMA cable,
+  2026-10-18): `scripts/bt_bench_play.py` refuses any level that would put
+  more than −20 dBm into the BB60D (level minus the stated `--pad-db`),
+  30 dB under its +10 dBm maximum input. A HackRF on that cable would
+  still need a pad.
 - **To use the BB60D as the receiver, put the VSG60 on another host** -
   for the bluey work, the work laptop (`ssh worklaptop1`), which has the
   VSG60, the `gnu` environment and this repo. The two will not stream on

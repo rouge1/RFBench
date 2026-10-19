@@ -46,9 +46,10 @@ libbtbb's decode.
    `apps/scan_live.py --iq-file <file> --sample-rate 20e6`.
 2. **The same train on air** from the VSG60, into bluey's BB60D. The BB60D
    and VSG60 cannot stream on one host, so the VSG60 goes on the work
-   laptop, `ssh worklaptop1` ([radios.md](radios.md#vsg60-notes)). It goes over a cable with
-   20-30 dB of pad, not an antenna
-   ([bluetooth.md](bluetooth.md#the-bench)).
+   laptop, `ssh worklaptop1` ([radios.md](radios.md#vsg60-notes)). It goes over a cable, not an
+   antenna ([bluetooth.md](bluetooth.md#the-bench)). The bench has no pad (2026-10-18), so
+   `scripts/bt_bench_play.py` caps the level at the BB60D's input instead: VSG level minus the
+   stated `--pad-db` (0 for the bare cable) at most -20 dBm.
 3. **Hopping under a narrow AFH map**: 20-40 adjacent channels, so every
    hop lands inside one VSG60 tuning and is a frequency shift in
    baseband. The master's address and clock are chosen, and the sequence

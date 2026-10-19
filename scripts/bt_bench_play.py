@@ -7,8 +7,11 @@
 **Never radiated.** Antennas off, an SMA cable from the VSG60A to the BB60D (``knowledge/bluetooth.md``, the bench).
 The bench has no pad, so the limit is the level at the BB60D's input: ``--go`` needs ``--pad-db``, the attenuation
 actually in the cable (0 for a bare cable; stated, never assumed), and refuses a level whose level minus pad is above
-``MAX_RX_DBM`` (-20 dBm, what +10 dBm through the checklist's 30 dB pad would give: 30 dB under the BB60D's +10 dBm
-reference maximum, 40 under its +20 dBm damage level). The level is also refused above ``MAX_LEVEL_DBM`` (0 dBm) or
+``MAX_RX_DBM`` (-20 dBm: the worst case the bench plan first had, +10 dBm through a 30 dB pad; 30 dB under the BB60D's
++10 dBm reference maximum, 40 under its +20 dBm damage level). The stated pad is trusted, from 0 to ``MAX_PAD_DB``: on
+the bare cable a mistaken ``--pad-db 30`` would let the level up to the 0 dBm cap (still 10 dB under the BB60D's
+maximum), so state 0. ``--check`` applies the same limit when given ``--pad-db``. The level is also refused above 0 dBm
+(``bt_tx_hop.MAX_LEVEL_DBM``) or
 when it is not a finite number (``bt_tx_hop.level_problem``: ``nan`` compares false against every limit). The
 levels the bench needs are far lower: the calibration shot is -90 dBm at the BB60D and 20 dB in 1 MHz about -70.
 
@@ -45,9 +48,10 @@ from scripts.bt_tx_hop import KILL_MARGIN_S, kill_after, level_problem, say  # n
 
 FS = 40e6
 CENTER_MHZ = 2439.0
-MAX_LEVEL_DBM = 0.0
 #: The most a shot may put into the BB60D, level minus pad.
 MAX_RX_DBM = -20.0
+#: No attenuator on this bench is larger; a bigger stated pad is a typing error.
+MAX_PAD_DB = 40.0
 #: The longest one-shot buffer the VSG60A has been shown to take at 40 MS/s (stage 3 phase 5).
 MAX_SECONDS = 10.24
 MAX_OFFSET_KHZ = 200.0
@@ -92,8 +96,8 @@ def pad_problem(pad, level):
     than ``MAX_RX_DBM`` into the BB60D through it, or None."""
     if pad is None:
         return '--go needs --pad-db, the attenuation actually in the cable (0 for a bare cable)'
-    if not (math.isfinite(pad) and pad >= 0):
-        return 'pad %s dB is not a finite number of dB, 0 or more' % pad
+    if not (math.isfinite(pad) and 0 <= pad <= MAX_PAD_DB):
+        return 'pad %s dB is not a finite number of dB from 0 to %.0f' % (pad, MAX_PAD_DB)
     if not level - pad <= MAX_RX_DBM:
         return ('level %.1f dBm through a %.1f dB pad puts %.1f dBm into the BB60D, over the %.0f dBm limit'
                 % (level, pad, level - pad, MAX_RX_DBM))
@@ -126,7 +130,7 @@ def main(argv=None):
         ap.error(problem)
     if not (math.isfinite(args.vsg_offset_khz) and abs(args.vsg_offset_khz) <= MAX_OFFSET_KHZ):
         ap.error('--vsg-offset-khz %s is not a finite number within +-%.0f' % (args.vsg_offset_khz, MAX_OFFSET_KHZ))
-    if args.go:
+    if args.go or args.pad_db is not None:
         problem = pad_problem(args.pad_db, args.level)
         if problem:
             ap.error(problem)
