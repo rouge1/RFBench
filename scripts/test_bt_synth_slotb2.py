@@ -1404,8 +1404,17 @@ def verify(cf32, json_path, n_pos=60, n_cfo=6, n_ids=60, n_dec=30):
     files' own 20 dB a start is good to a fraction of a sample, not to 0.1 of one per burst.
 
         python scripts/test_bt_synth_slotb2.py --verify synth_slotb2_R_s1.cf32 synth_slotb2_R_s1.json
+
+    The model a burst is fitted with (``ts.model_signal``) is made at ``br.GFSK_H``; a file of another h (the FR set's
+    _h28 and _h35) is checked with that h in force, or its starts and carriers come out biased by the model's own
+    mean deviation (an h 0.35 file read -3.7 kHz and up to 1 sample off at 0.32).
     """
     side = json.load(open(json_path))
+    with mock.patch.object(br, 'GFSK_H', side.get('modulation', {}).get('h', br.GFSK_H)):
+        return _verify(cf32, side, n_pos, n_cfo, n_ids, n_dec)
+
+
+def _verify(cf32, side, n_pos, n_cfo, n_ids, n_dec):
     iq = np.memmap(cf32, dtype='<c8', mode='r')
     fs = side['sample_rate']
     ups = fs / 1e6
