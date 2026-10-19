@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The bench tier for bluey-ox-walker: a fresh-set file's bursts from the VSG60A into the BB60D over a cable and a pad,
+"""The bench tier for bluey-ox-walker: a fresh-set file's bursts from the VSG60A into the BB60D over a cable,
 and the truth of the capture from the capture itself.
 
     python scripts/bt_bench.py shot --out DIR                         # the two noise-free shots, here
@@ -8,9 +8,10 @@ and the truth of the capture from the capture itself.
     python scripts/bt_bench.py record CAP.cf32 --seconds 20           # the BB60D, 40 MS/s on 2439.0 MHz
     python scripts/bt_bench.py align CAP.cf32 SHOT.cf32 [--tx TX.json] [--rec REC.json] --out DIR [--name NAME]
 
-**Never radiated.** The VSG60A is a signal generator, not a certified 2.4 GHz device: the bench is a cable and a pad
-(at least 20 dB), antennas off (``knowledge/bluetooth.md``, the bench). ``scripts/bt_bench_play.py`` is the only thing
-that transmits, on worklaptop1, and only with ``--go``.
+**Never radiated.** The VSG60A is a signal generator, not a certified 2.4 GHz device: the bench is an SMA cable,
+antennas off (``knowledge/bluetooth.md``, the bench). It has no pad, so ``scripts/bt_bench_play.py``, the only thing that
+transmits (on worklaptop1, and only with ``--go``), caps the level at the BB60D's input instead: level minus the pad
+stated is at most -20 dBm.
 
 **The shots.** ``SHOTS`` names two files of the carrier-threshold fresh set (``bt_synth_slotb2 --set FR``), the mirror
 pair 0x885614 (24 ones) and 0xEED5EF (40 ones), both ``d23`` (+23 ppm drift, so the symbol phase walks through all 40

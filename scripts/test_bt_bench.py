@@ -16,7 +16,7 @@
   - the command line: a --tx not sent or of another shot refused; a dry run writes the cropped capture and its truth,
     whose starts are the planted ones in the cropped file's samples.
 * **The player**, with a fake ``apps.vsg_sink``: --check and every refusal touch no radio (a level over 0 or nan, a pad
-  missing or under 20 dB, an offset over 200 kHz, a shot whose sha256 is not its sidecar's); --go sends the exact
+  missing, negative or nan, more than -20 dBm into the BB60D (level minus pad), an offset over 200 kHz, a shot whose sha256 is not its sidecar's); --go sends the exact
   buffer once (never repeat_waveform) at 2439.0 MHz plus the offset and the level given; the sidecar is "not started"
   at the open, "pending" at the send and sent true after, "error" when the send raises, and the sink is always stopped.
 """
@@ -342,7 +342,9 @@ def test_player(tmp, shot_path):
               and side['vsg_center_mhz'] == 2439.058 and not guard.imported, '--check: the shot is OK, no radio')
         for argv, what in (([], 'neither --go nor --check sends nothing'),
                            (['--go'], '--go without --pad-db'),
-                           (['--go', '--pad-db', '10'], 'a 10 dB pad'),
+                           (['--go', '--pad-db', '0', '--level', '-19'], '-19 dBm with no pad (-19 at the BB60D)'),
+                           (['--go', '--pad-db', '10', '--level', '-5'], '-5 dBm through 10 dB (-15 at the BB60D)'),
+                           (['--go', '--pad-db', '-3', '--level', '-60'], 'a negative pad'),
                            (['--go', '--pad-db', 'nan'], 'a nan pad'),
                            (['--go', '--pad-db', '30', '--level', '1'], 'a level of +1 dBm'),
                            (['--go', '--pad-db', '30', '--level', 'nan'], 'a nan level'),
@@ -391,6 +393,12 @@ def test_player(tmp, shot_path):
         check(FakeSink.log[-2:] == [('stop_waveform',), ('stop',)] and 'timeout -k %d' % k in text
               and play.kill_after(10.0) == 25, 'the sink is stopped, and timeout -k %d is advised for this shot '
               '(25 for a 10 s shot)' % k)
+        FakeSink.log = []
+        FakeSink.side_path = os.path.join(out, 'go0_tx.json')
+        code, _, err = run(play.main, [shot_path, '--go', '--pad-db', '0', '--level', '-20', '--out', out, '--name', 'go0'])
+        side0 = json.load(open(FakeSink.side_path))
+        check(code == 0 and side0['sent'] is True and side0['pad_db'] == 0 and side0['level_at_receiver_dbm'] == -20,
+              'no pad at -20 dBm (the limit at the BB60D) plays, and says pad 0, -20 dBm at the BB60D')
         code, _, err = run(play.main, [shot_path, '--go', '--pad-db', '30', '--out', out, '--name', 'go1'])
         check(code == 2 and 'already exists' in err and not [e for e in FakeSink.log if e[0] == 'open'][1:],
               'a second --go under the same name is refused before the radio; the first sidecar stands')
