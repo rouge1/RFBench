@@ -1231,3 +1231,65 @@ Still open:
 - **The VSG60A on its own at 40 MS/s**: its flatness across 20 MHz is only
   known as the whole link's 6.5 dB; separating the two needs a cable and
   an attenuator; see Stage 3 over the air.
+
+## bluey's verify step at 40 MS/s: a channel filter with no selectivity (2026-10-19)
+
+Found in bluey's s4-carrier-thr follow-up, while chasing records that named
+the channel next to the burst's own. The code is bluey's, not this repo's;
+what is here is what the generator side measured and why it matters for
+the files made here.
+
+- **What bluey saw.** About 1.3 % of the detector's records, production and
+  the threshold arms alike, name a channel one away from the burst's true
+  one: same LAP, same burst. In the stage-4 cells that was 3,728 of
+  291,580 production records, and 3.5 % of the records whose position the
+  verify step confirmed. It is not leakage in the channelizer: 1,032 of
+  1,034 such records in one arm came from candidates found in the true
+  channel's own stream. The wrong channel is written later, at
+  verification. Since the sidecars put no two rendered bursts closer than
+  25,000 samples (625 us) on any channel, a record 89 or 99 samples from a
+  burst can only be that burst. The two offsets are the phase-0 and
+  phase-10 files, 10 samples apart.
+- **Where (bluey's code read).** The verify step re-correlates the access
+  code on the raw IQ. If the home channel scores at least 0.90 it keeps it.
+  Otherwise it scores every channel within ±3 and takes the strictly
+  greatest; if none verifies, the channelizer's channel stays.
+- **The likely cause.** The verify filter is `firwin(151, 0.7e6, fs=20e6,
+  window=('kaiser', 8.5))`, designed for 20 MS/s. It is applied unchanged
+  to a raw-rate segment, so at 40 MS/s every frequency in it doubles: the
+  0.7 MHz cutoff becomes 1.4 MHz. Its response, recomputed here:
+
+  | | 0.5 MHz | 1 MHz | 1.5 MHz |
+  |---|---|---|---|
+  | at 20 MS/s (as designed) | | −49 dB | |
+  | at 40 MS/s | 0.0 dB | −0.43 dB | −9.2 dB |
+
+  bluey's own figures were −60.7 dB and −0.09 dB at 1 MHz. Whichever is
+  right, at 40 MS/s the neighbouring channel goes through almost whole.
+- **Why the neighbour can win.** A clean simulated burst (h 0.32, BT 0.5),
+  mixed to the neighbour's centre and filtered, keeps all but 0.65 dB of its
+  power. Then it depends on how verify correlates:
+  - **Coherently against the reference IQ, with no frequency search:** the
+    neighbour scores 0.000 (the burst is 1 MHz off), so it cannot win.
+  - **On the frequency (discriminator) signal, or with a carrier search
+    reaching ±1 MHz:** the neighbour scores 0.995 against the home
+    channel's 0.999, so noise picks between them.
+
+  The second fits what bluey measured: a rate of about 1 %, and the wrong
+  channel on the side the carrier offset pushes toward about 63 % of the
+  time (55:45 at 0 Hz). Which of the two the code does was still to be
+  confirmed when this was written.
+- **Which files it touches.** Every file made here at 40 MS/s: the fresh
+  set, laptest, samelap, rxoffset, the bench shots and captures, and most
+  of the rest. The 33 files at 20 MS/s are where the filter works as
+  designed: `dc/` (26), `endlen` E_mix_20msps (2), `multislot` setn_c (1),
+  `slotb` A_20msps (1) and `slotb2` C_20msps (2) have 40 MS/s twins of the
+  same recipe, plus `sync` noise_only_20msps (1).
+- **What it means for a test.** A detector result on a 40 MS/s file that
+  counts channels, such as same-channel matching, retention or a
+  false-alarm count, carries this baseline of about 1 % wrong-channel
+  records. bluey's amendment A5 now compares an arm's wrong-channel share
+  with production's in the same file rather than demanding zero. A second,
+  separate source in the threshold arms is dedupe across the two timing
+  grids keeping the other grid's copy of a burst. A fix to either is a new
+  candidate in bluey's registrations, not a change to the matcher.
