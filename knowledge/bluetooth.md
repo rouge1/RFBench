@@ -224,6 +224,17 @@ code:
   - `locate_score` was 0.857, above the dry run's 0.841 at 20 dB: the
     BB60D's noise is band-limited, the dry run's AWGN is not, so dry-run
     scores do not carry over either.
+  - **The per-channel spread is the BB60D's floor, not the signal path.**
+    Across 2433-2450 MHz the received burst power was flat within 0.09 dB
+    (−70.77 to −70.86 dBm); the noise in 1 MHz fell from −89.5 dBm at
+    2433 to −90.3 at 2450, and that 0.8 dB is the SNR's range.
+  - **A recording session** goes through `scripts/bt_bench_session.py`:
+    `start` records, the player is run by hand (so every transmission is
+    its own command), `finish` measures, aligns with the console to a log
+    (it prints carrier values bluey's registration keeps unread), and
+    copies to the drive. A copy is hashed from the disk with its cached
+    pages dropped first; `sha256sum -c` straight after `cp` reads the
+    page cache, not what reached the drive.
   - The two references held one relation: the carrier error (+887 Hz)
     was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
     each instrument's LO and sample clock share one reference.
