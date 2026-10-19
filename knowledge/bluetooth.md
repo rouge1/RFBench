@@ -195,6 +195,31 @@ code:
     instead by per-channel energy: 1 MHz bins in 10 us steps,
     cross-correlated with the shot's own map, a 450-sigma peak.
     Calibration shots belong around −80 dBm or above.
+- **Re-measured at −69 dBm the same afternoon: 18.8 dB, not 20.**
+  - **Both levels are below the VSG60A's specified −55 to +7 dBm**
+    ([signal-hound-specs.md](signal-hound-specs.md)); `vsg_sink` takes
+    −120 dBm, but that is the driver's range, not a calibrated one. It
+    still stepped linearly: bursts arrived at −70.8 dBm, 0.3 dB from −90
+    scaled by 21 dB. The SNR the BB60D measures is the figure to trust,
+    not the level set.
+  - **The noise floor rose 1.0 dB between morning and afternoon**, to
+    −89.7 dBm in 1 MHz: flat across the band, constant over the
+    recording, and there before the VSG was opened, so the BB60D's own
+    (warm-up, probably; not established). Measure the SNR on every
+    recording; at that floor 20 dB needs about −68 dBm.
+  - **The chain has a group delay that differs by channel**: against
+    one clock line, each channel's bursts sat at their own mean offset,
+    −0.9 to +0.6 samples at 40 MS/s (±20 ns), not monotonic in
+    frequency. It made `align`'s timing scatter 0.60 at 18.8 dB, where
+    the dry runs gave 0.40 at 20 dB; with each channel's mean taken out
+    it was 0.44. So the scatter is not a level check on this bench, and
+    the line's truth for a burst is off by its channel's offset.
+  - `locate_score` was 0.857, above the dry run's 0.841 at 20 dB: the
+    BB60D's noise is band-limited, the dry run's AWGN is not, so dry-run
+    scores do not carry over either.
+  - The two references held one relation: the carrier error (+887 Hz)
+    was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
+    each instrument's LO and sample clock share one reference.
 - **To use the BB60D as the receiver, put the VSG60 on another host** -
   for the bluey work, the work laptop (`ssh worklaptop1`), which has the
   VSG60, the `gnu` environment and this repo. The two will not stream on
