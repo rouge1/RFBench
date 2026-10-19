@@ -175,6 +175,26 @@ code:
   more than −20 dBm into the BB60D (level minus the stated `--pad-db`),
   30 dB under its +10 dBm maximum input. A HackRF on that cable would
   still need a pad.
+- **Calibrated on that bare cable (2026-10-19).** BB60D at 40 MS/s on
+  2439.0 MHz, 60 % gain; VSG60A on the work laptop playing
+  `bench_885614_d23` once at −90 dBm.
+  - **The noise floor is −90.7 dBm in 1 MHz**, flat across ±13.5 MHz.
+    A 20 s noise-only recording (VSG not opened) had no spur more than
+    1.8 dB over the median, no DC spike, and no lost samples or ADC
+    overflows.
+  - **The BB60D's samples read in mW.** Received bursts were compared with
+    the shot over the same time-frequency cells: a |iq| = 1 burst set to
+    −90 dBm arrived at 7.1e-10, i.e. −91.5 dBm. That 1.5 dB is the cable
+    plus both instruments' calibration, from one point.
+  - **So −90 dBm gives −0.8 dB in 1 MHz, and 20 dB in 1 MHz needs about
+    −69 dBm at the BB60D.** Through a pad, add its value at the VSG (30 dB
+    would make it about −39 dBm) and re-measure, because a pad's real loss
+    is rarely its label.
+  - **`bt_bench.py align` cannot lock that low.** At −90 dBm it refused
+    (best start's median correlation 0.17, under 0.40). The shot was found
+    instead by per-channel energy: 1 MHz bins in 10 us steps,
+    cross-correlated with the shot's own map, a 450-sigma peak.
+    Calibration shots belong around −80 dBm or above.
 - **To use the BB60D as the receiver, put the VSG60 on another host** -
   for the bluey work, the work laptop (`ssh worklaptop1`), which has the
   VSG60, the `gnu` environment and this repo. The two will not stream on
