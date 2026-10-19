@@ -11,6 +11,9 @@
   keys printed; every file on the drive and its hash appended; the two ``.cf32`` files gone from here, nothing else.
 * a copy that does not hash the same leaves everything here and appends no sum; a name already on the drive is
   refused before anything is copied; ``verify`` reads the sums back from the disk.
+* **log**: an operator decision is appended with its reason (a level one with its next level); one without a start,
+  or a level one without a level, is refused; each session-log line names the sha256 of the one before, and a line
+  dropped breaks that chain.
 """
 import contextlib
 import io
@@ -163,12 +166,30 @@ def main():
         check(code != 0 and 'already exists on the drive' in err and os.path.exists(os.path.join(here, name + '.cf32')),
               'a file already on the drive: refused, nothing overwritten or deleted')
 
+        print('\nlog')
+        code, out, _ = run(['log', 'r01', '--event', 'level', '--reason', 'snr 18.6 dB, out of band', '--level', '-67.5']
+                           + common)
+        last = [json.loads(ln) for ln in open(os.path.join(drive, bs.LOG))][-1]
+        check(code == 0 and last['step'] == 'decision' and last['event'] == 'level' and last['level_dbm'] == -67.5
+              and last['reason'].startswith('snr 18.6'), 'a level decision is logged with its next level and reason')
+        code, _, err = run(['log', 'r01', '--event', 'level', '--reason', 'x'] + common)
+        check(code != 0 and 'needs --level' in err, 'a level decision without the next level is refused')
+        code, _, err = run(['log', 'r99', '--event', 'discard', '--reason', 'x'] + common)
+        check(code != 0 and 'never started' in err, 'a decision about a recording never started is refused')
+        ok = all(bs.check_chain(os.path.join(d, bs.LOG))[1] is None for d in (here, drive))
+        check(ok, 'every line of both session logs names the sha256 of the line before it')
+
         print('\nverify')
         code, out, _ = run(['verify', drive])
         check(code == 0 and 'files match' in out, out.strip().splitlines()[-1])
         open(os.path.join(drive, 'r02.snr.json'), 'a').write(' ')
         code, out, _ = run(['verify', drive])
         check(code == 1 and 'r02.snr.json: FAILED' in out, 'a changed file fails verify')
+        lines = open(os.path.join(here, bs.LOG)).read().splitlines()
+        del lines[1]
+        open(os.path.join(here, bs.LOG), 'w').write('\n'.join(lines) + '\n')
+        at, why = bs.check_chain(os.path.join(here, bs.LOG))
+        check(why is not None and at == 2, 'a session log with a line dropped breaks its chain at that line')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('\n%.0f s' % (time.time() - t0))

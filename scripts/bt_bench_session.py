@@ -4,6 +4,7 @@
     python scripts/bt_bench_session.py start NAME --lap 885614 --offset-khz -58 --level -68 --dir LOCAL --drive DRIVE
     ssh worklaptop1-fast '... bt_bench_play.py ... --go ... --name NAME ...'          # printed by start; run by hand
     python scripts/bt_bench_session.py finish NAME --dir LOCAL --drive DRIVE --allowed-keys PATH/s4_bench_allowed_keys.py
+    python scripts/bt_bench_session.py log NAME --event discard --reason '...' --dir LOCAL --drive DRIVE
     python scripts/bt_bench_session.py verify DRIVE_FOLDER                             # SHA256SUMS.txt, read from the disk
 
 **What it does not do.** It never transmits: ``start`` prints the player's command and a person (or the Claude session,
@@ -28,7 +29,13 @@ the next step):
    every file matches its source are the two large ``.cf32`` files here deleted (the recording and the aligner's
    crop); nothing on the drive is ever deleted. The hashes are appended to the drive's ``SHA256SUMS.txt``.
 
-**``verify``** re-checks a folder's ``SHA256SUMS.txt`` the same way, from the disk.
+**``log``** appends one operator decision (``EVENTS``: keep, discard, retake, fault, level with the next ``--level``,
+note) with its reason, refused for a name never started. It records the decision; it does not make it.
+
+Every line of ``session.jsonl`` carries ``prev``, the sha256 of the line before it, and is fsynced before the next
+step: the order of measurements and decisions, against the registration's freezes, is checkable afterwards.
+
+**``verify``** re-checks a folder's ``SHA256SUMS.txt`` the same way, from the disk, and its session log's chain.
 """
 import argparse
 import hashlib
@@ -50,6 +57,10 @@ SECONDS = 30.0
 WAIT_MARGIN_S = 60.0
 LOG = 'session.jsonl'
 SUMS = 'SHA256SUMS.txt'
+#: ``prev`` of a session log's first line.
+GENESIS = '0' * 64
+#: What ``log`` records: the operator's applications of the registration's rules, each against a started recording.
+EVENTS = ('keep', 'discard', 'retake', 'fault', 'level', 'note')
 PLAYER = ("ssh {host} 'cd /data/python/SDR && timeout -k 30 60 ~/miniconda3/envs/gnu/bin/python "
           "scripts/bt_bench_play.py ~/rg/bench/shots/{shot}.cf32 --go --pad-db 0 --level {level:g} "
           "--vsg-offset-khz {offset:g} --name {name} --out ~/{txdir}'")
@@ -62,14 +73,46 @@ def _files(name):
             os.path.join('align', name + '.cf32'), os.path.join('align', name + '.json')]
 
 
+def _last_line(path):
+    """The last line of ``path`` without its newline, or None for a missing or empty file."""
+    if not os.path.exists(path):
+        return None
+    lines = open(path, 'rb').read().decode().splitlines()
+    return lines[-1] if lines else None
+
+
+def _line_sha(line):
+    return hashlib.sha256(line.encode()).hexdigest() if line is not None else GENESIS
+
+
 def _log(dirs, name, step, **kw):
-    """One line in ``session.jsonl`` in each of ``dirs``, written through to the disk."""
-    line = json.dumps(dict(time=time.strftime('%Y-%m-%dT%H:%M:%S%z'), unix=time.time(), name=name, step=step, **kw))
+    """One line in ``session.jsonl`` in each of ``dirs``, written through to the disk. Each line carries ``prev``, the
+    sha256 of the line before it in that file (``GENESIS`` for the first), so a line edited, dropped or moved later
+    breaks the chain ``verify`` checks; the two files' lines differ only in ``prev``."""
+    entry = dict(time=time.strftime('%Y-%m-%dT%H:%M:%S%z'), unix=time.time(), name=name, step=step, **kw)
     for d in dirs:
-        with open(os.path.join(d, LOG), 'a') as f:
+        path = os.path.join(d, LOG)
+        line = json.dumps(dict(entry, prev=_line_sha(_last_line(path))))
+        with open(path, 'a') as f:
             f.write(line + '\n')
             f.flush()
             os.fsync(f.fileno())
+
+
+def check_chain(path):
+    """(lines, None) when every line of a session log names the sha256 of the line before it, else (line number,
+    why)."""
+    prev = None
+    n = 0
+    for n, line in enumerate(open(path, 'rb').read().decode().splitlines(), 1):
+        try:
+            got = json.loads(line).get('prev')
+        except ValueError:
+            return n, 'not JSON'
+        if got != _line_sha(prev):
+            return n, 'prev %s does not match the line before (%s)' % (str(got)[:16], _line_sha(prev)[:16])
+        prev = line
+    return n, None
 
 
 def sha256_from_disk(path):
@@ -251,9 +294,31 @@ def copy_verified(here, drive, rel):
     return sums, None
 
 
+def cmd_log(a):
+    if a.event == 'level' and a.level is None:
+        sys.exit('refused: a level event needs --level, the next VSG60A level in dBm')
+    path = os.path.join(a.drive, LOG)
+    started = os.path.exists(path) and any(
+        e.get('name') == a.name and e.get('step') == 'start' for e in map(json.loads, open(path).read().splitlines()))
+    if not started:
+        sys.exit('refused: %s was never started (no start line in %s)' % (a.name, path))
+    kw = dict(event=a.event, reason=a.reason)
+    if a.level is not None:
+        kw['level_dbm'] = a.level
+    _log([a.dir, a.drive], a.name, 'decision', **kw)
+    print('logged %s %s: %s' % (a.name, a.event, a.reason))
+    return 0
+
+
 def cmd_verify(a):
     bad = 0
     n = 0
+    log = os.path.join(a.folder, LOG)
+    broken = False
+    if os.path.exists(log):
+        at, why = check_chain(log)
+        broken = why is not None
+        print('%s: %s' % (LOG, 'chain OK, %d lines' % at if why is None else 'chain BROKEN at line %d: %s' % (at, why)))
     for line in open(os.path.join(a.folder, SUMS)):
         h, f = line.rstrip('\n').split('  ', 1)
         got = sha256_from_disk(os.path.join(a.folder, f))
@@ -262,7 +327,7 @@ def cmd_verify(a):
         bad += not ok
         print('%s: %s' % (f, 'OK (from the disk)' if ok else 'FAILED (%s)' % got[:16]), flush=True)
     print('%d of %d files match' % (n - bad, n))
-    return 1 if bad else 0
+    return 1 if bad or broken else 0
 
 
 def _commit(path):
@@ -289,10 +354,17 @@ def main(argv=None):
         else:
             p.add_argument('--shots', default='/media/user/4TB/sdr-synth-tmp/bench/shots')
             p.add_argument('--allowed-keys', required=True, help='the registration\'s s4_bench_allowed_keys.py')
+    p = sub.add_parser('log', help='append an operator decision to the session log')
+    p.add_argument('name')
+    p.add_argument('--event', required=True, choices=EVENTS)
+    p.add_argument('--reason', required=True)
+    p.add_argument('--level', type=float, help='dBm: the next VSG60A level (needed for a level event)')
+    p.add_argument('--dir', required=True, help='this laptop\'s folder for the recording')
+    p.add_argument('--drive', required=True, help='the folder on the 4 TB drive the recording goes to')
     p = sub.add_parser('verify')
     p.add_argument('folder')
     a = ap.parse_args(argv)
-    return {'start': cmd_start, 'finish': cmd_finish, 'verify': cmd_verify}[a.cmd](a)
+    return {'start': cmd_start, 'finish': cmd_finish, 'log': cmd_log, 'verify': cmd_verify}[a.cmd](a)
 
 
 if __name__ == '__main__':

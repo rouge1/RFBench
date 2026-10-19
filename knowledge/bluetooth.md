@@ -234,7 +234,11 @@ code:
     (it prints carrier values bluey's registration keeps unread), and
     copies to the drive. A copy is hashed from the disk with its cached
     pages dropped first; `sha256sum -c` straight after `cp` reads the
-    page cache, not what reached the drive.
+    page cache, not what reached the drive. The operator's decisions
+    (keep, discard, retake, fault, the next level) go in with `log`; each
+    line of `session.jsonl` carries the sha256 of the line before it, so
+    the order of measurements and decisions is checkable afterwards
+    (`verify` checks the chain).
   - The two references held one relation: the carrier error (+887 Hz)
     was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
     each instrument's LO and sample clock share one reference.
