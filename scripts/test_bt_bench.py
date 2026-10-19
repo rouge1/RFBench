@@ -37,11 +37,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts import bt_bench as bb  # noqa: E402
 from scripts import bt_bench_play as play  # noqa: E402
 from scripts import bt_synth_slotb as sb, bt_synth_slotb2 as g  # noqa: E402
-from scripts.bt_synth_interf import amplitude_for  # noqa: E402
+from scripts.bt_synth_interf import amplitude_for, noise_block  # noqa: E402
 
 failures = []
 FIRST = 140_000_000
 N_SHORT = 16_000_000
+DELIVERED = '/media/user/4TB/sdr-synth-tmp/freshset/synth_slotb2_F_885614_d23_n3004.cf32'
 
 
 def check(ok, what):
@@ -72,12 +73,18 @@ def test_shot(tmp):
     info = side['bench_shot']
     shot = np.fromfile(iq_path, dtype='<c8')
     plan = g.plan_file(bb.SHOTS['885614'])
-    file_iq = sb.render_range(plan, 0, n, noise=True)
-    noise = sb.render_range(plan, 0, n, noise=True) - sb.render_range(plan, 0, n, noise=False)
+    # A block's noise is drawn whole (every real part, then every imaginary part), so blocks are made at their full
+    # length and cut, never made short.
+    noise = np.concatenate([noise_block(plan['noise_seed'], k, min(sb.NOISE_BLOCK, plan['total'] - k * sb.NOISE_BLOCK),
+                                        bb.FS) for k in range((n - 1) // sb.NOISE_BLOCK + 1)])[:n].astype(np.complex128)
     back = shot.astype(np.complex128) / info['scale'] + noise
+    if os.path.exists(DELIVERED):
+        file_iq, where = np.fromfile(DELIVERED, dtype='<c8', count=n).astype(np.complex128), 'the delivered file'
+    else:
+        file_iq, where = sb.render_range(plan, 0, n, noise=True).astype(np.complex128), 'a render (no drive)'
     err = float(np.max(np.abs(back - file_iq))) / amplitude_for(20.0)
     check(len(shot) == n and info['n_samples'] == n and err < 1e-5,
-          'shot / scale + the file\'s noise = the file\'s render over %d samples (worst %.1e of a burst)' % (n, err))
+          'shot / scale + the noise blocks of its seed = %s over %d samples (worst %.1e of a burst)' % (where, n, err))
     check(info['scale'] == 1.0 / amplitude_for(side['snr_db']) and abs(info['peak_abs_iq'] - 1.0) < 1e-5,
           'scale 1/amplitude_for(20), peak |iq| %.6f' % info['peak_abs_iq'])
     check(info['sha256'] == play.sha256_of(iq_path), 'bench_shot.sha256 is the file\'s')
@@ -143,20 +150,28 @@ def test_align(tmp):
           and abs(r['ppm']) < 1e-3 and abs(r['cfo_instrument_hz']) < 1.0,
           'against itself: %s' % bb.summary(r)[:110])
 
+    for frac in (0.25, 0.5):
+        cap, pl = capture(tmp, shot_path, 'frac', frac=frac)
+        r = bb.align(cap, shot_path, side, tx=tx_for(pl))
+        err = [row['delay'] - pl['delay_at_0'] for row in r.get('rows', {}).values()]
+        check(r['problem'] is None and max(abs(x) for x in err) < 0.005,
+              'no noise, shifted %.2f sample: every burst\'s own reading within %.4f (the estimator\'s bias; the '
+              'capture maker\'s sinc is under 0.002)' % (frac, max(abs(x) for x in err) if err else -1))
+    # With noise the line through 222 bursts is good to about 0.05 sample; a full shot's 5000 to about 0.01.
     kw = dict(frac=0.37, ppm=-0.37, cfo_hz=57100.0, vsg_offset_hz=58000.0, snr_db=20.0)
     cap, pl = capture(tmp, shot_path, 'imp', **kw)
     r = bb.align(cap, shot_path, side, tx=tx_for(pl))
     ok = r['problem'] is None
     check(ok, 'shift 0.37, -0.37 ppm, +57.1 kHz on a 58 kHz VSG offset, 20 dB: %s' % bb.summary(r)[:150])
     if ok:
-        check(abs(r['ppm'] + 0.37) < 0.05 and abs(r['delay_at_0'] - pl['delay_at_0']) < 0.15,
+        check(abs(r['ppm'] + 0.37) < 0.02 and abs(r['delay_at_0'] - pl['delay_at_0']) < 0.05,
               'the clock: %+.4f ppm (planted -0.37), delay at 0 off by %+.3f sample'
               % (r['ppm'], r['delay_at_0'] - pl['delay_at_0']))
         check(abs(r['reference_error_hz'] + 900.0) < 100 and abs(r['cfo_instrument_hz'] - 57100.0) < 100,
               'the carrier: instruments %+.0f Hz (planted 57100), reference error %+.0f Hz (planted -900)'
               % (r['cfo_instrument_hz'], r['reference_error_hz']))
         errs = truth_errors(side, r, pl)
-        check(np.max(np.abs(errs)) < 0.15 and r['n_found'] >= 0.99 * n_in,
+        check(np.max(np.abs(errs)) < 0.1 and r['n_found'] == n_in,
               'every truth start within %.3f sample of the planted (%d of %d found)'
               % (np.max(np.abs(errs)), r['n_found'], n_in))
 
@@ -166,6 +181,25 @@ def test_align(tmp):
         check(r['problem'] is not None and any(w in r['problem'] for w in words),
               '%d sample(s) dropped mid-shot is refused: %s' % (drop, r['problem']))
 
+    ins = [e for e in side['bursts'] if e['in_shot']]
+    pre = int(0.1 * bb.FS)
+
+    def at(e, back=0):
+        return pre + e['start_sample'] - back
+
+    for what, drop_at, drop in (('10 samples before the last burst', at(ins[-1], 200), 10),
+                                ('400 samples before the last 8 bursts', at(ins[-8], 200), 400),
+                                ('10 samples after the first burst', at(ins[1], 200), 10),
+                                ('3 samples before the 30th burst from the end', at(ins[-30], 200), 3)):
+        cap, pl = capture(tmp, shot_path, 'edge', drop_at=drop_at, drop=drop, **kw)
+        r = bb.align(cap, shot_path, side, tx=tx_for(pl))
+        check(r['problem'] is not None and ('off the clock line' in r['problem'] or 'step' in r['problem']),
+              'a loss of %s is refused: %s' % (what, r['problem']))
+    cap, pl = capture(tmp, shot_path, 'bend', bend=1.0, **kw)
+    r = bb.align(cap, shot_path, side, tx=tx_for(pl))
+    check(r['problem'] is not None and ('bends' in r['problem'] or 'step' in r['problem']),
+          'a bend of 1 sample is refused (on a short shot the step test may see it first): %s' % r['problem'])
+    cap, pl = capture(tmp, shot_path, 'drop40', drop_at=int(0.1 * bb.FS) + N_SHORT // 2, drop=40, **kw)
     r = bb.align(cap, shot_path, side, tx=tx_for(pl), rec={'lost_sample_overflows': 2})
     check(r['problem'] is not None and 'lost samples' in r['problem'], 'lost samples in the recorder: refused')
     short = os.path.join(tmp, 'short.cf32')
@@ -205,12 +239,25 @@ def test_align_cli(tmp, shot_path, side):
     check(code == 2 and 'another shot' in err, 'a --tx of another shot is refused')
     code, _, err = run(bb.main, ['align', cap, shot_path, '--out', out])
     check(code == 2 and '--dry' in err, 'neither --tx nor --dry is refused')
+    tx.update(shot_sha256=side['bench_shot']['sha256'])
+    json.dump(tx, open(txp, 'w'))
+    code, _, err = run(bb.main, ['align', cap, shot_path, '--tx', txp, '--out', out])
+    check(code == 2 and 'needs --rec' in err, 'a --tx without --rec is refused')
+    recp = os.path.join(tmp, 'rec.json')
+    json.dump({'file': 'other.cf32', 'lost_sample_overflows': 0}, open(recp, 'w'))
+    code, _, err = run(bb.main, ['align', cap, shot_path, '--tx', txp, '--rec', recp, '--out', out])
+    check(code == 2 and 'not of this capture' in err, 'a --rec of another file is refused')
     code, text, err = run(bb.main, ['align', cap, shot_path, '--dry', cap + '.planted.json', '--out', out,
                                     '--name', 'dry1'])
     check(code == 0 and os.path.exists(os.path.join(out, 'dry1.cf32')), 'a dry run aligns: %s' % text.split('\n')[0][:120])
     if code != 0:
         return
+    code, _, err = run(bb.main, ['align', cap, shot_path, '--dry', cap + '.planted.json', '--out', out, '--name', 'dry1'])
+    check(code == 2 and 'already exists' in err, 'a second align to the same name is refused, the first truth kept')
     truth = json.load(open(os.path.join(out, 'dry1.json')))
+    check(all(truth['bursts'][0].get(k) is None for k in bb.STALE_BURST_KEYS) and 'noise_seed' not in truth
+          and abs(truth['bursts'][0]['start_us'] * 40 - truth['bursts'][0]['start_exact']) < 1e-6,
+          'the source file\'s grid and noise keys are gone; start_us is the capture\'s')
     crop0 = truth['capture_crop_first_sample']
     cropped = bb.Cf32(os.path.join(out, 'dry1.cf32'))
     whole = bb.Cf32(cap)
@@ -223,7 +270,7 @@ def test_align_cli(tmp, shot_path, side):
     errs = np.array(errs)
     check(same and len(cropped) == truth['n_samples'] and truth['dry_run'] is True,
           'the cropped capture is the recording from sample %d, n_samples %d, dry_run true' % (crop0, truth['n_samples']))
-    check(np.max(np.abs(errs)) < 0.15 and all(0 <= e['timing_frac'] < 1 for e in truth['bursts'])
+    check(np.max(np.abs(errs)) < 0.1 and all(0 <= e['timing_frac'] < 1 for e in truth['bursts'])
           and all(e['symbol_phase'] == e['start_sample'] % 40 for e in truth['bursts']),
           'every truth start (cropped samples) within %.3f sample of the planted; timing_frac in [0, 1), symbol_phase '
           '= start_sample mod 40' % np.max(np.abs(errs)))
@@ -290,7 +337,7 @@ def test_player(tmp, shot_path):
     out = os.path.join(tmp, 'tx')
     try:
         code, text, _ = run(play.main, [shot_path, '--check', '--out', out, '--vsg-offset-khz', '58'])
-        side = json.load(open(os.path.join(out, 'bench_885614_d23_tx.json')))
+        side = json.load(open(os.path.join(out, 'bench_885614_d23_check.json')))
         check(code == 0 and 'OK' in text and side['sent'] is False and 'check' in side['state']
               and side['vsg_center_mhz'] == 2439.058 and not guard.imported, '--check: the shot is OK, no radio')
         for argv, what in (([], 'neither --go nor --check sends nothing'),
@@ -344,6 +391,9 @@ def test_player(tmp, shot_path):
         check(FakeSink.log[-2:] == [('stop_waveform',), ('stop',)] and 'timeout -k %d' % k in text
               and play.kill_after(10.0) == 25, 'the sink is stopped, and timeout -k %d is advised for this shot '
               '(25 for a 10 s shot)' % k)
+        code, _, err = run(play.main, [shot_path, '--go', '--pad-db', '30', '--out', out, '--name', 'go1'])
+        check(code == 2 and 'already exists' in err and not [e for e in FakeSink.log if e[0] == 'open'][1:],
+              'a second --go under the same name is refused before the radio; the first sidecar stands')
         FakeSink.log = []
         FakeSink.raise_on_send = True
         FakeSink.side_path = os.path.join(out, 'go2_tx.json')

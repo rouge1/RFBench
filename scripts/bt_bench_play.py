@@ -26,7 +26,9 @@ started"), before the send ("pending") and after (sent true, false, or "error"),
 file standing for it; every print once the sink is open goes through ``say``. A receiver takes only ``sent`` true.
 """
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -43,7 +45,8 @@ FS = 40e6
 CENTER_MHZ = 2439.0
 MAX_LEVEL_DBM = 0.0
 MIN_PAD_DB = 20.0
-MAX_SECONDS = 10.5
+#: The longest one-shot buffer the VSG60A has been shown to take at 40 MS/s (stage 3 phase 5).
+MAX_SECONDS = 10.24
 MAX_OFFSET_KHZ = 200.0
 
 
@@ -59,17 +62,25 @@ def sha256_of(path, chunk=64 << 20):
 
 
 def shot_problem(path, info):
-    """The refusal text for a shot file that is not the one its sidecar describes, or None."""
+    """The refusal text for a shot file that is not the one its sidecar describes (size and length only: the hash and
+    the peak are taken from the samples once read, ``samples_problem``), or None."""
     n = os.path.getsize(path) // 8
     if os.path.getsize(path) % 8 or n != info['n_samples']:
         return 'the shot has %d bytes; its sidecar says %d samples' % (os.path.getsize(path), info['n_samples'])
     if n / FS > MAX_SECONDS:
-        return 'the shot is %.2f s, longer than %.1f s' % (n / FS, MAX_SECONDS)
-    if not info.get('peak_abs_iq', 2.0) <= 1.0 + 1e-6:
-        return 'the shot\'s peak |iq| is %r, over 1' % info.get('peak_abs_iq')
-    got = sha256_of(path)
+        return 'the shot is %.2f s, longer than %.2f s' % (n / FS, MAX_SECONDS)
+    return None
+
+
+def samples_problem(iq, info, chunk=8_000_000):
+    """The refusal text for samples whose sha256 is not the sidecar's or whose peak |iq| is over 1, or None. These
+    are the samples that will be sent: the file is not read a second time."""
+    got = hashlib.sha256(memoryview(iq).cast('B')).hexdigest()
     if got != info['sha256']:
         return 'the shot\'s sha256 is %s, its sidecar says %s: not the file that was rendered' % (got[:16], info['sha256'][:16])
+    peak = max(float(np.abs(iq[p:p + chunk]).max()) for p in range(0, len(iq), chunk))
+    if not peak <= 1.0 + 1e-6:
+        return 'the shot\'s peak |iq| is %r, over 1' % peak
     return None
 
 
@@ -113,6 +124,15 @@ def main(argv=None):
     if not args.go and not args.check:
         print('nothing sent: give --go to transmit, or --check')
         return 0
+    # From here a signal only raises a flag, looked at before the send: the 3.2 GB read and the hash come first.
+    stop_now = []
+
+    def on_signal(signum, _frame):
+        stop_now.append(signal.Signals(signum).name)
+
+    if args.go:
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, on_signal)
     side_in = os.path.splitext(args.shot)[0] + '.json'
     with open(side_in) as f:
         info = json.load(f)['bench_shot']
@@ -123,7 +143,10 @@ def main(argv=None):
     name = args.name or info['name']
     out = args.out or os.path.dirname(os.path.abspath(args.shot))
     os.makedirs(out, exist_ok=True)
-    side_path = os.path.join(out, name + '_tx.json')
+    side_path = os.path.join(out, name + ('_tx.json' if args.go else '_check.json'))
+    # A sidecar is never overwritten: an older one that says sent true would stand for a run that never happened.
+    if args.go and os.path.exists(side_path):
+        ap.error('%s already exists: give each play its own --name' % side_path)
     seconds = info['n_samples'] / FS
     side = {
         'name': name, 'shot': info['name'], 'shot_file': os.path.basename(args.shot), 'shot_sha256': info['sha256'],
@@ -133,32 +156,31 @@ def main(argv=None):
         'level_at_receiver_dbm': None if args.pad_db is None else args.level - args.pad_db,
         'mode': 'send_waveform: one shot', 'vsg_reference': 'internal (free-running)',
         'sent': False, 'state': 'not started'}
-    if args.check:
-        side.update(state='check: never sent')
-        _write(side_path, side)
-        print('shot %s: %d samples (%.3f s), peak %.4f, sha256 %s: OK; VSG60A would tune to %.6f MHz at %.1f dBm'
-              % (info['name'], info['n_samples'], seconds, info['peak_abs_iq'], info['sha256'][:16], center_mhz,
-                 args.level))
-        print(side_path)
-        return 0
-
     iq = np.fromfile(args.shot, dtype='<c8')
     if len(iq) != info['n_samples']:
         ap.error('read %d samples, expected %d' % (len(iq), info['n_samples']))
+    problem = samples_problem(iq, info)
+    if problem:
+        ap.error(problem)
+    if args.check:
+        side.update(state='check: never sent')
+        _write(side_path, side)
+        print('shot %s: %d samples (%.3f s), sha256 %s and peak OK; VSG60A would tune to %.6f MHz at %.1f dBm'
+              % (info['name'], info['n_samples'], seconds, info['sha256'][:16], center_mhz, args.level))
+        print(side_path)
+        return 0
     say('this shot is %.3f s, so run it under timeout -k %d (the shot plus %d s): a SIGKILL inside the send leaves no '
         'RF off and no sidecar' % (seconds, kill_after(seconds), KILL_MARGIN_S))
     _write(side_path, side)
-    stop_now = []
-
-    def on_signal(signum, _frame):
-        stop_now.append(signal.Signals(signum).name)
-
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, on_signal)
+    # vsg_sink prints once the device is open, RF on; into a terminal that is gone that print raises and no sink
+    # would come back to be stopped. Its prints go to a buffer here, and through say() after.
+    held = io.StringIO()
     try:
         from apps import vsg_sink
-        sink = vsg_sink.vsg_sink(center_freq=center_mhz * 1e6, sample_rate=FS, level_dbm=args.level)
+        with contextlib.redirect_stdout(held):
+            sink = vsg_sink.vsg_sink(center_freq=center_mhz * 1e6, sample_rate=FS, level_dbm=args.level)
     except Exception as e:                                    # noqa: BLE001
+        say(held.getvalue().rstrip())
         side.update(sent=False, error='%s: %s' % (type(e).__name__, e),
                     state='not started: the VSG60A could not be opened')
         _write(side_path, side)
@@ -166,6 +188,7 @@ def main(argv=None):
     failure = None
     send_started = False
     try:
+        say(held.getvalue().rstrip())
         side['vsg_serial'] = sink.get_serial()
         side['tx_start_unix'] = time.time()
         side.update(sent='pending', state='pending')
