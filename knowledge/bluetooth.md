@@ -229,16 +229,21 @@ code:
     (−70.77 to −70.86 dBm); the noise in 1 MHz fell from −89.5 dBm at
     2433 to −90.3 at 2450, and that 0.8 dB is the SNR's range.
   - **A recording session** goes through `scripts/bt_bench_session.py`:
-    `start` records, the player is run by hand (so every transmission is
-    its own command), `finish` measures, aligns with the console to a log
-    (it prints carrier values bluey's registration keeps unread), and
-    copies to the drive. A copy is hashed from the disk with its cached
-    pages dropped first; `sha256sum -c` straight after `cp` reads the
-    page cache, not what reached the drive. The operator's decisions
-    (keep, discard, retake, fault, the next level) go in with `log`; each
-    line of `session.jsonl` carries the sha256 of the line before it, so
-    the order of measurements and decisions is checkable afterwards
-    (`verify` checks the chain).
+    `start` records at the session's level, the player is run by hand
+    (so every transmission is its own command), `finish` measures the
+    SNR and logs the registration's own decision (its `LevelSession`, run
+    by path and replayed over every earlier attempt, so nobody types a
+    level or picks an outcome), and `close` aligns only a KEEP - with the
+    console to a log, since it prints carrier values bluey's registration
+    keeps unread - and copies to the drive. Aligning after the decision
+    means no aligner output exists when it is made. A copy is hashed from
+    the disk with its cached pages dropped first; `sha256sum -c` straight
+    after `cp` reads the page cache, not what reached the drive. Each line
+    of `session.jsonl` carries the sha256 of the line before it, so the
+    order of measurements and decisions is checkable afterwards (`verify`
+    checks the chain). A decision file loaded by path runs with `-B`: one
+    rewritten within the same second at the same size otherwise loads
+    from its stale `.pyc`.
   - The two references held one relation: the carrier error (+887 Hz)
     was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
     each instrument's LO and sample clock share one reference.
