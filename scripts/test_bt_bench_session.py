@@ -16,7 +16,8 @@ player's sidecar is written by hand.
 * **close**: a KEEP is aligned with the console in ``NAME.align.log``, no carrier value on the console or in the log,
   only the allowed keys printed; anything else is not aligned; every file copied and hashed, the ``.cf32`` deleted
   here; a copy that does not hash the same deletes nothing and appends no sum.
-* **log**: a fault after the decision is refused; **verify** reads the sums back from the disk and checks the chain.
+* **log**: a fault after the decision is refused; **verify** reads the sums back from the disk and checks the chain,
+  then the order: each breach the registration names is caught, and a discard followed by a kept retake passes.
 * if bluey's own decision file is on this machine, it replays the session's attempts exactly as the stand-in does.
 """
 import contextlib
@@ -278,10 +279,39 @@ def main():
 
         print('\nverify')
         code, out, _ = run(['verify', drive])
-        check(code == 0 and 'files match' in out and 'chain OK' in out, out.strip().splitlines()[-1])
+        check(code == 0 and 'files match' in out and 'chain OK' in out and 'order OK' in out,
+              'the session: chain and order OK, ' + out.strip().splitlines()[-1])
         open(os.path.join(drive, 'r02.snr.json'), 'a').write(' ')
         code, out, _ = run(['verify', drive])
         check(code == 1 and 'r02.snr.json: FAILED' in out, 'a changed file fails verify')
+        print('\nthe order verify asserts')
+        for what, events in (
+                ('an alignment after a retake decision', [('a', 'start', dict(slot=1)), ('a', 'decision', dict(
+                    action='RETAKE_SAME_LEVEL')), ('a', 'align', dict(exit=0))]),
+                ('an alignment with no decision', [('a', 'start', dict(slot=1)), ('a', 'align', dict(exit=0))]),
+                ('a second KEEP in a slot', [('a', 'start', dict(slot=1)), ('a', 'decision', dict(action='KEEP')),
+                                             ('b', 'start', dict(slot=1)), ('b', 'decision', dict(action='KEEP'))]),
+                ('a slot started again after an alignment', [('a', 'start', dict(slot=1)), ('a', 'decision', dict(
+                    action='KEEP')), ('a', 'align', dict(exit=0)), ('b', 'start', dict(slot=1))]),
+                ('a fault after the decision', [('a', 'start', dict(slot=1)), ('a', 'decision', dict(
+                    action='DISCARD_STEP')), ('a', 'fault', dict(reason='late'))]),
+                ('a decision before its start', [('a', 'decision', dict(action='KEEP'))])):
+            folder = tempfile.mkdtemp(dir=tmp)
+            for name, step, kw in events:
+                bs._log([folder], name, step, **kw)
+            open(os.path.join(folder, bs.SUMS), 'w').close()
+            code, out, _ = run(['verify', folder])
+            check(code == 1 and 'chain OK' in out and 'order BROKEN' in out, '%s: %s' % (
+                what, [ln for ln in out.splitlines() if 'order' in ln][0].split(': ', 2)[-1]))
+        folder = tempfile.mkdtemp(dir=tmp)
+        for name, step, kw in [('a', 'start', dict(slot=1)), ('a', 'decision', dict(action='DISCARD_STEP')),
+                               ('a', 'align', dict(skipped='not aligned: DISCARD_STEP')), ('b', 'start', dict(slot=1)),
+                               ('b', 'decision', dict(action='KEEP')), ('b', 'align', dict(exit=0))]:
+            bs._log([folder], name, step, **kw)
+        open(os.path.join(folder, bs.SUMS), 'w').close()
+        code, out, _ = run(['verify', folder])
+        check(code == 0 and 'order OK' in out, 'a discard, not aligned, then its retake kept and aligned: order OK')
+
         lines = open(os.path.join(here, bs.LOG)).read().splitlines()
         del lines[1]
         open(os.path.join(here, bs.LOG), 'w').write('\n'.join(lines) + '\n')

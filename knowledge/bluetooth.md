@@ -240,8 +240,11 @@ code:
     the disk with its cached pages dropped first; `sha256sum -c` straight
     after `cp` reads the page cache, not what reached the drive. Each line
     of `session.jsonl` carries the sha256 of the line before it, so the
-    order of measurements and decisions is checkable afterwards (`verify`
-    checks the chain). A decision file loaded by path runs with `-B`: one
+    order of measurements and decisions is checkable afterwards: `verify`
+    checks the chain, then the order the registration asserts (an
+    alignment only after that recording's KEEP, one KEEP per slot, no
+    slot recorded again once aligned, nothing after a decision but the
+    close). A decision file loaded by path runs with `-B`: one
     rewritten within the same second at the same size otherwise loads
     from its stale `.pyc`.
   - The two references held one relation: the carrier error (+887 Hz)

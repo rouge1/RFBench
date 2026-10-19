@@ -47,7 +47,9 @@ and, for a KEEP, the aligner's crop); nothing on the drive is ever deleted. The 
 Every line of ``session.jsonl`` carries ``prev``, the sha256 of the line before it, and is fsynced before the next
 step: the order of measurements and decisions, against the registration's freezes, is checkable afterwards.
 
-**``verify``** re-checks a folder's ``SHA256SUMS.txt`` the same way, from the disk, and its session log's chain.
+**``verify``** re-checks a folder's ``SHA256SUMS.txt`` the same way, from the disk, and its session log: the chain,
+then the order the registration asserts (``check_order``: an alignment only after that recording's KEEP, one KEEP per
+slot, no slot recorded again once aligned, a fault or snr never after the decision, one decision per recording).
 """
 import argparse
 import hashlib
@@ -140,6 +142,42 @@ def check_chain(path):
             return n, 'prev %s does not match the line before (%s)' % (str(got)[:16], _line_sha(prev)[:16])
         prev = line
     return n, None
+
+
+def check_order(entries):
+    """What the registration asserts of a session log, as a list of breaches (empty when it holds): per recording, the
+    start first, a fault only before the decision, the snr before it, at most one decision; an alignment only after a
+    KEEP decision of that recording; one KEEP per slot; no recording of a slot started after one of its recordings was
+    aligned."""
+    bad, slot_of, decided, kept, aligned_slots = [], {}, {}, {}, set()
+    for n, e in enumerate(entries, 1):
+        name, step = e.get('name'), e.get('step')
+        if step != 'start' and name not in slot_of:
+            bad.append('line %d: %s %s before its start' % (n, name, step))
+            continue
+        if step == 'start':
+            if name in slot_of:
+                bad.append('line %d: %s started twice' % (n, name))
+            slot_of[name] = e.get('slot')
+            if e.get('slot') in aligned_slots:
+                bad.append('line %d: %s starts slot %s after a recording of it was aligned' % (n, name, e.get('slot')))
+        elif step in ('fault', 'snr') and name in decided:
+            bad.append('line %d: %s %s after its decision' % (n, name, step))
+        elif step == 'decision':
+            if name in decided:
+                bad.append('line %d: %s decided twice' % (n, name))
+            decided[name] = e.get('action')
+            if e.get('action') == 'KEEP':
+                if slot_of[name] in kept:
+                    bad.append('line %d: a second KEEP in slot %s (%s, after %s)' % (n, slot_of[name], name,
+                                                                                    kept[slot_of[name]]))
+                kept[slot_of[name]] = name
+        elif step == 'align' and 'skipped' not in e:
+            if decided.get(name) != 'KEEP':
+                bad.append('line %d: %s aligned %s' % (n, name, 'with no decision before it' if name not in decided
+                                                       else 'after a %s decision' % decided[name]))
+            aligned_slots.add(slot_of[name])
+    return bad
 
 
 def sha256_from_disk(path):
@@ -435,6 +473,10 @@ def cmd_verify(a):
         at, why = check_chain(log)
         broken = why is not None
         print('%s: %s' % (LOG, 'chain OK, %d lines' % at if why is None else 'chain BROKEN at line %d: %s' % (at, why)))
+        if not broken:
+            order = check_order(_entries(a.folder))
+            broken = bool(order)
+            print('%s: %s' % (LOG, 'order OK' if not order else 'order BROKEN: ' + '; '.join(order)))
     for line in open(os.path.join(a.folder, SUMS)):
         h, f = line.rstrip('\n').split('  ', 1)
         got = sha256_from_disk(os.path.join(a.folder, f))
