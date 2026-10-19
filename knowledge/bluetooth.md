@@ -195,7 +195,14 @@ code:
     instead by per-channel energy: 1 MHz bins in 10 us steps,
     cross-correlated with the shot's own map, a 450-sigma peak.
     Calibration shots belong around −80 dBm or above.
-- **Re-measured at −69 dBm the same afternoon: 18.8 dB, not 20.**
+- **Re-measured at −69 dBm the same afternoon: 19.0 dB, not 20.**
+  `bt_bench.py snr` measures it: per channel, a burst's whole power
+  (channel ±1 MHz, against the shot's own cells, so leakage cancels)
+  over the noise in 1 MHz, the definition the synthetic files use. It
+  read 18.96 dB (channels 18.6 to 19.4) here and −0.89 dB at −90 dBm,
+  where `align` cannot lock; planted captures come back within 0.03 dB
+  at 14 and 20 dB. The scratch measurement first quoted, 18.8, took
+  only the channel's own bin and read 0.2 dB low.
   - **Both levels are below the VSG60A's specified −55 to +7 dBm**
     ([signal-hound-specs.md](signal-hound-specs.md)); `vsg_sink` takes
     −120 dBm, but that is the driver's range, not a calibrated one. It
@@ -210,7 +217,7 @@ code:
   - **The chain has a group delay that differs by channel**: against
     one clock line, each channel's bursts sat at their own mean offset,
     −0.9 to +0.6 samples at 40 MS/s (±20 ns), not monotonic in
-    frequency. It made `align`'s timing scatter 0.60 at 18.8 dB, where
+    frequency. It made `align`'s timing scatter 0.60 at 19.0 dB, where
     the dry runs gave 0.40 at 20 dB; with each channel's mean taken out
     it was 0.44. So the scatter is not a level check on this bench, and
     the line's truth for a burst is off by its channel's offset.

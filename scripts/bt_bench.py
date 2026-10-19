@@ -7,6 +7,7 @@ and the truth of the capture from the capture itself.
                                       --snr-db 20 --drop-at N --drop 40]  # a capture made from the shot, no radio
     python scripts/bt_bench.py record CAP.cf32 --seconds 20           # the BB60D, 40 MS/s on 2439.0 MHz
     python scripts/bt_bench.py align CAP.cf32 SHOT.cf32 [--tx TX.json] [--rec REC.json] --out DIR [--name NAME]
+    python scripts/bt_bench.py snr CAP.cf32 SHOT.cf32 --out DIR [--name NAME] [--align NAME.align.json]  # the level
 
 **Never radiated.** The VSG60A is a signal generator, not a certified 2.4 GHz device: the bench is an SMA cable,
 antennas off (``knowledge/bluetooth.md``, the bench). It has no pad, so ``scripts/bt_bench_play.py``, the only thing that
@@ -45,6 +46,11 @@ over ``MAX_JITTER``. Known and accepted: a loss of 1-2 samples inside the first 
 shot was sent, or names another shot, or a ``--rec`` of another file, is refused before anything is read; so is a
 capture name whose truth already exists. The instruments' own group delay is in every position (nothing here can see
 it: the delay at sample 0 is the cable, the instruments and when the recording started, together).
+
+**The level comes from the capture too.** ``snr`` measures a burst's power over the noise in 1 MHz on every channel the
+shot uses, against the shot's own map and with no truth, and finds the shot itself, so it works where ``align`` cannot
+lock (``snr`` has the method). The level set on the VSG60A is not trusted: below -55 dBm it is outside the instrument's
+specified range, and the BB60D's floor moved 1 dB within a day (``knowledge/bluetooth.md``, the bench).
 """
 import argparse
 import hashlib
@@ -549,6 +555,186 @@ def record(path, seconds, gain_percent=60.0):
     return info
 
 
+# ---------------------------------------------------------------------------------------------------- the level
+
+#: The time-frequency cell: a 40-point FFT of one 1 us block, so 1 MHz bins on Bluetooth channel centres. A cell holds
+#: the noise in 1 MHz times ``SNR_N ** 2``.
+SNR_N = 40
+#: Blocks per bin when finding the shot (10 us).
+SNR_AVG = 10
+#: The shot is found when its peak stands this many robust sigmas over the cross-correlation's spread.
+SNR_MIN_SIGMA = 20.0
+#: A cell is a burst's when the shot holds at least this share of a whole 1 us block of a burst over channel +-1 MHz.
+SNR_ON = 0.5
+#: Least silent time in the shot to take the noise from; capture kept clear of the shot for the noise outside it.
+SNR_MIN_NOISE_S = 0.05
+SNR_GUARD_S = 0.01
+#: Refining the start: blocks per window (at the shot's start, middle and end) and the search either side, in samples.
+SNR_REFINE_BLOCKS = 50_000
+SNR_REFINE_SAMPLES = 600
+#: Parts of the shot measured apart, for the uncertainty.
+SNR_PARTS = 4
+
+
+def _block_cells(x, cols):
+    """|FFT|^2 of the 1 us blocks of ``x`` (rectangular, ``SNR_N`` points, fftshifted: column ``SNR_N // 2 + m`` is
+    ``m`` MHz from the centre), only the columns ``cols``."""
+    x = np.asarray(x, dtype=np.complex128)[:len(x) // SNR_N * SNR_N].reshape(-1, SNR_N)
+    return np.abs(np.fft.fftshift(np.fft.fft(x, axis=1), axes=1)[:, cols]) ** 2
+
+
+def _cells(cf, start, n_blocks, cols, avg=1):
+    """``_block_cells`` of ``n_blocks`` blocks of a file from sample ``start``, read in ``CHUNK`` steps, each ``avg``
+    blocks averaged into one row."""
+    n_blocks = n_blocks // avg * avg
+    out = np.empty((n_blocks // avg, len(cols)))
+    step = CHUNK // (SNR_N * avg) * avg
+    for b0 in range(0, n_blocks, step):
+        b1 = min(b0 + step, n_blocks)
+        c = _block_cells(cf.read(start + b0 * SNR_N, start + b1 * SNR_N), cols)
+        out[b0 // avg:b1 // avg] = c.reshape(-1, avg, len(cols)).mean(1)
+    return out
+
+
+def _refine(cap, shot, x0, n, cols, guess):
+    """The capture sample where shot sample ``x0`` lies, within ``SNR_REFINE_SAMPLES`` of ``guess``: the lag that best
+    matches ``n`` blocks of energy over ``cols`` (every 20 samples, then every sample about the best)."""
+    s = _cells(shot, x0, n, cols).sum(1)
+    s = s - s.mean()
+    w = SNR_REFINE_SAMPLES + 20
+    seg = cap.read(guess - w, guess + n * SNR_N + w)
+
+    def score(lag):
+        c = _block_cells(seg[w + lag:w + lag + n * SNR_N], cols).sum(1)
+        return float(np.dot(c - c.mean(), s))
+
+    best = max(range(-SNR_REFINE_SAMPLES, SNR_REFINE_SAMPLES + 1, 20), key=score)
+    return guess + max(range(best - 19, best + 20), key=score)
+
+
+def snr(cap_path, shot_path, shot_side):
+    """The level of a capture of one shot, with no truth: a burst's power over the noise in 1 MHz, per channel.
+
+    Both files are cut into 1 us blocks, and a 40-point FFT of each gives one cell per MHz. The shot is found in the
+    capture by its own map, not by ``align`` (which cannot lock where a level is most in doubt): per channel the energy
+    in 10 us bins, cross-correlated with the shot's and summed over the channels its in-shot bursts use (the sidecar's
+    ``channel_mhz``), its peak at least ``SNR_MIN_SIGMA`` robust sigmas. The start is refined to a sample at the shot's
+    start, middle and end, and the line through the three (the two clocks) maps the shot onto the capture. That start is
+    only good to some tens of samples (10 on planted captures, 18 against ``align`` on the bench), plenty for cells of
+    40 samples and bursts of 2,700 or more; ``delay_at_0`` and ``ppm`` here are for that and are no truth.
+
+    The cells where the shot holds at least ``SNR_ON`` of a burst's whole block over its channel +-1 MHz are that
+    burst's (bursts never overlap, so the two neighbouring bins hold only its own leakage). Over them, per channel, the
+    capture's energy over the three bins less their noise, divided by the shot's, is the power at which a burst of
+    |iq| 1 (the shot's unit) was received: the FFT's leakage and a carrier offset fall the same on both and cancel.
+    The noise of a bin is the capture's mean cell where the shot is silent on all its channels, inside the shot (the
+    VSG60A open, as a detector sees it); the noise before and after the shot is reported beside it. The SNR of channel
+    k is that power over the noise in 1 MHz there, ``gain_k * SNR_N**2 / noise_k``: the definition the synthetic files
+    are made with (``amplitude_for``, a burst's power over the noise in 1 MHz). The median over channels is the
+    recording's level and their spread its flatness; ``snr_db_sem`` is the spread of that median over ``SNR_PARTS``
+    parts of the shot, over sqrt(parts - 1)."""
+    cap, shot = Cf32(cap_path), Cf32(shot_path)
+    info = shot_side['bench_shot']
+    result = dict(problem=None, shot=info['name'], capture=os.path.basename(cap_path), capture_samples=len(cap))
+    if len(shot) != info['n_samples']:
+        result['problem'] = 'the shot file has %d samples, its sidecar says %d' % (len(shot), info['n_samples'])
+        return result
+    centre = shot_side['center_mhz']
+    chans = sorted({int(round(e['channel_mhz'] - centre)) for e in shot_side['bursts'] if e.get('in_shot')})
+    if not chans:
+        result['problem'] = 'the shot has no burst in it'
+        return result
+    if len(cap) < len(shot):
+        result['problem'] = 'the recording (%d samples) is shorter than the shot (%d)' % (len(cap), len(shot))
+        return result
+    half = SNR_N // 2
+    home = [half + m for m in chans]
+    near = sorted({h + d for h in home for d in (-1, 0, 1)})
+    col = {b: i for i, b in enumerate(near)}
+    three = [[col[h + d] for d in (-1, 0, 1)] for h in home]
+
+    # Where the shot is: per channel the energy in 10 us bins, cross-correlated and summed over the channels.
+    es, ec = (_cells(cf, 0, len(cf) // SNR_N, home, avg=SNR_AVG) for cf in (shot, cap))
+    acc = sum(_xcorr_valid(ec[:, i] - ec[:, i].mean(), es[:, i] - es[:, i].mean()).real for i in range(len(home)))
+    k = int(np.argmax(acc))
+    mid = float(np.median(acc))
+    spread = 1.4826 * float(np.median(np.abs(acc - mid)))
+    sigma = (float(acc[k]) - mid) / spread if spread > 0 else 0.0
+    result.update(channels_mhz=[centre + m for m in chans], locate_sigma=sigma)
+    if sigma < SNR_MIN_SIGMA:
+        result['problem'] = ('the shot was not found: its peak stands %.1f robust sigmas over the cross-correlation '
+                             '(under %.0f)' % (sigma, SNR_MIN_SIGMA))
+        return result
+    guess = k * SNR_N * SNR_AVG
+    n_ref = min(SNR_REFINE_BLOCKS, len(shot) // SNR_N)
+    starts = sorted({0, (len(shot) // SNR_N // 2 - n_ref // 2) * SNR_N, (len(shot) // SNR_N - n_ref) * SNR_N})
+    at = [_refine(cap, shot, x0, n_ref, home, guess + x0) - x0 for x0 in starts]
+    slope, a = np.polyfit(starts, at, 1) if len(starts) > 1 else (0.0, float(at[0]))
+    first, last = int(math.floor(a)), int(math.ceil(a + len(shot) * (1 + slope)))
+    result.update(delay_at_0=float(a), ppm=float(slope * 1e6))
+    if first < 0 or last > len(cap):
+        result['problem'] = 'the shot is not wholly inside the recording (capture samples %d to %d)' % (first, last)
+        return result
+
+    # The shot in CHUNK pieces, each mapped through the line, summed per part of the shot.
+    full = float(SNR_N * SNR_N)
+    n_blocks = len(shot) // SNR_N
+    c_on = np.zeros((SNR_PARTS, len(home)))
+    s_on = np.zeros((SNR_PARTS, len(home)))
+    n_on = np.zeros((SNR_PARTS, len(home)))
+    quiet = np.zeros((SNR_PARTS, len(near)))
+    n_quiet = np.zeros(SNR_PARTS)
+    step = CHUNK // SNR_N
+    for b0 in range(0, n_blocks, step):
+        b1 = min(b0 + step, n_blocks)
+        p = min(SNR_PARTS - 1, b0 * SNR_PARTS // n_blocks)
+        s = _cells(shot, b0 * SNR_N, b1 - b0, near)
+        c = _cells(cap, b0 * SNR_N + int(round(a + slope * b0 * SNR_N)), b1 - b0, near)
+        silent = s.sum(1) < 1e-6 * full
+        quiet[p] += c[silent].sum(0)
+        n_quiet[p] += silent.sum()
+        for j, cols in enumerate(three):
+            on = s[:, cols].sum(1) >= SNR_ON * full
+            c_on[p, j] += c[on][:, cols].sum()
+            s_on[p, j] += s[on][:, cols].sum()
+            n_on[p, j] += on.sum()
+    if n_quiet.sum() * SNR_N / FS < SNR_MIN_NOISE_S:
+        result['problem'] = ('only %.3f s of the shot is silent on its channels (under %.2f s): no noise to measure'
+                             % (n_quiet.sum() * SNR_N / FS, SNR_MIN_NOISE_S))
+        return result
+
+    def level(cs, ss, ns, q, nq):
+        noise = q / nq
+        gain = np.array([(cs[j] - ns[j] * noise[cols].sum()) / ss[j] if ss[j] else np.nan for j, cols in enumerate(three)])
+        n_home = np.array([noise[col[h]] for h in home])
+        return gain, n_home, 10 * np.log10(gain * full / n_home)
+
+    gain, n_home, snr_db = level(c_on.sum(0), s_on.sum(0), n_on.sum(0), quiet.sum(0), n_quiet.sum())
+    parts = [float(np.nanmedian(level(c_on[p], s_on[p], n_on[p], quiet[p], n_quiet[p])[2]))
+             for p in range(SNR_PARTS) if n_quiet[p] and s_on[p].any()]
+    # Noise outside the shot, clear of it by SNR_GUARD_S.
+    guard = int(SNR_GUARD_S * FS)
+    out_q, out_n = np.zeros(len(near)), 0
+    for s0, s1 in ((0, first - guard), (last + guard, len(cap))):
+        nb = max(s1 - s0, 0) // SNR_N // 1000 * 1000
+        if nb:
+            out_q += _cells(cap, s0, nb, near, avg=1000).sum(0) * 1000
+            out_n += nb
+    noise_out = [float(10 * math.log10(out_q[col[h]] / out_n / full)) if out_n else None for h in home]
+    rows = [dict(channel_mhz=centre + m, snr_db=float(snr_db[j]), burst_dbm=float(10 * math.log10(gain[j])),
+                 noise_1mhz_dbm=float(10 * math.log10(n_home[j] / full)), noise_outside_1mhz_dbm=noise_out[j],
+                 cells=int(n_on.sum(0)[j])) for j, m in enumerate(chans)]
+    result.update(snr_db=float(np.nanmedian(snr_db)), snr_db_min=float(np.nanmin(snr_db)),
+                  snr_db_max=float(np.nanmax(snr_db)), snr_db_parts=parts,
+                  snr_db_sem=float(np.std(parts) / math.sqrt(len(parts) - 1)) if len(parts) > 1 else None,
+                  burst_dbm=float(np.nanmedian([r['burst_dbm'] for r in rows])),
+                  noise_1mhz_dbm=float(np.median([r['noise_1mhz_dbm'] for r in rows])),
+                  noise_outside_1mhz_dbm=(float(np.median(noise_out)) if out_n else None),
+                  noise_s=float(n_quiet.sum() * SNR_N / FS), noise_outside_s=out_n * SNR_N / FS, rows=rows,
+                  units='burst_dbm and noise_*_dbm are 10 log10 of the capture\'s own units, which are mW on the BB60D')
+    return result
+
+
 #: The capture maker's interpolator: a Kaiser-windowed sinc of ``SINC_TAPS`` taps, tabulated at ``SINC_PHASES``
 #: fractions. A cubic was up to 0.12 sample out on a burst 11 MHz off centre (the reviewer measured it); this is under
 #: 0.002 there, so a test's tolerance can see an aligner bias of a few hundredths.
@@ -629,6 +815,21 @@ def summary(result):
                                 result['reference_error_hz']))
 
 
+def snr_summary(result):
+    if result.get('problem'):
+        return 'REFUSED: %s' % result['problem']
+    s = ('SNR in 1 MHz %.2f dB (median of %d channels, %.2f to %.2f; +-%.2f over the shot\'s parts); burst %.1f, noise '
+         '%.1f in 1 MHz (outside the shot %s); clock %+.4f ppm, start %.1f'
+         % (result['snr_db'], len(result['rows']), result['snr_db_min'], result['snr_db_max'],
+            result['snr_db_sem'] or float('nan'), result['burst_dbm'], result['noise_1mhz_dbm'],
+            '%.1f' % result['noise_outside_1mhz_dbm'] if result['noise_outside_1mhz_dbm'] is not None else 'none',
+            result['ppm'], result['delay_at_0']))
+    if 'align_check' in result:
+        s += '; against align: start %+.1f samples, clock %+.4f ppm' % (result['align_check']['delay_at_0_diff_samples'],
+                                                                       result['align_check']['ppm_diff'])
+    return s
+
+
 def _load(path):
     with open(path) as f:
         return json.load(f)
@@ -662,6 +863,12 @@ def main(argv=None):
     p.add_argument('out')
     p.add_argument('--seconds', type=float, default=20.0)
     p.add_argument('--gain', type=float, default=60.0)
+    p = sub.add_parser('snr', help='the level of a capture: burst power over the noise in 1 MHz, per channel, no truth')
+    p.add_argument('capture')
+    p.add_argument('shot')
+    p.add_argument('--out', required=True, help='folder for NAME.snr.json')
+    p.add_argument('--name', help='capture name (default: the capture file\'s)')
+    p.add_argument('--align', help="align's NAME.align.json of the same capture, to cross-check the start and clock")
     p = sub.add_parser('align', help='the truth of a capture')
     p.add_argument('capture')
     p.add_argument('shot')
@@ -696,6 +903,28 @@ def main(argv=None):
         print(args.out, json.dumps(info))
         return 0 if not info['lost_sample_overflows'] else 1
     shot_side = _load(os.path.splitext(args.shot)[0] + '.json')
+    if args.cmd == 'snr':
+        name = args.name or os.path.splitext(os.path.basename(args.capture))[0]
+        out_path = os.path.join(args.out, name + '.snr.json')
+        if os.path.exists(out_path):
+            ap.error('%s already exists: give another --name or --out' % out_path)
+        t0 = time.time()
+        result = snr(args.capture, args.shot, shot_side)
+        if args.align and not result['problem']:
+            al = _load(args.align)
+            if (al.get('capture') != os.path.basename(args.capture)
+                    or al.get('capture_samples') != result['capture_samples']):
+                ap.error('the --align is of %r (%s samples), not of this capture (an aligner\'s crop has the '
+                         'recording\'s name but not its samples)' % (al.get('capture'), al.get('capture_samples')))
+            if al.get('delay_at_0') is not None:
+                result['align_check'] = dict(delay_at_0_diff_samples=result['delay_at_0'] - al['delay_at_0'],
+                                             ppm_diff=result['ppm'] - al['ppm'])
+        print(snr_summary(result), '(%.0f s)' % (time.time() - t0), flush=True)
+        os.makedirs(args.out, exist_ok=True)
+        with open(out_path, 'w') as f:
+            json.dump(result, f, indent=1)
+        print(out_path)
+        return 1 if result['problem'] else 0
     tx = _load(args.tx) if args.tx else None
     rec = _load(args.rec) if args.rec else None
     if tx is None and not args.dry:

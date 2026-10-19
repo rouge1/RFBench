@@ -15,6 +15,9 @@
     alone, a carrier 58 kHz from where --tx puts it;
   - the command line: a --tx not sent or of another shot refused; a dry run writes the cropped capture and its truth,
     whose starts are the planted ones in the cropped file's samples.
+* **The level** (``snr``), on the same short shot: the planted SNR in 1 MHz at 20 and 14 dB within 0.2 dB, with a
+  carrier 58.9 kHz off and a 0.37 sample, -0.37 ppm shift; two noise draws within 0.05 dB of each other; noise alone
+  and a shot under the noise refused; the command line writes ``NAME.snr.json`` and will not overwrite it.
 * **The player**, with a fake ``apps.vsg_sink``: --check and every refusal touch no radio (a level over 0 or nan, a pad
   missing, negative or nan, more than -20 dBm into the BB60D (level minus pad), an offset over 200 kHz, a shot whose sha256 is not its sidecar's); --go sends the exact
   buffer once (never repeat_waveform) at 2439.0 MHz plus the offset and the level given; the sidecar is "not started"
@@ -329,6 +332,36 @@ class Guard:
         return None
 
 
+def test_snr(tmp, shot_path, side):
+    print('\nThe level: a burst\'s power over the noise in 1 MHz, against the shot\'s own map')
+    got = {}
+    for name, kw in (('20', dict(snr_db=20.0, frac=0.37, ppm=-0.37, cfo_hz=58900.0)), ('14', dict(snr_db=14.0)),
+                     ('20a', dict(snr_db=20.0)), ('20b', dict(snr_db=20.0, seed=11))):
+        cap, planted = capture(tmp, shot_path, 'snr_' + name, **kw)
+        r = bb.snr(cap, shot_path, side)
+        os.remove(cap)
+        got[name] = r.get('snr_db')
+        check(not r['problem'] and abs(r['snr_db'] - planted['snr_db']) < 0.2 and r['snr_db_max'] - r['snr_db_min'] < 0.5,
+              'planted %.0f dB%s: read %s' % (planted['snr_db'], ' (58.9 kHz off, 0.37 sample, -0.37 ppm)' if kw.get('cfo_hz')
+                                               else '', bb.snr_summary(r)))
+    check(abs(got['20a'] - got['20b']) < 0.05, 'two noise draws at 20 dB agree: %.3f and %.3f' % (got['20a'], got['20b']))
+    cap, _ = capture(tmp, shot_path, 'snr_low', snr_db=-10.0)
+    r = bb.snr(cap, shot_path, side)
+    check(bool(r['problem']) and 'not found' in r['problem'], 'a shot 10 dB under the noise: %s' % bb.snr_summary(r))
+    noise = os.path.join(tmp, 'snr_noise.cf32')
+    (np.random.default_rng(3).standard_normal((len(bb.Cf32(cap)), 2)) * 0.03).astype('<f4').tofile(noise)
+    r = bb.snr(noise, shot_path, side)
+    check(bool(r['problem']) and 'not found' in r['problem'], 'noise alone: %s' % bb.snr_summary(r))
+    os.remove(noise)
+    out = os.path.join(tmp, 'snr_out')
+    code, _, _ = run(bb.main, ['snr', cap, shot_path, '--out', out])
+    check(code == 1 and json.load(open(os.path.join(out, 'snr_low.snr.json')))['problem'],
+          'the command line writes the refusal to snr_low.snr.json and exits 1')
+    code, _, err = run(bb.main, ['snr', cap, shot_path, '--out', out])
+    check(code == 2 and 'already exists' in err, 'and will not overwrite it')
+    os.remove(cap)
+
+
 def test_player(tmp, shot_path):
     print('\nThe player, with no radio')
     guard = Guard()
@@ -432,6 +465,7 @@ def main():
         test_shot(tmp)
         shot_path, side = test_align(tmp)
         test_align_cli(tmp, shot_path, side)
+        test_snr(tmp, shot_path, side)
         test_player(tmp, shot_path)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
