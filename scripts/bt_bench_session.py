@@ -23,7 +23,10 @@ log over every earlier attempt, so the operator neither types a level nor choose
 
 **``start``** refuses a name already used here, on the drive or in the log, a recording while the one before has no
 decision or is not yet on the drive, any recording once the session is NOT DECIDABLE, a slot already kept, and a slot
-other than the one a retake or discard left open. The level is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
+other than the one a retake or discard left open. After an UNDECIDED halt it refuses everything but ``--resume``, the
+owner's resume of the halted slot; that resume is refused, with nothing logged, for another slot or another decision
+file, and otherwise ruled by ``LevelSession.resume`` and logged under the halted recording before the start. The level
+is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
 ``bt_bench.py record`` (``SECONDS`` s, the BB60D) in the background with its output in ``NAME.rec.log``.
 
 **``log``** records an instrument fault (the player's non-zero exit, which only its console shows) or a note, both
@@ -35,13 +38,14 @@ the next step):
    or any loss or overflow, is a recorder fault);
 2. fetches the player's sidecar ``NAME_tx.json`` (``--player-host``, ``--player-tx-dir``); missing, ``sent`` not
    true or ``state`` not ``sent`` is a player fault; a sidecar of another shot (by name or sha256) or level than the
-   session's is refused, undecided;
+   session's is an UNDECIDED halt (``LevelSession.halt``, logged; nothing further is measured);
 3. only with no fault: ``bt_bench.snr``, ``NAME.snr.json``, its summary printed;
-4. the decision: ``LevelSession.decide`` over every earlier attempt and this one (an earlier decision that does not
-   replay the same in action, levels, re-level count, cap and state refuses everything), logged with its inputs.
+4. the decision: ``LevelSession.decide`` over every earlier attempt and this one (an earlier decision, halt or resume
+   that does not replay the same in action, levels, re-level count, cap and state refuses everything), logged with its
+   inputs; a decision file that raises on this attempt is an UNDECIDED halt instead.
 Nothing aligns here, so no aligner output exists when the decision is made.
 
-**``close``** needs that decision. A KEEP is aligned (``bt_bench.py align`` with ``--tx`` and ``--rec``, its whole
+**``close``** needs that decision or a halt. A KEEP is aligned (``bt_bench.py align`` with ``--tx`` and ``--rec``, its whole
 console to ``NAME.align.log``, which nothing here prints: on accept it ends with the carrier values the registration
 keeps from every reader until its stage 1) and the allowed-keys script writes ``NAME.align_allowed.json``, printed
 unless it holds a carrier key (``CARRIER_KEYS``), which stops the close with nothing shown.
@@ -84,6 +88,9 @@ GENESIS = '0' * 64
 EVENTS = ('fault', 'note')
 #: ``LevelSession``'s outcomes after which the same slot is recorded again.
 AGAIN = ('RETAKE_SAME_LEVEL', 'DISCARD_STEP')
+#: The session-log steps ``LevelSession`` rules on, in the order they were logged: a decision, an UNDECIDED halt and
+#: the owner's resume after one.
+RULED = ('decision', 'halt', 'resume')
 #: What a replayed step must match of its logged decision.
 STEP_KEYS = ('action', 'level_used', 'level_next', 'relevels', 'capped', 'state')
 #: Keys that are carrier values (or carry them) and never reach the console or the session log before the stage-1
@@ -105,8 +112,12 @@ s = m.LevelSession()
 out = []
 for a in json.load(sys.stdin):
     before = s.level
-    out.append(dict(action=s.decide(a['slot'], **a['inputs']), level_used=before, level_next=s.level,
-                    relevels=s.relevels, capped=s.capped, state=s.state))
+    if a.get('kind', 'decide') == 'decide':
+        act = s.decide(a['slot'], **a['inputs'])
+    else:
+        act = dict(halt=s.halt, resume=s.resume)[a['kind']](a['slot'], a['level'], a['decide_sha'])
+    out.append(dict(action=act, level_used=before, level_next=s.level, relevels=s.relevels, capped=s.capped,
+                    state=s.state))
 print(json.dumps(dict(first_level=m.FIRST_COMMAND_DBM, level=s.level, state=s.state, steps=out,
                  sha256=hashlib.sha256(src).hexdigest())))
 '''
@@ -171,10 +182,12 @@ def check_order(entries):
     (or no numbers when there is none) and its fault lines; an alignment (an align line with an ``exit``) only after its
     KEEP. Across recordings: a start only once the recording before it is decided and copied; nothing after NOT
     DECIDABLE; the slot a retake or discard left open is the next one started; a kept slot never started again; one
-    KEEP per slot; no slot started again once one of its recordings was aligned."""
+    KEEP per slot; no slot started again once one of its recordings was aligned. An UNDECIDED halt stands in for a
+    recording's decision (never both, nothing measured after it, never aligned); after one, nothing but a resume of
+    that slot, logged under the halted recording, and then a start of that slot."""
     bad, slot_of, decided, kept, aligned_slots = [], {}, {}, {}, set()
     began, snr_of, faults, copied = set(), {}, {}, set()
-    last, open_slot, ended = None, None, False
+    last, open_slot, ended, halted, pending = None, None, False, set(), None
     for n, e in enumerate(entries, 1):
         name, step = e.get('name'), e.get('step')
         if step != 'start' and name not in slot_of:
@@ -188,9 +201,12 @@ def check_order(entries):
                 bad.append('line %d: %s starts with no slot' % (n, name))
             if ended:
                 bad.append('line %d: %s starts after the session was NOT DECIDABLE' % (n, name))
-            if last is not None and (last not in decided or last not in copied):
+            if pending is not None:
+                bad.append('line %d: %s starts after the halt of slot %s with no resume' % (n, name, pending))
+            if last is not None and (last not in decided and last not in halted or last not in copied):
                 bad.append('line %d: %s starts before %s was %s' % (n, name, last,
-                                                                     'decided' if last not in decided else 'copied'))
+                                                                     'copied' if last in decided or last in halted
+                                                                     else 'decided'))
             if open_slot is not None and slot != open_slot:
                 bad.append('line %d: %s starts slot %s, slot %s was left for a retake' % (n, name, slot, open_slot))
             if slot in kept:
@@ -199,20 +215,20 @@ def check_order(entries):
                 bad.append('line %d: %s starts slot %s after a recording of it was aligned' % (n, name, slot))
             slot_of[name], last, open_slot = slot, name, None
         elif step in ('fault', 'note'):
-            if name in began or name in decided:
+            if name in began or name in decided or name in halted:
                 bad.append('line %d: %s %s after finish began' % (n, name, step))
             if step == 'fault':
                 faults[name] = True
         elif step == 'recorder':
             began.add(name)
         elif step == 'snr':
-            if name in decided:
-                bad.append('line %d: %s snr after its decision' % (n, name))
+            if name in decided or name in halted:
+                bad.append('line %d: %s snr after its %s' % (n, name, 'decision' if name in decided else 'halt'))
             snr_of[name] = e
         elif step == 'decision':
             action = e.get('action')
-            if name in decided:
-                bad.append('line %d: %s decided twice' % (n, name))
+            if name in decided or name in halted:
+                bad.append('line %d: %s decided %s' % (n, name, 'twice' if name in decided else 'after its halt'))
             if action is None:
                 bad.append('line %d: %s decision with no action' % (n, name))
             if e.get('slot') != slot_of[name]:
@@ -233,6 +249,28 @@ def check_order(entries):
             elif action in AGAIN:
                 open_slot = slot_of[name]
             if action == 'NOT DECIDABLE' or e.get('state') == 'NOT DECIDABLE':
+                ended = True
+        elif step == 'halt':
+            if name in decided or name in halted:
+                bad.append('line %d: %s halted after its %s' % (n, name, 'decision' if name in decided else 'halt'))
+            if e.get('slot') != slot_of[name]:
+                bad.append('line %d: %s halted in slot %s, started in slot %s' % (n, name, e.get('slot'),
+                                                                                  slot_of[name]))
+            halted.add(name)
+            open_slot = slot_of[name]
+            if e.get('action') == 'HALT':
+                pending = slot_of[name]
+            if e.get('action') == 'NOT DECIDABLE' or e.get('state') == 'NOT DECIDABLE':
+                ended = True
+        elif step == 'resume':
+            if pending is None or name not in halted:
+                bad.append('line %d: %s resumed with no halt waiting' % (n, name))
+            elif e.get('slot') != pending:
+                bad.append('line %d: slot %s resumed, slot %s halted' % (n, e.get('slot'), pending))
+            if name not in copied:
+                bad.append('line %d: %s resumed before it was copied' % (n, name))
+            pending = None
+            if e.get('action') != 'RESUME_AS_RETAKE' or e.get('state') == 'NOT DECIDABLE':
                 ended = True
         elif step == 'align' and ('exit' in e or 'skipped' not in e):
             if decided.get(name) != 'KEEP':
@@ -283,6 +321,23 @@ def _decisions(entries):
     return [e for e in entries if e.get('step') == 'decision']
 
 
+def _ruled(entries):
+    return [e for e in entries if e.get('step') in RULED]
+
+
+def _attempt(e):
+    """A ruled session-log line as the replay takes it."""
+    if e['step'] == 'decision':
+        return dict(slot=e['slot'], inputs=e['inputs'])
+    return dict(kind=e['step'], slot=e['slot'], level=e['level_dbm'], decide_sha=e['decide_sha'])
+
+
+def _pending_halt(entries):
+    """The halt line no resume has followed, or None."""
+    ruled = _ruled(entries)
+    return ruled[-1] if ruled and ruled[-1]['step'] == 'halt' and ruled[-1].get('action') == 'HALT' else None
+
+
 def _agreed(here, drive):
     """The drive's session log, refused unless this laptop's says the same line for line (``prev`` aside): a write that
     reached one and not the other, or a second drive folder, stops the session instead of starting a second one."""
@@ -297,20 +352,28 @@ def _agreed(here, drive):
 
 
 def _replay(decide, attempts):
-    """``LevelSession`` over ``attempts`` ([{slot, inputs}], in order), in a separate ``python -I``."""
-    r = subprocess.run([PY, '-I', '-B', '-c', REPLAY, decide], input=json.dumps(attempts), capture_output=True, text=True)
-    if r.returncode:
-        sys.exit('the decision file failed: ' + r.stderr.strip()[-400:])
-    got = json.loads(r.stdout)
+    """``LevelSession`` over ``attempts`` ([{slot, inputs}] or [{kind, slot, level, decide_sha}], in order), in a
+    separate ``python -I``."""
+    got, why = _try_replay(decide, attempts)
+    if why:
+        sys.exit('the decision file failed: ' + why)
     if len(got['steps']) != len(attempts):
         sys.exit('refused: the decision file replayed %d of %d attempts' % (len(got['steps']), len(attempts)))
     return got
 
 
+def _try_replay(decide, attempts):
+    """(the replay, None), or (None, why) when the decision file raised."""
+    r = subprocess.run([PY, '-I', '-B', '-c', REPLAY, decide], input=json.dumps(attempts), capture_output=True, text=True)
+    if r.returncode:
+        return None, r.stderr.strip()[-400:]
+    return json.loads(r.stdout), None
+
+
 def _session(decide, entries):
-    """The session replayed: every logged decision must come out the same, else nothing goes on."""
-    done = _decisions(entries)
-    got = _replay(decide, [dict(slot=d['slot'], inputs=d['inputs']) for d in done])
+    """The session replayed: every logged decision, halt and resume must come out the same, else nothing goes on."""
+    done = _ruled(entries)
+    got = _replay(decide, [_attempt(d) for d in done])
     for d, g in zip(done, got['steps']):
         if [d.get(k) for k in STEP_KEYS] != [g.get(k) for k in STEP_KEYS]:
             sys.exit('refused: %s was logged %s, the decision file now gives %s: the log or the code changed'
@@ -333,7 +396,7 @@ def cmd_start(a):
     entries = _agreed(a.dir, a.drive)
     if any(e.get('name') == a.name for e in entries):
         sys.exit('refused: %s is already in the session log (a name is used once)' % a.name)
-    decided = {e['name'] for e in _decisions(entries)}
+    decided = {e['name'] for e in _decisions(entries) + [e for e in entries if e.get('step') == 'halt']}
     closed = {e['name'] for e in entries if e.get('step') == 'copy' and not e.get('fault')}
     starts = [e['name'] for e in entries if e.get('step') == 'start']
     if starts and starts[-1] not in decided:
@@ -343,10 +406,35 @@ def cmd_start(a):
     ses = _session(a.decide, entries)
     if ses['state'] == 'NOT DECIDABLE':
         sys.exit('refused: the session is NOT DECIDABLE; no more recordings')
+    halt = _pending_halt(entries)
+    if halt and not a.resume:
+        sys.exit('refused: %s halted undecided (%s). The owner may resume slot %d once, at the same level with the same '
+                 'decision file: start NAME --slot %d ... --resume; it is that slot\'s one retake and its next outcome '
+                 'must be a KEEP' % (halt['name'], halt['reason'], halt['slot'], halt['slot']))
+    if a.resume and not halt:
+        sys.exit('refused: --resume, and no halt is waiting for one')
+    if halt:
+        if a.slot != halt['slot']:
+            sys.exit('refused: slot %d halted; only it may be resumed (another slot would make the bench NOT '
+                     'DECIDABLE, so nothing was logged)' % halt['slot'])
+        if ses['sha256'] != halt['decide_sha']:
+            sys.exit('refused: the decision file is %s, the halt was under %s; a resume needs the same file (nothing '
+                     'was logged)' % (ses['sha256'][:16], halt['decide_sha'][:16]))
+        resume = dict(step='resume', slot=a.slot, level_dbm=ses['level'], decide_sha=ses['sha256'])
+        got = _replay(a.decide, [_attempt(d) for d in _ruled(entries)] + [_attempt(resume)])
+        step = got['steps'][-1]
+        _log([a.dir, a.drive], halt['name'], 'resume', slot=a.slot, level_dbm=ses['level'], decide_sha=got['sha256'],
+             **{k: step[k] for k in STEP_KEYS}, decide=_code_id(a.decide, got['sha256']))
+        if step['action'] != 'RESUME_AS_RETAKE':
+            sys.exit('refused: the resume of slot %d was ruled %s; no more recordings' % (a.slot, step['action']))
+        print('slot %d resumed after the halt of %s: this is its one retake, and its next outcome must be a KEEP'
+              % (a.slot, halt['name']))
+        entries = _agreed(a.dir, a.drive)
+        ses = _session(a.decide, entries)
     done = _decisions(entries)
     if any(d['slot'] == a.slot and d['action'] == 'KEEP' for d in done):
         sys.exit('refused: slot %d is already kept' % a.slot)
-    if done and done[-1]['action'] in AGAIN and done[-1]['slot'] != a.slot:
+    if not halt and done and done[-1]['action'] in AGAIN and done[-1]['slot'] != a.slot:
         sys.exit('refused: slot %d was left for a retake (%s): record it again first' % (done[-1]['slot'],
                                                                                          done[-1]['action']))
     level = ses['level']
@@ -397,8 +485,8 @@ def cmd_finish(a):
     start = [e for e in entries if e.get('step') == 'start' and e['name'] == name]
     if not start:
         sys.exit('refused: %s was never started' % name)
-    if any(e['name'] == name for e in _decisions(entries)):
-        sys.exit('refused: %s already has a decision' % name)
+    if any(e['name'] == name and e.get('step') in ('decision', 'halt') for e in entries):
+        sys.exit('refused: %s already has a decision or a halt' % name)
     start = start[-1]
     ses = _session(a.decide, entries)
     if start['level_dbm'] != ses['level']:
@@ -424,9 +512,9 @@ def cmd_finish(a):
         tx = json.load(open(tx_path))
         if (tx.get('shot') != start['shot'] or tx.get('vsg_level_dbm') != start['level_dbm']
                 or tx.get('shot_sha256') != shot_side['bench_shot']['sha256']):
-            sys.exit('refused, undecided: the player played %s (sha256 %s) at %s dBm, the session started %s (%s) at %g '
-                     'dBm' % (tx.get('shot'), str(tx.get('shot_sha256'))[:16], tx.get('vsg_level_dbm'), start['shot'],
-                              shot_side['bench_shot']['sha256'][:16], start['level_dbm']))
+            _halt(a, dirs, start, entries, 'the player played %s (sha256 %s) at %s dBm, the session started %s (%s) at '
+                  '%g dBm' % (tx.get('shot'), str(tx.get('shot_sha256'))[:16], tx.get('vsg_level_dbm'),
+                              start['shot'], shot_side['bench_shot']['sha256'][:16], start['level_dbm']))
         if tx.get('sent') is not True or tx.get('state') != 'sent':
             player_fault = 'the player did not send (sent %r, state %r)' % (tx.get('sent'), tx.get('state'))
     _log(dirs, name, 'tx', sent=tx.get('sent'), state=tx.get('state'), shot=tx.get('shot'),
@@ -446,9 +534,10 @@ def cmd_finish(a):
     inputs = dict(recorder_fault=bool(recorder_fault), player_fault=bool(player_fault), exit_fault=bool(exit_fault),
                   snr_refused=bool(snr.get('problem')), median=snr.get('snr_db'), lo=snr.get('snr_db_min'),
                   hi=snr.get('snr_db_max'))
-    done = _decisions(entries)
-    got = _replay(a.decide, [dict(slot=d['slot'], inputs=d['inputs']) for d in done]
-                  + [dict(slot=start['slot'], inputs=inputs)])
+    got, why = _try_replay(a.decide, [_attempt(d) for d in _ruled(entries)]
+                           + [dict(slot=start['slot'], inputs=inputs)])
+    if why:
+        _halt(a, dirs, start, entries, 'the decision file raised: ' + why.splitlines()[-1])
     step = got['steps'][-1]
     _log(dirs, name, 'decision', slot=start['slot'], action=step['action'], inputs=inputs,
          level_used=step['level_used'], level_next=step['level_next'], relevels=step['relevels'],
@@ -460,21 +549,35 @@ def cmd_finish(a):
     return 0
 
 
+def _halt(a, dirs, start, entries, reason):
+    """An UNDECIDED halt: ``LevelSession.halt`` (an attempt, and the slot's one non-KEEP) over the session so far,
+    logged with why, and the end of ``finish``."""
+    halt = dict(step='halt', slot=start['slot'], level_dbm=start['level_dbm'], decide_sha=sha256_of(a.decide))
+    got = _replay(a.decide, [_attempt(d) for d in _ruled(entries)] + [_attempt(halt)])
+    step = got['steps'][-1]
+    _log(dirs, start['name'], 'halt', slot=start['slot'], level_dbm=start['level_dbm'], decide_sha=got['sha256'],
+         reason=reason, **{k: step[k] for k in STEP_KEYS}, decide=_code_id(a.decide, got['sha256']))
+    sys.exit('halted, undecided (%s): %s. Close it; then %s' % (
+        step['action'], reason, 'the session is NOT DECIDABLE' if step['state'] == 'NOT DECIDABLE' else
+        'only the owner\'s resume of slot %d (start --resume) goes on' % start['slot']))
+
+
 def cmd_close(a):
     here, drive, name = a.dir, a.drive, a.name
     dirs = [here, drive]
     entries = _agreed(here, drive)
-    dec = [e for e in _decisions(entries) if e['name'] == name]
+    dec = [e for e in entries if e['name'] == name and e.get('step') in ('decision', 'halt')]
     if not dec:
-        sys.exit('refused: %s has no decision (finish it first)' % name)
+        sys.exit('refused: %s has no decision or halt (finish it first)' % name)
     if any(e['name'] == name and e.get('step') == 'copy' and not e.get('fault') for e in entries):
         sys.exit('refused: %s is already closed' % name)
-    keep = dec[-1]['action'] == 'KEEP'
+    keep = dec[-1]['step'] == 'decision' and dec[-1]['action'] == 'KEEP'
     if keep:
         _align(a, dirs)
     else:
-        _log(dirs, name, 'align', skipped='not aligned: %s' % dec[-1]['action'])
-        print('%s: not aligned (%s)' % (name, dec[-1]['action']), flush=True)
+        what = dec[-1]['action'] if dec[-1]['step'] == 'decision' else 'halted undecided'
+        _log(dirs, name, 'align', skipped='not aligned: %s' % what)
+        print('%s: not aligned (%s)' % (name, what), flush=True)
     copied, why = copy_verified(here, drive, [f for f in _files(name) if os.path.exists(os.path.join(here, f))])
     if why:
         _log(dirs, name, 'copy', fault=why)
@@ -574,7 +677,7 @@ def cmd_log(a):
     entries = _agreed(a.dir, a.drive)
     if not any(e['name'] == a.name and e.get('step') == 'start' for e in entries):
         sys.exit('refused: %s was never started (no start line in %s)' % (a.name, os.path.join(a.drive, LOG)))
-    if any(e['name'] == a.name and e.get('step') in ('recorder', 'decision') for e in entries):
+    if any(e['name'] == a.name and e.get('step') in ('recorder', 'decision', 'halt') for e in entries):
         sys.exit('refused: finish has begun for %s; a %s counts only before it' % (a.name, a.event))
     _log([a.dir, a.drive], a.name, a.event, reason=a.reason)
     print('logged %s %s: %s' % (a.name, a.event, a.reason))
@@ -642,6 +745,8 @@ def main(argv=None):
             p.add_argument('--lap', required=True, choices=sorted(bb.SHOTS))
             p.add_argument('--offset-khz', type=float, required=True)
             p.add_argument('--seconds', type=float, default=SECONDS)
+            p.add_argument('--resume', action='store_true', help='the owner\'s resume of the slot a halt left: the '
+                           'same slot, level and decision file; that slot\'s one retake')
         if c in ('finish', 'close'):
             p.add_argument('--shots', default='/media/user/4TB/sdr-synth-tmp/bench/shots')
         if c == 'close':

@@ -258,6 +258,13 @@ code:
     for the user and blocks the next recording. The chain is unkeyed: it
     shows a line changed, dropped or moved, not a log rewritten from its
     first line, which needs its head hash kept somewhere else.
+    A recording `finish` cannot decide - the player's sidecar names
+    another shot or level, or the decision file raises - is an UNDECIDED
+    halt: `LevelSession.halt` counts it as an attempt and the slot's one
+    non-KEEP, it is copied but never aligned, and nothing starts again
+    except `start --resume`, the owner's one resume of that slot at the same
+    level under the same decision file (refused unlogged otherwise, since
+    the registration makes any other resume NOT DECIDABLE).
   - The two references held one relation: the carrier error (+887 Hz)
     was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
     each instrument's LO and sample clock share one reference.

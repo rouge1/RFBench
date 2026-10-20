@@ -13,7 +13,11 @@ player's sidecar is written by hand. The keys stand-in returns the registration'
   replays the log (an action, a level or the re-level count).
 * **finish**: a player that did not send, or whose state is not sent, is a fault (no snr, RETAKE_SAME_LEVEL); 20 dB is
   KEEP; 17 dB is DISCARD_STEP with the next level 3 dB up; a fault logged before finish makes a second non-keep in the
-  slot NOT DECIDABLE; nothing is aligned by finish; a sidecar of another level or shot sha256 is refused, undecided.
+  slot NOT DECIDABLE; nothing is aligned by finish; a sidecar of another level or shot sha256 is an UNDECIDED halt.
+* **halt and resume**: a halt (another level's sidecar, or a decision file that raises after the snr) is logged with
+  no decision, refuses finish and log again, is copied by close and not aligned, and refuses every start but
+  ``--resume``; a resume of another slot or under another decision file is refused with nothing logged; the resume is
+  logged under the halted recording at the same level, and the slot's next non-KEEP is NOT DECIDABLE.
 * **close**: a KEEP is aligned with the console in ``NAME.align.log``, no carrier value on the console or in the log,
   only the operator view printed, and a keys script that returns a carrier key stops the close with nothing shown;
   anything else is not aligned; a copy that does not hash the same leaves its partials on the drive, nothing at the
@@ -22,6 +26,8 @@ player's sidecar is written by hand. The keys stand-in returns the registration'
 * **verify**: chain, order and sums from the disk; a partial or any file the sums do not list fails, as do a missing
   sums file and a listed file that is gone. ``check_order`` catches each breach the registration names, and passes a
   discard then a kept retake, and a finish retried after a crash.
+* if bluey's v10 decision file is on this machine (or at ``BENCH_DECIDE_V10``): its ``LevelSession`` replays the
+  halt session step for step as the stand-in does.
 * if bluey's own v6 files are on this machine: its ``LevelSession`` replays the session step for step as the stand-in
   does, and its keys script returns the operator view with no carrier key.
 """
@@ -57,16 +63,25 @@ json.dump(json.load(open(sys.argv[1])), open(sys.argv[2], "w"))
 #: A stand-in for the registration's decision file: ``LevelSession`` with its rules, written again.
 DECIDE = '''import math
 FIRST_COMMAND_DBM = %s
+RAISE_OVER = 1e9
 
 
 class LevelSession:
     def __init__(self):
         self.level, self.relevels, self.state, self.capped, self.n = FIRST_COMMAND_DBM, 0, None, False, {}
+        self.halts, self.info, self.pending = {}, {}, None
 
     def decide(self, slot, *, recorder_fault=False, player_fault=False, exit_fault=False, snr_refused=False,
                median=None, lo=None, hi=None):
         if self.state:
             return self.state
+        if self.pending is not None:
+            if slot != self.pending:
+                self.state = "NOT DECIDABLE"
+                return self.state
+            raise ValueError("a halt is pending")
+        if median is not None and median > RAISE_OVER:
+            raise ValueError("a decision file that raises")
         fault = recorder_fault or player_fault or exit_fault or snr_refused or (lo is not None and hi - lo > 2.0)
         if not fault and abs(median - 20.0) <= 1.0:
             return "KEEP"
@@ -79,9 +94,37 @@ class LevelSession:
         self.relevels += 1
         self.level = math.floor(2 * (self.level + 20.0 - median) + 0.5) / 2
         return "DISCARD_STEP"
+
+    def halt(self, slot, level, decide_sha):
+        if self.state:
+            return self.state
+        prior = self.n.get(slot, 0)
+        self.halts[slot] = self.halts.get(slot, 0) + 1
+        self.n[slot] = prior + 1
+        self.info[slot] = (level, decide_sha, prior >= 1)
+        if prior >= 1 or self.halts[slot] >= 2:
+            self.state = "NOT DECIDABLE"
+            return self.state
+        self.pending = slot
+        return "HALT"
+
+    def resume(self, slot, level, decide_sha):
+        if self.state:
+            return self.state
+        if self.pending is None:
+            raise ValueError("no halt is pending")
+        lvl, sha, used = self.info[self.pending]
+        if slot != self.pending or level != lvl or decide_sha != sha or used or self.halts[slot] != 1:
+            self.state = "NOT DECIDABLE"
+            return self.state
+        self.pending = None
+        return "RESUME_AS_RETAKE"
 '''
+
 #: bluey's own v6 files, where this machine has them.
 REAL = '/data/python/bluey-swarm-ops/packets/s4-bench-reg-v6/'
+#: bluey's v10 decision file (LevelSession with halt and resume), where this machine has it.
+REAL10 = os.environ.get('BENCH_DECIDE_V10', '/data/python/bluey-ox-walker-s4benchreg/diag/diag_s4_bench_decide.py')
 
 
 def check(ok, what):
@@ -115,6 +158,17 @@ def recording(shots, side, name, here, snr_db=20.0, level=-68.0, sent=True, stat
                    vsg_center_mhz=2439.058, vsg_offset_hz=58000.0, vsg_level_dbm=level, pad_db=0.0, sent=sent,
                    state=state or ('sent' if sent is True else 'error before the send')),
               open(os.path.join(here, name + '_tx.json'), 'w'))
+
+
+def halted(name, slot, action='HALT'):
+    """The session-log lines of a recording halted undecided, closed."""
+    return [(name, 'start', dict(slot=slot)), (name, 'recorder', {}),
+            (name, 'halt', dict(slot=slot, action=action, state='NOT DECIDABLE' if action != 'HALT' else None)),
+            (name, 'align', dict(skipped='not aligned: halted undecided')), (name, 'copy', dict(files={}))]
+
+
+def resumed(name, slot, action='RESUME_AS_RETAKE'):
+    return [(name, 'resume', dict(slot=slot, action=action))]
 
 
 def events(name, slot, action, median=20.0, lo=19.8, hi=20.2, aligned=None):
@@ -339,8 +393,8 @@ def main():
         code, _, err = session(here, os.path.join(tmp, 'drive_new'))[0]('r05', 3)
         check(code != 0 and 'differ from line' in err, 'a second, empty drive folder does not start a new session')
 
-        for tag, kw, want in (('level', dict(level=-67.0), 'undecided'),
-                              ('sha', dict(sha='f' * 64), 'undecided'),
+        for tag, kw, want in (('level', dict(level=-67.0), 'halted, undecided'),
+                              ('sha', dict(sha='f' * 64), 'halted, undecided'),
                               ('state', dict(state='error in the send: part of the shot may have gone out'), None)):
             h, d = os.path.join(tmp, 'here_' + tag), os.path.join(tmp, 'drive_' + tag)
             os.makedirs(d)
@@ -349,11 +403,107 @@ def main():
             recording(shots, side, 'q01', h, **kw)
             code, _, err = fi_('q01')
             decided = [e for e in bs._entries(d) if e['step'] == 'decision']
+            halts = [e for e in bs._entries(d) if e['step'] == 'halt']
             if want:
-                check(code != 0 and want in err and not decided, 'a sidecar of another %s: refused, undecided' % tag)
+                check(code != 0 and want in err and not decided and len(halts) == 1 and halts[0]['action'] == 'HALT'
+                      and halts[0]['slot'] == 1 and halts[0]['decide_sha'] == bs.sha256_of(decide),
+                      'a sidecar of another %s: halted, undecided, the halt logged (%s)' % (tag, err.strip()[-120:]))
             else:
                 check(code == 0 and decided and decided[0]['action'] == 'RETAKE_SAME_LEVEL'
                       and decided[0]['inputs']['player_fault'], 'sent true with a state that is not sent: a fault')
+
+        print('\nan UNDECIDED halt, then the owner\'s resume')
+        h, d = os.path.join(tmp, 'here_halt'), os.path.join(tmp, 'drive_halt')
+        os.makedirs(d)
+        st_, fi_, cl_ = session(h, d)[:3]
+
+        def resume(name, slot, dec=decide):
+            bs.subprocess.Popen = FakePopen
+            try:
+                return run(['start', name, '--slot', str(slot), '--lap', '885614', '--offset-khz', '0', '--resume',
+                            '--decide', dec, '--dir', h, '--drive', d])
+            finally:
+                bs.subprocess.Popen = real_popen
+
+        def hlines():
+            return bs._entries(d)
+        st_('h01', 1, offset='0')
+        recording(shots, side, 'h01', h)
+        code, _, err = fi_('h01')
+        check(code == 0 and [e['action'] for e in hlines() if e['step'] == 'decision'] == ['KEEP'],
+              'h01 kept (%s)' % err.strip()[-120:])
+        cl_('h01')
+        code, _, err = resume('h02', 2)
+        check(code != 0 and 'no halt is waiting' in err, '--resume with no halt waiting is refused')
+        st_('h02', 2, offset='0')
+        recording(shots, side, 'h02', h, level=-67.0)
+        code, out, err = fi_('h02')
+        hl = [e for e in hlines() if e['step'] == 'halt']
+        check(code != 0 and 'halted, undecided (HALT)' in err and len(hl) == 1 and hl[0]['name'] == 'h02'
+              and not [e for e in hlines() if e['name'] == 'h02' and e['step'] in ('tx', 'snr', 'decision')],
+              'a sidecar of another level: the halt logged, no tx, snr or decision line')
+        code, _, err = fi_('h02')
+        check(code != 0 and 'already has a decision or a halt' in err, 'finish again after a halt is refused')
+        code, _, err = run(['log', 'h02', '--event', 'fault', '--reason', 'late', '--dir', h, '--drive', d])
+        check(code != 0 and 'finish has begun' in err, 'a fault after a halt is refused')
+        code, _, err = st_('h03', 2, offset='0')
+        check(code != 0 and 'close it first' in err, 'no start before the halted recording is on the drive')
+        code, out, err = cl_('h02')
+        check(code == 0 and 'halted undecided' in out and os.path.exists(os.path.join(d, 'h02.cf32'))
+              and not os.path.exists(os.path.join(d, 'h02.align.json')), 'close: a halt is not aligned, it is copied')
+        code, _, err = st_('h03', 2, offset='0')
+        check(code != 0 and 'halted undecided' in err and '--resume' in err,
+              'a start after a halt without --resume is refused, the resume rule printed')
+        code, _, err = resume('h03', 3)
+        check(code != 0 and 'only it may be resumed' in err and not [e for e in hlines() if e['step'] == 'resume'],
+              'a resume of another slot is refused, nothing logged')
+        other = os.path.join(keydir, 'other', 'diag_s4_bench_decide.py')
+        os.makedirs(os.path.dirname(other))
+        open(other, 'w').write(DECIDE % '-68.0' + '# another file\n')
+        code, _, err = resume('h03', 2, dec=other)
+        check(code != 0 and 'needs the same file' in err and not [e for e in hlines() if e['step'] == 'resume'],
+              'a resume under another decision file is refused, nothing logged')
+        code, out, err = resume('h03', 2)
+        rs = [e for e in hlines() if e['step'] == 'resume']
+        check(code == 0 and len(rs) == 1 and rs[0]['name'] == 'h02' and rs[0]['action'] == 'RESUME_AS_RETAKE'
+              and rs[0]['level_dbm'] == -68.0 and '--level -68 ' in out and hlines()[-1]['step'] == 'start',
+              'the resume: logged under h02 as RESUME_AS_RETAKE at the same level, then h03 started (%s)'
+              % err.strip()[-150:])
+        recording(shots, side, 'h03', h, snr_db=17.0)
+        code, out, err = fi_('h03')
+        check(code == 0 and [e for e in hlines() if e['step'] == 'decision'][-1]['action'] == 'NOT DECIDABLE',
+              'a non-KEEP after the resume: NOT DECIDABLE')
+        cl_('h03')
+        code, out, _ = run(['verify', d])
+        check(code == 0 and 'order OK' in out, 'verify: a halt, its resume and the retake in order (%s)'
+              % out.strip().splitlines()[-1])
+        ruled = [bs._attempt(e) for e in bs._ruled(hlines())]
+        if os.path.exists(REAL10):
+            mine, theirs = bs._replay(decide, ruled), bs._replay(REAL10, ruled)
+            check([[s.get(k) for k in bs.STEP_KEYS] for s in mine['steps']]
+                  == [[s.get(k) for k in bs.STEP_KEYS] for s in theirs['steps']],
+                  'bluey\'s v10 LevelSession replays the halt session step for step: %s'
+                  % [s['action'] for s in theirs['steps']])
+
+        print('\na decision file that raises: a halt')
+        h, d = os.path.join(tmp, 'here_raise'), os.path.join(tmp, 'drive_raise')
+        os.makedirs(d)
+        raising = os.path.join(keydir, 'raising', 'diag_s4_bench_decide.py')
+        os.makedirs(os.path.dirname(raising))
+        open(raising, 'w').write((DECIDE % '-68.0').replace('RAISE_OVER = 1e9', 'RAISE_OVER = 25.0'))
+        bs.subprocess.Popen = FakePopen
+        try:
+            run(['start', 'x01', '--slot', '1', '--lap', '885614', '--offset-khz', '0', '--decide', raising,
+                 '--dir', h, '--drive', d])
+        finally:
+            bs.subprocess.Popen = real_popen
+        recording(shots, side, 'x01', h, snr_db=30.0)
+        code, out, err = run(['finish', 'x01', '--shots', shots, '--decide', raising, '--dir', h, '--drive', d])
+        hl = [e for e in bs._entries(d) if e['step'] == 'halt']
+        check(code != 0 and len(hl) == 1 and 'the decision file raised' in hl[0]['reason']
+              and 'a decision file that raises' in hl[0]['reason'] and 'snr:' in out
+              and not [e for e in bs._entries(d) if e['step'] == 'decision'],
+              'the decision file raised on the attempt: a halt, after the snr line, no decision')
 
         print('\na keys script that lets a carrier value through')
         h, d = os.path.join(tmp, 'here_leak'), os.path.join(tmp, 'drive_leak')
@@ -426,13 +576,24 @@ def main():
                                                                    (ln[0], ln[1], dict(ln[2], snr_db=17.0))
                                                                    for ln in events('a', 1, 'KEEP')], 'its log says'),
                 ('an align marked skipped that ran after a retake', retake[:5]
-                 + [('a', 'align', dict(skipped='x', exit=0))], 'aligned after')):
+                 + [('a', 'align', dict(skipped='x', exit=0))], 'aligned after'),
+                ('a start after a halt with no resume', halted('a', 1) + events('b', 1, 'KEEP')[:1], 'no resume'),
+                ('a resume of another slot', halted('a', 1) + resumed('a', 2), 'slot 2 resumed, slot 1 halted'),
+                ('a resume with no halt', events('a', 1, 'KEEP') + resumed('a', 1), 'no halt waiting'),
+                ('a decision after a halt', halted('a', 1)[:3] + events('a', 1, 'KEEP')[4:5], 'after its halt'),
+                ('a halt then an alignment', halted('a', 1)[:3] + [('a', 'align', dict(exit=0))], 'no decision'),
+                ('a resume before the halted recording is copied', halted('a', 1)[:4] + resumed('a', 1),
+                 'before it was copied'),
+                ('a start after a resume ruled NOT DECIDABLE', halted('a', 1) + resumed('a', 1, 'NOT DECIDABLE')
+                 + events('b', 1, 'KEEP')[:1], 'NOT DECIDABLE')):
             bad = order_of(tmp, lns)
             check(any(want in b for b in bad), '%s: %s' % (what, bad[0] if bad else 'not caught'))
         crash = events('a', 1, 'KEEP')
         for what, lns in (('a discard, not aligned, then its retake kept and aligned',
                            events('a', 1, 'DISCARD_STEP', median=17.0) + events('b', 1, 'KEEP')),
-                          ('a finish retried after a crash before its decision', crash[:4] + crash[1:])):
+                          ('a finish retried after a crash before its decision', crash[:4] + crash[1:]),
+                          ('a halt, its resume, then the slot kept', halted('a', 1) + resumed('a', 1)
+                           + events('b', 1, 'KEEP'))):
             bad = order_of(tmp, lns)
             check(not bad, '%s: order OK %s' % (what, bad))
     finally:
