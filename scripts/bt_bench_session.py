@@ -9,47 +9,54 @@
     python scripts/bt_bench_session.py verify DRIVE_FOLDER                             # SHA256SUMS.txt, read from the disk
 
 ``DECIDE`` is the registration's ``diag_s4_bench_decide.py`` and ``KEYS`` its ``s4_bench_allowed_keys.py``, both run by
-path in a separate ``python -I`` (``-B`` for the decision file: no bytecode cache, which a rewrite within the same
-second would leave stale, and none written beside it), their sha256 and commit logged.
+path in a separate ``python -I``, their sha256 and commit logged. The decision file's bytes are read once, hashed and
+compiled by the replay itself, so no ``.pyc`` is ever loaded (``-B`` alone only stops one being written; an existing
+cache whose source size and mtime match is still used) and the logged sha256 is of what ran.
+
+Every command reads the session log on the drive and refuses unless the laptop's says the same, line for line: a write
+that reached one and not the other, or a second, empty drive folder, stops the session instead of starting another.
 
 **What it does not do.** It never transmits: ``start`` prints the player's command and a person (or the Claude session,
 under its own narrow permission) runs it, so every transmission stays a separate, visible command. It makes no rule of
 its own: keep, retake, discard and the next VSG level are the registration's ``LevelSession``, replayed from the session
 log over every earlier attempt, so the operator neither types a level nor chooses an outcome.
 
-**``start``** refuses a name already used here or on the drive, a recording while the one before has no decision, any
-recording once the session is NOT DECIDABLE, a slot already kept, and a slot other than the one a retake or discard
-left open. The level is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
+**``start``** refuses a name already used here, on the drive or in the log, a recording while the one before has no
+decision or is not yet on the drive, any recording once the session is NOT DECIDABLE, a slot already kept, and a slot
+other than the one a retake or discard left open. The level is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
 ``bt_bench.py record`` (``SECONDS`` s, the BB60D) in the background with its output in ``NAME.rec.log``.
 
-**``log``** records an instrument fault before the decision (the player's non-zero exit, which only its console shows)
-or a note. A fault is refused once the recording has a decision.
+**``log``** records an instrument fault (the player's non-zero exit, which only its console shows) or a note, both
+refused once ``finish`` has begun for the recording: nothing the snr shows can bring a fault in after it.
 
 **``finish``**, in this order, each step a line in ``session.jsonl`` (here and on the drive, flushed to the disk before
 the next step):
 1. waits for the recorder, and reads ``lost_sample_overflows`` and ``adc_overflows`` (a recorder that wrote no record,
    or any loss or overflow, is a recorder fault);
-2. fetches the player's sidecar ``NAME_tx.json`` (``--player-host``, ``--player-tx-dir``); missing, or ``sent`` not
-   true, is a player fault; a sidecar of another shot or level than the session's is refused, undecided;
+2. fetches the player's sidecar ``NAME_tx.json`` (``--player-host``, ``--player-tx-dir``); missing, ``sent`` not
+   true or ``state`` not ``sent`` is a player fault; a sidecar of another shot (by name or sha256) or level than the
+   session's is refused, undecided;
 3. only with no fault: ``bt_bench.snr``, ``NAME.snr.json``, its summary printed;
-4. the decision: ``LevelSession.decide`` over every earlier attempt and this one (an earlier action that does not
-   replay the same refuses everything), logged with its inputs, the level used and the next.
+4. the decision: ``LevelSession.decide`` over every earlier attempt and this one (an earlier decision that does not
+   replay the same in action, levels, re-level count, cap and state refuses everything), logged with its inputs.
 Nothing aligns here, so no aligner output exists when the decision is made.
 
 **``close``** needs that decision. A KEEP is aligned (``bt_bench.py align`` with ``--tx`` and ``--rec``, its whole
 console to ``NAME.align.log``, which nothing here prints: on accept it ends with the carrier values the registration
-keeps from every reader until its stage 1) and the allowed-keys script writes ``NAME.align_allowed.json``, printed.
-Any other outcome is not aligned. Then every file of the recording is copied to the drive (never over an existing one),
-each written to the disk and its cached pages dropped before it is hashed, so the hash is of what the disk holds, not
-of the page cache; only when every file matches its source are the large ``.cf32`` files here deleted (the recording
-and, for a KEEP, the aligner's crop); nothing on the drive is ever deleted. The hashes go into ``SHA256SUMS.txt``.
+keeps from every reader until its stage 1) and the allowed-keys script writes ``NAME.align_allowed.json``, printed
+unless it holds a carrier key (``CARRIER_KEYS``), which stops the close with nothing shown.
+Any other outcome is not aligned. Then every file of the recording is copied to the drive (never over an existing one)
+under a ``.partial`` name, written to the disk and its cached pages dropped before it is hashed, so the hash is of what
+the disk holds, not of the page cache; only when every file matches its source are the copies renamed, their hashes
+put in ``SHA256SUMS.txt``, and the large ``.cf32`` files here deleted (the recording and, for a KEEP, the aligner's
+crop). A partial that does not match stays on the drive: nothing there is ever overwritten or deleted.
 
 Every line of ``session.jsonl`` carries ``prev``, the sha256 of the line before it, and is fsynced before the next
 step: the order of measurements and decisions, against the registration's freezes, is checkable afterwards.
 
-**``verify``** re-checks a folder's ``SHA256SUMS.txt`` the same way, from the disk, and its session log: the chain,
-then the order the registration asserts (``check_order``: an alignment only after that recording's KEEP, one KEEP per
-slot, no slot recorded again once aligned, a fault or snr never after the decision, one decision per recording).
+**``verify``** re-checks a folder's session log - the chain, then the order the registration asserts (``check_order``)
+- and its ``SHA256SUMS.txt`` from the disk, and fails on a file the sums do not list. The chain is unkeyed: it shows a
+line changed, dropped or moved, not a log rewritten from its first line, which needs its head hash kept elsewhere.
 """
 import argparse
 import hashlib
@@ -77,18 +84,31 @@ GENESIS = '0' * 64
 EVENTS = ('fault', 'note')
 #: ``LevelSession``'s outcomes after which the same slot is recorded again.
 AGAIN = ('RETAKE_SAME_LEVEL', 'DISCARD_STEP')
-#: Run in ``python -I`` with the registration's decision file: replays the attempts read from stdin.
-REPLAY = '''import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location('s4_bench_decide', sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
+#: What a replayed step must match of its logged decision.
+STEP_KEYS = ('action', 'level_used', 'level_next', 'relevels', 'capped', 'state')
+#: Keys that are carrier values (or carry them) and never reach the console or the session log before the stage-1
+#: freeze, whatever the allowed-keys script returns.
+CARRIER_KEYS = ('f_located_hz', 'cfo_instrument_hz', 'cfo_instrument_spread_hz', 'reference_error_hz', 'cfo_hz',
+                'cfo_planted_hz', 'rows')
+#: A copy is written under this suffix, hashed from the disk, and only then given its name.
+PARTIAL = '.partial'
+#: Run in ``python -I -B`` with the registration's decision file: replays the attempts read from stdin. It executes the
+#: bytes it hashed, compiled here, so no ``.pyc`` beside the file is ever loaded (``-B`` alone stops only the writing of
+#: one: an existing cache whose source size and mtime match is still used), and the sha256 it prints is of what ran.
+REPLAY = '''import hashlib, json, sys, types
+src = open(sys.argv[1], 'rb').read()
+m = types.ModuleType('s4_bench_decide')
+m.__file__ = sys.argv[1]
+sys.modules[m.__name__] = m
+exec(compile(src, sys.argv[1], 'exec'), m.__dict__)
 s = m.LevelSession()
 out = []
 for a in json.load(sys.stdin):
     before = s.level
     out.append(dict(action=s.decide(a['slot'], **a['inputs']), level_used=before, level_next=s.level,
                     relevels=s.relevels, capped=s.capped, state=s.state))
-print(json.dumps(dict(first_level=m.FIRST_COMMAND_DBM, level=s.level, state=s.state, steps=out)))
+print(json.dumps(dict(first_level=m.FIRST_COMMAND_DBM, level=s.level, state=s.state, steps=out,
+                 sha256=hashlib.sha256(src).hexdigest())))
 '''
 PLAYER = ("ssh {host} 'cd /data/python/SDR && timeout -k 30 60 ~/miniconda3/envs/gnu/bin/python "
           "scripts/bt_bench_play.py ~/rg/bench/shots/{shot}.cf32 --go --pad-db 0 --level {level:g} "
@@ -145,38 +165,82 @@ def check_chain(path):
 
 
 def check_order(entries):
-    """What the registration asserts of a session log, as a list of breaches (empty when it holds): per recording, the
-    start first, a fault only before the decision, the snr before it, at most one decision; an alignment only after a
-    KEEP decision of that recording; one KEEP per slot; no recording of a slot started after one of its recordings was
-    aligned."""
+    """What the registration asserts of a session log, as a list of breaches (empty when it holds). Per recording: a
+    start with a slot, under a name used once; a fault or note only before ``finish`` began (its recorder line); at
+    most one decision, with an action, in the slot of its start, whose inputs are the recording's own last snr line
+    (or no numbers when there is none) and its fault lines; an alignment (an align line with an ``exit``) only after its
+    KEEP. Across recordings: a start only once the recording before it is decided and copied; nothing after NOT
+    DECIDABLE; the slot a retake or discard left open is the next one started; a kept slot never started again; one
+    KEEP per slot; no slot started again once one of its recordings was aligned."""
     bad, slot_of, decided, kept, aligned_slots = [], {}, {}, {}, set()
+    began, snr_of, faults, copied = set(), {}, {}, set()
+    last, open_slot, ended = None, None, False
     for n, e in enumerate(entries, 1):
         name, step = e.get('name'), e.get('step')
         if step != 'start' and name not in slot_of:
             bad.append('line %d: %s %s before its start' % (n, name, step))
             continue
         if step == 'start':
+            slot = e.get('slot')
             if name in slot_of:
                 bad.append('line %d: %s started twice' % (n, name))
-            slot_of[name] = e.get('slot')
-            if e.get('slot') in aligned_slots:
-                bad.append('line %d: %s starts slot %s after a recording of it was aligned' % (n, name, e.get('slot')))
-        elif step in ('fault', 'snr') and name in decided:
-            bad.append('line %d: %s %s after its decision' % (n, name, step))
+            if slot is None:
+                bad.append('line %d: %s starts with no slot' % (n, name))
+            if ended:
+                bad.append('line %d: %s starts after the session was NOT DECIDABLE' % (n, name))
+            if last is not None and (last not in decided or last not in copied):
+                bad.append('line %d: %s starts before %s was %s' % (n, name, last,
+                                                                     'decided' if last not in decided else 'copied'))
+            if open_slot is not None and slot != open_slot:
+                bad.append('line %d: %s starts slot %s, slot %s was left for a retake' % (n, name, slot, open_slot))
+            if slot in kept:
+                bad.append('line %d: %s starts slot %s, already kept' % (n, name, slot))
+            if slot in aligned_slots:
+                bad.append('line %d: %s starts slot %s after a recording of it was aligned' % (n, name, slot))
+            slot_of[name], last, open_slot = slot, name, None
+        elif step in ('fault', 'note'):
+            if name in began or name in decided:
+                bad.append('line %d: %s %s after finish began' % (n, name, step))
+            if step == 'fault':
+                faults[name] = True
+        elif step == 'recorder':
+            began.add(name)
+        elif step == 'snr':
+            if name in decided:
+                bad.append('line %d: %s snr after its decision' % (n, name))
+            snr_of[name] = e
         elif step == 'decision':
+            action = e.get('action')
             if name in decided:
                 bad.append('line %d: %s decided twice' % (n, name))
-            decided[name] = e.get('action')
-            if e.get('action') == 'KEEP':
+            if action is None:
+                bad.append('line %d: %s decision with no action' % (n, name))
+            if e.get('slot') != slot_of[name]:
+                bad.append('line %d: %s decided in slot %s, started in slot %s' % (n, name, e.get('slot'),
+                                                                                   slot_of[name]))
+            got, sn = e.get('inputs') or {}, snr_of.get(name, {})
+            want = dict(median=sn.get('snr_db'), lo=sn.get('snr_db_min'), hi=sn.get('snr_db_max'),
+                        snr_refused=bool(sn.get('problem')), exit_fault=bool(faults.get(name)))
+            if any(got.get(k) != v for k, v in want.items()):
+                bad.append('line %d: %s decided on %s, its log says %s' % (
+                    n, name, {k: got.get(k) for k in want}, want))
+            decided[name] = action
+            if action == 'KEEP':
                 if slot_of[name] in kept:
                     bad.append('line %d: a second KEEP in slot %s (%s, after %s)' % (n, slot_of[name], name,
                                                                                     kept[slot_of[name]]))
                 kept[slot_of[name]] = name
-        elif step == 'align' and 'skipped' not in e:
+            elif action in AGAIN:
+                open_slot = slot_of[name]
+            if action == 'NOT DECIDABLE' or e.get('state') == 'NOT DECIDABLE':
+                ended = True
+        elif step == 'align' and ('exit' in e or 'skipped' not in e):
             if decided.get(name) != 'KEEP':
                 bad.append('line %d: %s aligned %s' % (n, name, 'with no decision before it' if name not in decided
                                                        else 'after a %s decision' % decided[name]))
             aligned_slots.add(slot_of[name])
+        elif step == 'copy' and not e.get('fault'):
+            copied.add(name)
     return bad
 
 
@@ -219,12 +283,28 @@ def _decisions(entries):
     return [e for e in entries if e.get('step') == 'decision']
 
 
+def _agreed(here, drive):
+    """The drive's session log, refused unless this laptop's says the same line for line (``prev`` aside): a write that
+    reached one and not the other, or a second drive folder, stops the session instead of starting a second one."""
+    a, b = _entries(here), _entries(drive)
+    strip = [{k: v for k, v in e.items() if k != 'prev'} for e in a], [{k: v for k, v in e.items() if k != 'prev'}
+                                                                         for e in b]
+    if strip[0] != strip[1]:
+        n = next((i for i, (x, y) in enumerate(zip(*strip), 1) if x != y), min(len(a), len(b)) + 1)
+        sys.exit('refused: the session logs here (%d lines) and on the drive (%d lines) differ from line %d; nothing '
+                 'goes on until they agree' % (len(a), len(b), n))
+    return b
+
+
 def _replay(decide, attempts):
     """``LevelSession`` over ``attempts`` ([{slot, inputs}], in order), in a separate ``python -I``."""
     r = subprocess.run([PY, '-I', '-B', '-c', REPLAY, decide], input=json.dumps(attempts), capture_output=True, text=True)
     if r.returncode:
         sys.exit('the decision file failed: ' + r.stderr.strip()[-400:])
-    return json.loads(r.stdout)
+    got = json.loads(r.stdout)
+    if len(got['steps']) != len(attempts):
+        sys.exit('refused: the decision file replayed %d of %d attempts' % (len(got['steps']), len(attempts)))
+    return got
 
 
 def _session(decide, entries):
@@ -232,14 +312,17 @@ def _session(decide, entries):
     done = _decisions(entries)
     got = _replay(decide, [dict(slot=d['slot'], inputs=d['inputs']) for d in done])
     for d, g in zip(done, got['steps']):
-        if (d['action'], d['level_used'], d['level_next']) != (g['action'], g['level_used'], g['level_next']):
-            sys.exit('refused: %s was logged %s at %g dBm, the decision file now gives %s at %g: the log or the code '
-                     'changed' % (d['name'], d['action'], d['level_used'], g['action'], g['level_used']))
+        if [d.get(k) for k in STEP_KEYS] != [g.get(k) for k in STEP_KEYS]:
+            sys.exit('refused: %s was logged %s, the decision file now gives %s: the log or the code changed'
+                     % (d['name'], {k: d.get(k) for k in STEP_KEYS}, {k: g.get(k) for k in STEP_KEYS}))
     return got
 
 
-def _code_id(path):
-    return dict(path=os.path.abspath(path), sha256=sha256_of(path), commit=_commit(os.path.dirname(os.path.abspath(path))))
+def _code_id(path, sha256=None):
+    """A script's identity in the log: its sha256 (for the decision file, of the bytes the replay ran), its path, and
+    the commit its folder's checkout is at (which says nothing of uncommitted changes: the sha256 is the identity)."""
+    return dict(path=os.path.abspath(path), sha256=sha256 or sha256_of(path),
+                commit=_commit(os.path.dirname(os.path.abspath(path))))
 
 
 def cmd_start(a):
@@ -247,11 +330,16 @@ def cmd_start(a):
     taken = _taken(a.name, a.dir, a.drive)
     if taken:
         sys.exit('refused: %s already exists (a name is used once)' % taken[0])
-    entries = _entries(a.drive)
+    entries = _agreed(a.dir, a.drive)
+    if any(e.get('name') == a.name for e in entries):
+        sys.exit('refused: %s is already in the session log (a name is used once)' % a.name)
     decided = {e['name'] for e in _decisions(entries)}
-    open_ = [e['name'] for e in entries if e.get('step') == 'start' and e['name'] not in decided]
-    if open_:
-        sys.exit('refused: %s has no decision yet (finish it first)' % open_[-1])
+    closed = {e['name'] for e in entries if e.get('step') == 'copy' and not e.get('fault')}
+    starts = [e['name'] for e in entries if e.get('step') == 'start']
+    if starts and starts[-1] not in decided:
+        sys.exit('refused: %s has no decision yet (finish it first)' % starts[-1])
+    if starts and starts[-1] not in closed:
+        sys.exit('refused: %s is not on the drive yet (close it first)' % starts[-1])
     ses = _session(a.decide, entries)
     if ses['state'] == 'NOT DECIDABLE':
         sys.exit('refused: the session is NOT DECIDABLE; no more recordings')
@@ -265,7 +353,7 @@ def cmd_start(a):
     cap = os.path.join(a.dir, a.name + '.cf32')
     shot = bb.shot_name(a.lap)
     _log([a.dir, a.drive], a.name, 'start', slot=a.slot, lap=a.lap, offset_khz=a.offset_khz, level_dbm=level,
-         shot=shot, seconds=a.seconds, decide=_code_id(a.decide))
+         shot=shot, seconds=a.seconds, decide=_code_id(a.decide, ses['sha256']))
     with open(os.path.join(a.dir, a.name + '.rec.log'), 'w') as out:
         p = subprocess.Popen([PY, os.path.join(ROOT, 'scripts', 'bt_bench.py'), 'record', cap, '--seconds',
                               '%g' % a.seconds], stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -305,7 +393,7 @@ def _wait_recorder(a):
 def cmd_finish(a):
     here, drive, name = a.dir, a.drive, a.name
     dirs = [here, drive]
-    entries = _entries(drive)
+    entries = _agreed(here, drive)
     start = [e for e in entries if e.get('step') == 'start' and e['name'] == name]
     if not start:
         sys.exit('refused: %s was never started' % name)
@@ -331,12 +419,15 @@ def cmd_finish(a):
         r = subprocess.run(['scp', '-q', src, tx_path], capture_output=True, text=True)
         if r.returncode:
             player_fault = 'the player sidecar could not be fetched: ' + r.stderr.strip()
+    shot_side = bb._load(os.path.join(a.shots, start['shot'] + '.json'))
     if not player_fault:
         tx = json.load(open(tx_path))
-        if tx.get('shot') != start['shot'] or tx.get('vsg_level_dbm') != start['level_dbm']:
-            sys.exit('refused, undecided: the player played %s at %s dBm, the session started %s at %g dBm'
-                     % (tx.get('shot'), tx.get('vsg_level_dbm'), start['shot'], start['level_dbm']))
-        if tx.get('sent') is not True:
+        if (tx.get('shot') != start['shot'] or tx.get('vsg_level_dbm') != start['level_dbm']
+                or tx.get('shot_sha256') != shot_side['bench_shot']['sha256']):
+            sys.exit('refused, undecided: the player played %s (sha256 %s) at %s dBm, the session started %s (%s) at %g '
+                     'dBm' % (tx.get('shot'), str(tx.get('shot_sha256'))[:16], tx.get('vsg_level_dbm'), start['shot'],
+                              shot_side['bench_shot']['sha256'][:16], start['level_dbm']))
+        if tx.get('sent') is not True or tx.get('state') != 'sent':
             player_fault = 'the player did not send (sent %r, state %r)' % (tx.get('sent'), tx.get('state'))
     _log(dirs, name, 'tx', sent=tx.get('sent'), state=tx.get('state'), shot=tx.get('shot'),
          level_dbm=tx.get('vsg_level_dbm'), offset_hz=tx.get('vsg_offset_hz'), fault=player_fault)
@@ -345,8 +436,7 @@ def cmd_finish(a):
     snr = {}
     if not (recorder_fault or player_fault or exit_fault):
         t0 = time.time()
-        snr = bb.snr(os.path.join(here, name + '.cf32'), os.path.join(a.shots, start['shot'] + '.cf32'),
-                     bb._load(os.path.join(a.shots, start['shot'] + '.json')))
+        snr = bb.snr(os.path.join(here, name + '.cf32'), os.path.join(a.shots, start['shot'] + '.cf32'), shot_side)
         with open(os.path.join(here, name + '.snr.json'), 'w') as f:
             json.dump(snr, f, indent=1)
         print('snr:', bb.snr_summary(snr), '(%.0f s)' % (time.time() - t0), flush=True)
@@ -362,7 +452,7 @@ def cmd_finish(a):
     step = got['steps'][-1]
     _log(dirs, name, 'decision', slot=start['slot'], action=step['action'], inputs=inputs,
          level_used=step['level_used'], level_next=step['level_next'], relevels=step['relevels'],
-         capped=step['capped'], state=step['state'], decide=_code_id(a.decide))
+         capped=step['capped'], state=step['state'], decide=_code_id(a.decide, got['sha256']))
     print('decision (the registration\'s LevelSession): %s; slot %d; the next recording at %g dBm%s'
           % (step['action'], start['slot'], step['level_next'],
              '; the session is NOT DECIDABLE' if step['state'] == 'NOT DECIDABLE' else ''))
@@ -373,7 +463,7 @@ def cmd_finish(a):
 def cmd_close(a):
     here, drive, name = a.dir, a.drive, a.name
     dirs = [here, drive]
-    entries = _entries(drive)
+    entries = _agreed(here, drive)
     dec = [e for e in _decisions(entries) if e['name'] == name]
     if not dec:
         sys.exit('refused: %s has no decision (finish it first)' % name)
@@ -425,26 +515,53 @@ def _align(a, dirs):
         _log(dirs, name, 'align', exit=r.returncode, fault='the allowed-keys script failed: ' + k.stderr.strip()[-300:])
         sys.exit('the allowed-keys script failed; nothing copied or deleted')
     view = json.load(open(allowed))
+    leak = _carrier_keys(view)
+    if leak:
+        _log(dirs, name, 'align', exit=r.returncode, allowed=None, allowed_keys=_code_id(a.allowed_keys),
+             fault='the allowed-keys script returned carrier keys; not shown')
+        sys.exit('the allowed-keys script returned %d carrier key(s), not shown or logged; nothing copied or deleted '
+                 '(%s holds them: do not open it)' % (len(leak), os.path.basename(allowed)))
     print('align (allowed keys only):', json.dumps(view), flush=True)
     _log(dirs, name, 'align', exit=r.returncode, allowed=view, allowed_keys=_code_id(a.allowed_keys))
 
 
+def _carrier_keys(view):
+    """The carrier keys anywhere in ``view`` (dicts and lists walked)."""
+    if isinstance(view, dict):
+        return [k for k in view if k in CARRIER_KEYS] + [x for v in view.values() for x in _carrier_keys(v)]
+    if isinstance(view, list):
+        return [x for v in view for x in _carrier_keys(v)]
+    return []
+
+
 def copy_verified(here, drive, rel):
-    """Copy ``rel`` (paths relative to ``here``) to ``drive``, refusing any that exists there, and hash every copy
-    from the disk against its source. Returns ({path: sha256}, None) or (partial, why); the sums file is appended only
-    when all match."""
+    """Copy ``rel`` (paths relative to ``here``) to ``drive``. Every file is written as NAME``PARTIAL``, written through
+    and hashed from the disk against its source; only when all match are they renamed to their names (the folder
+    fsynced) and their hashes appended to ``SUMS``, so a name on the drive always holds verified bytes. A file or a
+    partial already there refuses the whole copy, and a partial that did not match is left where it is: nothing on the
+    drive is ever overwritten or deleted. Returns ({path: sha256}, None) or ({}, why)."""
     for f in rel:
-        if os.path.exists(os.path.join(drive, f)):
-            return {}, '%s already exists on the drive' % f
+        for p in (os.path.join(drive, f), os.path.join(drive, f) + PARTIAL):
+            if os.path.exists(p):
+                return {}, '%s already exists on the drive' % os.path.relpath(p, drive)
     sums = {}
     for f in rel:
-        dst = os.path.join(drive, f)
+        dst = os.path.join(drive, f) + PARTIAL
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(os.path.join(here, f), dst)
         want, got = sha256_of(os.path.join(here, f)), sha256_from_disk(dst)
         if want != got:
-            return sums, '%s on the drive is %s, here %s' % (f, got[:16], want[:16])
+            return {}, ('%s on the drive is %s, here %s; the partial copies stay on the drive for the user to look at'
+                        % (f, got[:16], want[:16]))
         sums[f] = want
+    for f in rel:
+        os.rename(os.path.join(drive, f) + PARTIAL, os.path.join(drive, f))
+    for d in {os.path.dirname(os.path.join(drive, f)) for f in rel}:
+        fd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
     with open(os.path.join(drive, SUMS), 'a') as s:
         for f, h in sums.items():
             s.write('%s  %s\n' % (h, f))
@@ -454,38 +571,53 @@ def copy_verified(here, drive, rel):
 
 
 def cmd_log(a):
-    entries = _entries(a.drive)
+    entries = _agreed(a.dir, a.drive)
     if not any(e['name'] == a.name and e.get('step') == 'start' for e in entries):
         sys.exit('refused: %s was never started (no start line in %s)' % (a.name, os.path.join(a.drive, LOG)))
-    if a.event == 'fault' and any(e['name'] == a.name for e in _decisions(entries)):
-        sys.exit('refused: %s already has a decision; a fault counts only before it' % a.name)
+    if any(e['name'] == a.name and e.get('step') in ('recorder', 'decision') for e in entries):
+        sys.exit('refused: finish has begun for %s; a %s counts only before it' % (a.name, a.event))
     _log([a.dir, a.drive], a.name, a.event, reason=a.reason)
     print('logged %s %s: %s' % (a.name, a.event, a.reason))
     return 0
 
 
 def cmd_verify(a):
-    bad = 0
-    n = 0
+    """The session log's chain and order, then every file in ``SUMS`` hashed from the disk, then every file in the folder
+    that ``SUMS`` does not list (a partial copy included): any of them fails."""
+    broken = []
     log = os.path.join(a.folder, LOG)
-    broken = False
     if os.path.exists(log):
         at, why = check_chain(log)
-        broken = why is not None
         print('%s: %s' % (LOG, 'chain OK, %d lines' % at if why is None else 'chain BROKEN at line %d: %s' % (at, why)))
-        if not broken:
+        if why is None:
             order = check_order(_entries(a.folder))
-            broken = bool(order)
             print('%s: %s' % (LOG, 'order OK' if not order else 'order BROKEN: ' + '; '.join(order)))
-    for line in open(os.path.join(a.folder, SUMS)):
-        h, f = line.rstrip('\n').split('  ', 1)
-        got = sha256_from_disk(os.path.join(a.folder, f))
-        n += 1
-        ok = got == h
-        bad += not ok
-        print('%s: %s' % (f, 'OK (from the disk)' if ok else 'FAILED (%s)' % got[:16]), flush=True)
-    print('%d of %d files match' % (n - bad, n))
-    return 1 if bad or broken else 0
+            broken += order
+        else:
+            broken.append(why)
+    sums_path = os.path.join(a.folder, SUMS)
+    listed, bad = set(), 0
+    if not os.path.exists(sums_path):
+        print('%s: missing' % SUMS)
+        broken.append('no sums')
+    else:
+        for line in open(sums_path):
+            h, f = line.rstrip('\n').split('  ', 1)
+            listed.add(os.path.normpath(f))
+            path = os.path.join(a.folder, f)
+            got = sha256_from_disk(path) if os.path.exists(path) else None
+            bad += got != h
+            print('%s: %s' % (f, 'OK (from the disk)' if got == h else 'MISSING' if got is None
+                              else 'FAILED (%s)' % got[:16]), flush=True)
+    unlisted = sorted(os.path.relpath(os.path.join(d, f), a.folder) for d, _, fs in os.walk(a.folder) for f in fs
+                      if os.path.relpath(os.path.join(d, f), a.folder) not in listed | {LOG, SUMS})
+    for f in unlisted:
+        print('%s: NOT IN %s' % (f, SUMS))
+    n = len(listed)
+    print('%d of %d files match%s' % (n - bad, n, '; %d not listed' % len(unlisted) if unlisted else ''))
+    if not n:
+        print('no files listed')
+    return 1 if bad or broken or unlisted or not n else 0
 
 
 def _commit(path):

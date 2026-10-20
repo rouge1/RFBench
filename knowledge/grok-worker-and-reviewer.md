@@ -62,7 +62,14 @@ GROK_MEMORY=0 GROK_DISABLE_AUTOUPDATER=1 grok --cwd /data/python/SDR \
   `num_turns`, `total_cost_usd`). An empty `.err` and `end_turn` mean it
   finished. Poll for `{"type":"end"` in the log. `pgrep -f "grok.*<prompt>"`
   in a wait loop matches the loop's own command line and never exits;
-  use a bracket (`[g]rok`) or poll the log.
+  use a bracket (`[g]rok`) or poll the log. The running process is the
+  downloaded binary (`~/.grok/downloads/grok-<version>-linux-x86_64`), so
+  `pgrep -f "[g]rok --cwd"` finds nothing and a loop on it ends at once:
+  wait on the pid (`kill -0`) or on the `end` record. Started with `&`
+  inside Claude Code's Bash tool it kept running after the shell
+  returned; taking the empty `pgrep` for a dead run started a second copy
+  writing the same review file. Start it with the tool's own background
+  mode and wait on that.
 - The answer is not at a fixed place in the stream. Have the prompt tell
   Grok to write its review to a named file under `/tmp` and read that.
 - A reviewer with `--sandbox read-only` or `strict` has no network for the
@@ -199,6 +206,41 @@ whole sample. That is the thing to ask of the next review. Its own
 count of findings was a guide to where to look, not a list to work
 through; two were its reading of a convention that this repo had
 already settled differently.
+
+## The session-script review, 2026-10-19
+
+Grok reviewed `scripts/bt_bench_session.py` at `88797cd` (the bench
+session for bluey's s4 registration v6) headless under `sdr-review`, 44
+turns, $1.48, about 35 minutes, on a `git archive` copy. It drove
+`start`, `finish` and `close` only in Python with the recorder patched,
+as the prompt required, and built its cases with the script's own
+`_log`. Thirteen findings, each checked against the code; fixed in the
+commit after it, with tests (57 checks):
+
+- **Real and fixed:** a fault logged while `finish` was in `snr` was
+  ignored (the log was read once), and a fault logged after a crash
+  between the printed snr and the decision changed the outcome - `log`
+  now refuses anything once `finish` has begun; a copy that did not hash
+  the same was left at its final name, blocked its retry and was
+  invisible to `verify` - copies now go through `.partial` and `verify`
+  fails on any unlisted file; a second, empty drive folder restarted the
+  session at -68 dBm, and a drive write that failed after the laptop's
+  left the two logs telling different stories - every command now
+  refuses unless both logs agree; the replay guard compared three of six
+  fields; `close` printed whatever the keys script returned - it now
+  refuses carrier keys; `-B` still loads a matching `.pyc` (above);
+  `verify` missed most of the rules `start` enforces, passed an empty
+  sums file and crashed on a missing one; `start` did not wait for the
+  copy; a sidecar with `sent` true and an error state, or another shot
+  sha256, was not caught; a name could be reused once its files were
+  gone.
+- **Real, left as text for the registration:** an unkeyed chain cannot
+  catch a log rewritten from its first line - its head hash has to be
+  kept somewhere else after the sitting; a KEEP whose aligner wrote no
+  report is an aligner refusal, which the registration counts as data;
+  the commanded offset is on the operator's console by design.
+- **Its method worth repeating:** for every rule, a log that breaks it
+  and passes, and one that keeps it and fails.
 
 ## After a review
 

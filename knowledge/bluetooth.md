@@ -244,9 +244,20 @@ code:
     checks the chain, then the order the registration asserts (an
     alignment only after that recording's KEEP, one KEEP per slot, no
     slot recorded again once aligned, nothing after a decision but the
-    close). A decision file loaded by path runs with `-B`: one
-    rewritten within the same second at the same size otherwise loads
-    from its stale `.pyc`.
+    close; a start only once the recording before is decided and on the
+    drive; nothing after NOT DECIDABLE; the open retake slot next; the
+    decision's numbers those of its own snr line). The replay reads the
+    decision file's bytes, hashes them and compiles them itself: `python
+    -B` only stops a `.pyc` being written, and an existing one whose
+    source size and mtime match is still loaded - a file rewritten at the
+    same length within the same second ran its old code. Every command
+    refuses when the laptop's log and the drive's differ, so a write that
+    reached one, or a fresh drive folder, cannot start a second session. A
+    copy goes to the drive as `.partial`, is hashed from the disk, and is
+    renamed only when every file matches; a mismatch leaves the partials
+    for the user and blocks the next recording. The chain is unkeyed: it
+    shows a line changed, dropped or moved, not a log rewritten from its
+    first line, which needs its head hash kept somewhere else.
   - The two references held one relation: the carrier error (+887 Hz)
     was −2439 MHz × the clock error (−0.3628 ppm = +885 Hz), as it is when
     each instrument's LO and sample clock share one reference.
