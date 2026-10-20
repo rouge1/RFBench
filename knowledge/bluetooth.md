@@ -228,6 +228,17 @@ code:
     Across 2433-2450 MHz the received burst power was flat within 0.09 dB
     (−70.77 to −70.86 dBm); the noise in 1 MHz fell from −89.5 dBm at
     2433 to −90.3 at 2450, and that 0.8 dB is the SNR's range.
+  - **The VSG60A's first play of the day is slow to start.** After a
+    night powered but idle, the player took about 18 s from the ssh
+    command to its first sample (2026-10-20), so the shot began 23 s
+    into a 25 s capture and was lost. The second play took 7.4 s, and
+    every one of the twelve that followed put the shot 5.7-5.9 s into
+    its capture. A session recording is 30 s and the shot 10 s, so a
+    slow first play run late leaves almost no margin: play the
+    calibration shot once into a throwaway capture before a sitting,
+    and run the player straight after `start`. Where the time goes -
+    the library's first open, the device's, or loading the shot - was
+    not established.
   - **A recording session** goes through `scripts/bt_bench_session.py`:
     `start` records at the session's level, the player is run by hand
     (so every transmission is its own command), `finish` measures the
