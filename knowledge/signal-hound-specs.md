@@ -4,7 +4,9 @@ What the datasheet and manuals give for the two instruments here, the
 transmitter being a VSG60A, set beside what has been measured on them.
 [radios.md](radios.md) has how each is driven and what goes wrong; this is
 the numbers. Read it before choosing a
-sample rate, a bandwidth or a level.
+sample rate, a bandwidth or a level. Whether either can calibrate itself,
+and what needs a lab, is in
+[signal-hound-calibration.md](signal-hound-calibration.md).
 
 Both tune to 6 GHz, and that is where the likeness ends: **6 GHz is the
 tuning range, not the bandwidth.** What a capture or a waveform can hold at
