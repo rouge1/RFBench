@@ -227,10 +227,18 @@ and -40.4 dBm at the BB60D, some 14 dB under the level ([radios](radios.md#vsg60
 
 - **The FDD file decoded**: PCI 217 and FDD found, the cell-specific reference signals coherent at
   0.998, and srsRAN decoded the MIB, with 2 antenna ports.
-- **The TDD file** was recorded; fm-rec's analysis of it had not finished when this was written.
+- **The TDD file was found, but not decoded.** It comes from fm-rec's own generator
+  (`tools/tests/lte_synth.py` in its repo, `duplex='tdd'`): uplink-downlink configuration 1,
+  DSUUDDSUUD, with a special subframe whose DwPTS is 10 symbols. srsRAN's `pdsch_enodeb` cannot make
+  TDD, so no second implementation stands behind this file. fm-rec's cell search read LTE, PCI 321 and
+  TDD, with the SSS three symbols before the PSS rather than just before it as in FDD. The reference
+  signal check confirmed PCI 321 at 0.55, lower than the FDD file's 0.998 because the uplink and guard
+  symbols carry no reference signals. Its decode step refused the file, as designed, because the srsRAN
+  decoder handles FDD only, so no MIB was read.
+- **Both PCIs, 217 and 321, are made up.** No real cell was involved.
 
-So the chain from a cf32 file through the VSG60A, the cable and the BB60D keeps an LTE downlink
-decodable. A real cell over the air has not been tried.
+So the chain from a cf32 file through the VSG60A, the cable and the BB60D keeps an FDD downlink
+decodable and a TDD one findable. A TDD MIB decode and a real cell over the air have not been tried.
 
 ## Not verified
 
