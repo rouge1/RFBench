@@ -97,6 +97,26 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   (2026-10-04; [signal-hound-specs](signal-hound-specs.md#measured-here-at-40-ms-s-2026-10-04)).
   Memory use during the call was not measured; the host had 64 GB.
 
+- **`scripts/vsg_play_loop.py` loops any cf32 file over the cable.** It
+  is the waveform mode above for a file that is not a bench shot: one loop
+  of at most 10.24 s, repeated from the VSG60A's memory, `--check` opening
+  no radio and `--go` needing `--pad-db` and `--seconds` (at most 600),
+  with `bt_bench_play.py`'s limit of −20 dBm at the BB60D. First used
+  2026-10-21 for two synthetic 10 MHz LTE downlinks (15.36 MS/s, 7.68 M
+  samples, peak |iq| 1) at 751 MHz and `--level −26`, a mean of −40.1 and
+  −40.4 dBm: three runs of 60 and 300 s, and the repeat stopped cleanly
+  every time, at the end of `--seconds` and on `SIGTERM`, with the sidecar
+  at "stopped" ([lte](lte.md#the-first-cabled-test-2026-10-21)). Two things
+  learned running it on the bench machine over ssh:
+  - **The ssh command that starts it does not come back**, even with
+    `setsid`, `nohup` and `</dev/null`; run it in the background and read
+    its log, or the sidecar, with a second ssh.
+  - **Give the receiving side time.** A message to the session recording
+    the other end arrived 68 s after it was sent, so a 60 s run was over
+    before the capture began. Wait for the receiver to say it is
+    recording, or play for several minutes and stop the run when it is
+    done.
+
 - **A VSG60 and a HackRF stream together on one host - in two processes.**
   Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
   its USB 3 side: the HackRF received 99.1 FM at 1.999 MS/s with the VSG

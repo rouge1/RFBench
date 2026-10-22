@@ -3,7 +3,8 @@
 Research of 2026-10-16 (Grok and Muse through the swarm, two angles each: specs, tools), then checked
 against the 3GPP/ETSI PDFs themselves where marked **checked**. Written for **any LTE downlink** - any band,
 1.4 to 20 MHz, FDD or TDD - with one worked example at the end (a 10 MHz Band 13 carrier). Nothing here
-has been run on the bench: no decoder is installed, and no LTE recording has been made. Read with
+was run on the bench at first; the one test since, on synthetic files over a cable, is in
+[the first cabled test](#the-first-cabled-test-2026-10-21). Read with
 [radios.md](radios.md) and [signal-hound-specs.md](signal-hound-specs.md) for the BB60D.
 
 ## The short answer
@@ -215,6 +216,21 @@ A BB60D sweep of 30-1000 MHz showed a 9 MHz block at 746-755 MHz (peak -67.8 dBm
 - **US blocks** (47 CFR 27.5): Lower 700 A/B/C = 698-704/728-734, 704-710/734-740, 710-716/740-746; Upper 700 C =
   746-757 / 776-787 (Band 13 is its inner 10+10 MHz). Auction 73 gave Verizon seven of twelve Upper C licences;
   AT&T bought most Lower B/C. Who holds the spectrum at the bench is a licence search by county.
+
+## The first cabled test, 2026-10-21
+
+Two synthetic 10 MHz downlinks, made by the fm-rec session, were played from the VSG60A into the BB60D
+over a bare SMA cable, never radiated: `lte-fdd-srsran-pci217.cf32` (FDD, PCI 217, from srsRAN) and
+`lte-tdd-synth-pci321.cf32` (TDD, PCI 321). Each is 7.68 M samples at 15.36 MS/s, peak |iq| 1, and was
+looped by `scripts/vsg_play_loop.py` at 751.0 MHz, `--level -26` and `--pad-db 0`, a mean power of -40.1
+and -40.4 dBm at the BB60D, some 14 dB under the level ([radios](radios.md#vsg60-notes)). fm-rec recorded both.
+
+- **The FDD file decoded**: PCI 217 and FDD found, the cell-specific reference signals coherent at
+  0.998, and srsRAN decoded the MIB, with 2 antenna ports.
+- **The TDD file** was recorded; fm-rec's analysis of it had not finished when this was written.
+
+So the chain from a cf32 file through the VSG60A, the cable and the BB60D keeps an LTE downlink
+decodable. A real cell over the air has not been tried.
 
 ## Not verified
 
