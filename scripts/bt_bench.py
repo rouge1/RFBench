@@ -14,8 +14,9 @@ antennas off (``knowledge/bluetooth.md``, the bench). It has no pad, so ``script
 transmits (on worklaptop1, and only with ``--go``), caps the level at the BB60D's input instead: level minus the pad
 stated is at most -20 dBm.
 
-**The shots.** ``SHOTS`` names two files of the carrier-threshold fresh set (``bt_synth_slotb2 --set FR``), the mirror
-pair 0x885614 (24 ones) and 0xEED5EF (40 ones), both ``d23`` (+23 ppm drift, so the symbol phase walks through all 40
+**The shots.** ``SHOTS`` names files of the carrier-threshold fresh set (``bt_synth_slotb2 --set FR``): the mirror
+pair 0x885614 (24 ones) and 0xEED5EF (40 ones) of stage 4, and 0x20C0AA and 0xDBB3FB for bluey's confirmatory sitting, all
+``d23`` (+23 ppm drift, so the symbol phase walks through all 40
 samples). A shot is that file's own 12 s plan rendered with no noise, divided by ``amplitude_for(20)`` so a burst's
 |iq| is 1, and cut at ``SHOT_SAMPLES`` (10.0 s: the VSG60A's one-shot buffer was proven to 10.24 s at 40 MS/s). The
 plan is not re-made at 10 s, which would place the train and the connection differently: the shot is, burst for burst
@@ -70,7 +71,8 @@ FS = 40e6
 CENTER_MHZ = 2439.0
 SHOT_SAMPLES = 400_000_000
 #: lap name: the fresh-set stem a shot is made from.
-SHOTS = {'885614': 'F_885614_d23_n3004', 'EED5EF': 'F_EED5EF_d23_n3012'}
+SHOTS = {'885614': 'F_885614_d23_n3004', 'EED5EF': 'F_EED5EF_d23_n3012',
+         '20C0AA': 'F_20C0AA_d23_n3008', 'DBB3FB': 'F_DBB3FB_d23_n3016'}
 #: Samples read at once from a file of several gigabytes.
 CHUNK = 8_000_000
 #: The envelope's decimation for finding the shot: 10 us bins.
