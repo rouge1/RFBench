@@ -136,6 +136,11 @@ for 0x4426BB and 0x885614 also h 0.28 and 0.35 at p10 and d23.  Every file has a
 the renderer as ``job['h']``, recorded in ``modulation.h`` and the cell), ``drift_ppm`` (as ``--drift-ppm``) and
 ``exchange_ids`` (``exchange_id`` = the TX slot of a master packet and its answer; null on IDs).  The cell block holds
 the class and the word statistics (ones, mean, halves, isolated 1s and 0s, longest run).
+
+**P8: the F + rate pair, F_<LAP>_d23_n<noise>** (``--set FC``, 2 files, bluey's f-rate-confirm).  P7's ``d23`` cell on
+the two LAPs of ``scripts/bt_freshset2_select.py``'s mechanical rule (committed before its search; its output in
+``knowledge/freshset/selection2_output.txt``): 0x13B6FA (40 ones) and 0x66C0A6 (24 ones), noise seeds 3101 and 3102.
+They exist for ``scripts/bt_bench.py``'s shots, which are made from the plan alone.
 """
 import argparse
 import json
@@ -287,6 +292,19 @@ for _i, (_lap, _cell, _off, _drift, _h) in enumerate(FR_CELLS):
              noise_seed=_nz, schedule_seed=_seed, lap_class=_cls, fr_cell=_cell, drift_ppm=_drift,
              h=_h if _h is not None else br.GFSK_H, **word_stats(int(_lap, 16))), **_extra)
 
+# P8, the F + rate pair (bluey's f-rate-confirm; LAPs by the mechanical rule of scripts/bt_freshset2_select.py,
+# committed before its search): the fresh set's d23 cell only, for the bench shots; noise seeds from FC_NOISE0.
+FC_SCHEDULES = {'13B6FA': (122626, 'positive'), '66C0A6': (123154, 'negative')}  # lap name: (schedule seed, class)
+FC_NOISE0 = 3101
+FC_CELLS = [(_lap, 'd23', 50.25, 23.0, None) for _lap in FC_SCHEDULES]
+for _i, (_lap, _cell, _off, _drift, _h) in enumerate(FC_CELLS):
+    _seed, _cls = FC_SCHEDULES[_lap]
+    _nz = FC_NOISE0 + _i
+    _add(fr_stem(_lap, _cell, _h, _nz), _seed, 'X', mode='bda', share=87, master_cfo_hz=0.0, offset_us=_off,
+         drift_ppm=_drift, noise_seed=_nz, exchange_ids=True, cell=dict(
+             lap_name=_lap, cfo_hz=0.0, first_id_phase_samples=None, noise_seed=_nz, schedule_seed=_seed,
+             lap_class=_cls, fr_cell=_cell, drift_ppm=_drift, h=br.GFSK_H, **word_stats(int(_lap, 16))))
+
 _add('C_20msps', 9531, 'C', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 _add('R_20msps_s1', 9532, 'R', fs=20e6, center=2441.0, duration=10.0, master_cfo_hz=-30e3)
 
@@ -296,6 +314,7 @@ SETS = {'P1': ['R_s1', 'R_s2', 'R_s3'],
 SETS['SL'] = [sl_stem(*c) for c in SL_CELLS]
 SETS['LT'] = [sl_stem(*c) for c in LT_CELLS]
 SETS['FR'] = [fr_stem(c[0], c[1], c[4], FR_NOISE0 + i) for i, c in enumerate(FR_CELLS)]
+SETS['FC'] = [fr_stem(c[0], c[1], c[4], FC_NOISE0 + i) for i, c in enumerate(FC_CELLS)]
 SETS['all'] = SETS['P1'] + SETS['P2'] + SETS['P4']
 
 

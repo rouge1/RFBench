@@ -15,8 +15,8 @@ transmits (on worklaptop1, and only with ``--go``), caps the level at the BB60D'
 stated is at most -20 dBm.
 
 **The shots.** ``SHOTS`` names files of the carrier-threshold fresh set (``bt_synth_slotb2 --set FR``): the mirror
-pair 0x885614 (24 ones) and 0xEED5EF (40 ones) of stage 4, and 0x20C0AA and 0xDBB3FB for bluey's confirmatory sitting, all
-``d23`` (+23 ppm drift, so the symbol phase walks through all 40
+pair 0x885614 (24 ones) and 0xEED5EF (40 ones) of stage 4, 0x20C0AA and 0xDBB3FB for bluey's confirmatory sitting, and
+0x13B6FA and 0x66C0A6 for its F + rate confirmatory (``--set FC``), all ``d23`` (+23 ppm drift, so the symbol phase walks through all 40
 samples). A shot is that file's own 12 s plan rendered with no noise, divided by ``amplitude_for(20)`` so a burst's
 |iq| is 1, and cut at ``SHOT_SAMPLES`` (10.0 s: the VSG60A's one-shot buffer was proven to 10.24 s at 40 MS/s). The
 plan is not re-made at 10 s, which would place the train and the connection differently: the shot is, burst for burst
@@ -72,7 +72,8 @@ CENTER_MHZ = 2439.0
 SHOT_SAMPLES = 400_000_000
 #: lap name: the fresh-set stem a shot is made from.
 SHOTS = {'885614': 'F_885614_d23_n3004', 'EED5EF': 'F_EED5EF_d23_n3012',
-         '20C0AA': 'F_20C0AA_d23_n3008', 'DBB3FB': 'F_DBB3FB_d23_n3016'}
+         '20C0AA': 'F_20C0AA_d23_n3008', 'DBB3FB': 'F_DBB3FB_d23_n3016',
+         '13B6FA': 'F_13B6FA_d23_n3101', '66C0A6': 'F_66C0A6_d23_n3102'}
 #: Samples read at once from a file of several gigabytes.
 CHUNK = 8_000_000
 #: The envelope's decimation for finding the shot: 10 us bins.
