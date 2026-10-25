@@ -1173,6 +1173,19 @@ reviewed by Opus against the real files, write them; the files are not in git.
   pre-filter is conservative; older files byte-identical; it found the d23 sidecars still carrying the fixed-grid text
   (`drift_law`, `symbol_phase_note`, `notes`) and two loose test checks (exchange_id pairing, h only on IDs), all fixed;
   every FR sidecar now has `exchange_id_meaning`.
+- **The F + rate pair (`--set FC`, 2 plans, 2026-10-25).** For bluey's F + rate confirmatory: two more LAPs by a
+  second mechanical rule, also committed before its search (`scripts/bt_freshset2_select.py` at c5b854c; output in
+  `knowledge/freshset/selection2_output.txt`). Seeds from 122349 up, planned with the bench-shot recipe (the d23 cell).
+  A seed qualifies with:
+  - a new LAP with 24 or 40 ones, at least 24 bits from each LAP bluey has used;
+  - first IDs only;
+  - in the 10 s shot: at least 4,500 whole bursts, 4,000 IDs and 80 per channel, no burst cut, none on 2439 MHz.
+
+  The first pair at least 30 bits apart with opposite preambles was 0x13B6FA (seed 122626, 40 ones, preamble 1010) and
+  0x66C0A6 (seed 123154, 24 ones, 0101). Unlike the FR rule, it does not hold the ID channels to 0x0466AB's set, so
+  0x66C0A6's shot uses 2428 and 2430 MHz, below anything played before. Only the d23 cell exists, for `bt_bench.py`'s
+  shots (noise seeds 3101 and 3102). The shots, pins and bench statements are in
+  `knowledge/freshset/f-rate-confirm-sdr-statements.md`.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
