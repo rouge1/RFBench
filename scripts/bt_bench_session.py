@@ -29,8 +29,8 @@ file, and otherwise ruled by ``LevelSession.resume`` and logged under the halted
 is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
 ``bt_bench.py record`` (``SECONDS`` s, the BB60D) in the background with its output in ``NAME.rec.log``.
 
-**``amend``** (the F + rate amendment of 2026-10-26) re-rules one recording, already decided and copied, as a recorder
-fault (``AMEND_INPUTS``): only a decision in ``AGAIN``, only the last recording started, once, before the next start.
+**``amend``** (the F + rate amendment of 2026-10-26) re-rules one recording, already decided and copied, as refused by
+the spread rule (``AMEND_INPUTS``): only a decision in ``AGAIN``, only the last recording started, once, before the next start.
 The decision line stays as it was; an ``amend`` line after it carries the amendment file's sha256, the decision it
 supersedes, and the replay with the new inputs, which from then on stands in for that decision in every replay. Every
 replay still checks the original decision against its own inputs, and the amend against the amended ones.
@@ -41,8 +41,9 @@ refused once ``finish`` has begun for the recording: nothing the snr shows can b
 **``finish``**, in this order, each step a line in ``session.jsonl`` (here and on the drive, flushed to the disk before
 the next step):
 1. waits for the recorder, and reads ``lost_sample_overflows`` and ``adc_overflows`` (a recorder that wrote no record,
-   any loss or overflow, or a record whose ``overruns_counted`` is not true, is a recorder fault; the loss count
-   includes the driver's "Sample Overrun" warnings since the amendment of 2026-10-26);
+   any loss or overflow, or a record whose ``overruns_counted`` is not true, is a recorder fault; the driver's
+   "Sample Overrun" warnings, ``sample_overruns``, are logged and are not a fault by themselves - the snr spread
+   below and the aligner judge the shot);
 2. fetches the player's sidecar ``NAME_tx.json`` (``--player-host``, ``--player-tx-dir``); missing, ``sent`` not
    true or ``state`` not ``sent`` is a player fault; a sidecar of another shot (by name or sha256) or level than the
    session's is an UNDECIDED halt (``LevelSession.halt``, logged; nothing further is measured);
@@ -104,12 +105,12 @@ RULED = ('decision', 'halt', 'resume')
 #: What a replayed step must match of its logged decision.
 STEP_KEYS = ('action', 'level_used', 'level_next', 'relevels', 'capped', 'state')
 #: The F + rate amendment of 2026-10-26 (``knowledge/freshset/f-rate-amendment-2026-10-26.md``): a recording whose
-#: ``bt_bench.snr`` spread over the shot's parts, ``snr_db_sem``, is over this, or missing, is refused as a recorder
-#: fault (dropped samples move part of the shot), its numbers logged under ``SPREAD_KEYS`` and not given to the decision.
+#: ``bt_bench.snr`` spread over the shot's parts, ``snr_db_sem``, is over this, or missing, is refused (``snr_refused``:
+#: dropped samples move part of the shot), its numbers logged under ``SPREAD_KEYS`` and not given to the decision.
 SNR_MAX_SEM_DB = 0.10
 SPREAD_KEYS = ('refused_snr_db', 'refused_snr_db_min', 'refused_snr_db_max')
-#: The one input an ``amend`` gives a decision: the recording was a recorder fault (no snr numbers).
-AMEND_INPUTS = dict(recorder_fault=True, player_fault=False, exit_fault=False, snr_refused=False, median=None, lo=None,
+#: The one input an ``amend`` gives a decision: its snr refused by the spread rule (no snr numbers).
+AMEND_INPUTS = dict(recorder_fault=False, player_fault=False, exit_fault=False, snr_refused=True, median=None, lo=None,
                     hi=None)
 #: Keys that are carrier values (or carry them) and never reach the console or the session log before the stage-1
 #: freeze, whatever the allowed-keys script returns.
@@ -642,7 +643,8 @@ def cmd_finish(a):
 
 
 def cmd_amend(a):
-    """Re-rule ``a.name`` as a recorder fault under the amendment ``a.amendment`` (see the module docstring)."""
+    """Re-rule ``a.name`` as refused by the spread rule, under the amendment ``a.amendment`` (see the module
+    docstring)."""
     here, drive, name = a.dir, a.drive, a.name
     entries = _agreed(here, drive)
     dec = [e for e in entries if e['name'] == name and e.get('step') == 'decision']
@@ -670,7 +672,7 @@ def cmd_amend(a):
     _log([here, drive], name, 'amend', slot=dec[-1]['slot'], inputs=AMEND_INPUTS, reason=a.reason,
          superseded={k: dec[-1].get(k) for k in STEP_KEYS}, **{k: step[k] for k in STEP_KEYS},
          amendment=_code_id(a.amendment), decide=_code_id(a.decide, got['sha256']))
-    print('%s amended (a recorder fault): %s, was %s; slot %d; the next recording at %g dBm%s'
+    print('%s amended (its snr refused by the spread rule): %s, was %s; slot %d; the next recording at %g dBm%s'
           % (name, step['action'], dec[-1]['action'], dec[-1]['slot'], step['level_next'],
              '; the session is NOT DECIDABLE' if step['state'] == 'NOT DECIDABLE' else ''))
     return 0

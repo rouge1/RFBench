@@ -8,8 +8,8 @@
   reach the real stderr; ``release_driver_output`` drains them all before it returns, so a count read after the
   flowgraph's ``stop`` is complete; ``reset_overflows`` clears it; an ADC overflow message counts there and not here.
 * Through ``bt_ota_hop_check.record`` with a fake device in the source (GNU Radio's own scheduler, no radio): warnings
-  the driver prints while streaming are in the returned ``sample_overruns`` and ``lost_sample_overflows``, read after
-  ``tb.run()``, and ``overruns_counted`` is true.
+  the driver prints while streaming are in the returned ``sample_overruns``, read after ``tb.run()``, and not in
+  ``lost_sample_overflows`` (readStream's count); ``overruns_counted`` is true.
 * Each ``REC_LOG`` given (a bench recorder's ``NAME.rec.log``) fed through the filter's line handler counts exactly the
   "Sample Overrun" lines it holds.
 """
@@ -101,7 +101,7 @@ def main(argv):
         bb.bb60_source._open = real_open
         os.unlink(out.name)
     want = FakeSdr.reads // 10
-    check(info['sample_overruns'] == want and want > 0 and info['lost_sample_overflows'] == want
+    check(info['sample_overruns'] == want and want > 0 and info['lost_sample_overflows'] == 0
           and info['overruns_counted'] is True and info['readstream_overflows'] == 0,
           'record: %d warnings printed while streaming, %s returned' % (want, {k: info[k] for k in (
               'sample_overruns', 'lost_sample_overflows', 'readstream_overflows', 'overruns_counted')}))

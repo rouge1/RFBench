@@ -281,8 +281,10 @@ recorders' own logs: 103 across the 26 bench recordings on record, 0 in the
 on 2026-10-25, with this laptop at load average 6-10 on the powersave
 governor with deep C-states on. `_DriverOutput` now counts them too
 (`overrun_count()`, still passing the line through), and
-`bt_ota_hop_check.record` adds them into `lost_sample_overflows`, with
-`sample_overruns`, `readstream_overflows` and `overruns_counted` beside it;
+`bt_ota_hop_check.record` reports them as `sample_overruns`, beside
+`lost_sample_overflows` (readStream's count, left as it was) and
+`overruns_counted`; the bench session logs them and leaves the verdict to
+the shot's own measurements (its snr spread and the aligner);
 `scripts/test_bb60_overrun.py` holds the count to the driver's real text.
 A drop outside the part of a capture that matters is harmless (two
 2026-10-23 recordings with one each aligned whole), but nothing in the

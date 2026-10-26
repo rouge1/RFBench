@@ -1,4 +1,4 @@
-# F + rate confirmatory: SDR's amendment of 2026-10-26 (recorder fault rule)
+# F + rate confirmatory: SDR's amendment of 2026-10-26 (dropped samples, the snr-spread rule)
 
 A post-hoc amendment to SDR's part of bluey-ox-walker's F + rate confirmatory (its registration on branch
 `feat/f-rate-confirm`, freeze A commit 3d2a9b93aab3e5b77017078b68cedf3746d0ac9c), next to SDR's statements in
@@ -37,23 +37,28 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
   two 2026-10-23 recordings: r02 5050 of 5050 bursts, r09 5559 of 5559, no sample-sized step, sems 0.0082 and
   0.0083 dB. A drop outside the 10 s shot window of the 30 s capture is harmless, but nothing in the samples says
   where it fell.
+- The owner, asked in bluey's orchestrator session, chose **"Only overruns that spoil the shot"** (rule (b)) over
+  counting every overrun as a fault (rule (a), which SDR-helper first proposed and bluey first chose). This text is
+  written to rule (b).
 
 ## The rules this amendment adds
 
-**1. A Sample Overrun is a recorder fault (rule (a), chosen by bluey's orchestrator).**
-- From this amendment on, a recording during which the driver printed any `Sample Overrun` is a recorder fault, and so
-  is a recording whose recorder could not count them (`overruns_counted` not true).
-- A recorder fault was already a rule of `bt_bench_session.py` (`lost_sample_overflows` or `adc_overflows` non-zero).
-  What changes is that the count now sees the drops:
-  - `bt_ota_hop_check.record` sets `lost_sample_overflows` = readStream overflows + overruns;
-  - `sample_overruns`, `readstream_overflows` and `overruns_counted` are written beside it;
-  - all four are logged in the session's `recorder` line.
-- A recorder fault goes to the decision file as `recorder_fault=True` with no snr numbers. `snr` is not run.
-  `LevelSession.decide` returns RETAKE_SAME_LEVEL, which uses the slot's one retake and no re-level.
-- The rule does not depend on any F or P result, and needs no judgement about where a drop fell.
-- It costs retakes on recordings that would have aligned: r01b, with 11 warnings, would have been a fault under it.
+**1. A Sample Overrun is logged, and is a fault only when the shot shows it (rule (b), the owner's choice).**
+- From this amendment on, the recorder counts the driver's `Sample Overrun` warnings. `bt_ota_hop_check.record`
+  writes `sample_overruns`, `readstream_overflows` and `overruns_counted`, and the session's `recorder` line logs them.
+- An overrun count by itself is **not** a fault. `lost_sample_overflows` stays readStream's own count, as before, so
+  neither the session's recorder-fault rule nor `bt_bench.align` sees overruns.
+- A recording with overruns is a fault only when its shot shows it:
+  - before the decision, by the snr-spread rule (2): the level is refused, which gives RETAKE_SAME_LEVEL;
+  - after a KEEP, by the aligner's registered refusal rules: the recording is not accepted and gets no retake, as
+    before.
+- A small drop inside the shot that neither rule detects is left to the aligner's registered refusal rules. This
+  amendment adds no rule of its own for it.
+- **A recorder that could not count overruns (`overruns_counted` not true) is a recorder fault**, giving
+  RETAKE_SAME_LEVEL. Without the count, a recording cannot be checked for drops at all, and the counter is new. It is
+  true whenever the BB60D's stderr filter was running for the source.
 
-**2. The snr spread is a backstop, with thresholds fixed now.**
+**2. The snr-spread rule, with thresholds fixed now.**
 - When `snr` has no problem but its `snr_db_sem` is over **0.10 dB**, or is None or not a number, `finish` refuses the
   level:
   - the snr line is logged with `problem` set, and `snr_db`, `snr_db_min` and `snr_db_max` set to None;
@@ -72,28 +77,30 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
 - **Evidence for the threshold:** `knowledge/freshset/f-rate-sem-survey.txt`, sha256
   c46a15f20b5d08342cbc21752303c3cddf47bbf2d63e5379bc91ceb1498e8d4d, written by
   `python -B scripts/bt_bench_sem_survey.py` (sha256 781026f41adfdcce52839a2a55bfcf270725463bdfd2223f580a376a56ef1834).
-  - It covers every bench snr result on record, deduplicated by bytes: 43 recordings. Of the aligner, each row shows only
-    whether it accepted (no counts, no carrier value).
-  - The 40 are not all verified whole: r15's aligner refused it; r01, cal2_raw, diag1-3 and the two passing calibrations
-    have no aligner result beside them; and several had overruns. SDR-helper's earlier message to bluey called them "40
-    whole plays", which was wrong.
-  - The 40 that are not refused have a largest sem of 0.0151 dB (2026-10-23 r06), 6.6 times under the threshold. They
-    include today's three diagnostic plays (0.0068, 0.0039, 0.0100), r01b and 2026-10-23 r15 (sem 0.0057; its
-    0.50-sample step is not this fault).
+  - It covers every bench snr result on record, deduplicated by bytes: 43 recordings. Of the aligner, each row shows
+    only whether it accepted (no counts, no carrier value).
+  - The 40 not refused have a largest sem of 0.0151 dB (2026-10-23 r06), 6.6 times under the threshold. They include:
+    - today's three diagnostic plays (0.0068, 0.0039, 0.0100);
+    - r01b (0.0096);
+    - 2026-10-23 r15 (sem 0.0057; its 0.50-sample step is not this fault).
+  - The 40 are not all verified whole: r15's aligner refused it; r01, cal2_raw, diag1-3 and the two passing
+    calibrations have no aligner result beside them; and several had overruns. SDR-helper's earlier message to bluey
+    called them "40 whole plays", which was wrong.
   - The 3 refused are exactly the 3 spoiled recordings: cal-13B6FA_1 1.247, cal-66C0A6_1 none (NaN), r02 2.508.
   - Observed false-positive rate: 0 of the 40 recordings not spoiled.
   - Each row's sem can be recomputed from its recording with `python scripts/bt_bench.py snr CAPTURE SHOT --out DIR`.
 
-**3. r02 is re-ruled as a recorder fault (as bluey specified).**
-- A new logged step, `bt_bench_session.py amend r02 --amendment <this file>`, replays r02 with
-  `recorder_fault=True` and no snr numbers, in place of its logged inputs.
-- r02 had 14 overruns, so it is a recorder fault under rule 1.
+**3. r02 is re-ruled on the snr-spread rule (as bluey specified).**
+- r02's `snr_db_sem` is 2.508 dB, over 0.10, so under rule 2 its level is refused. Its 14 overruns are logged, and are
+  not the reason.
+- A new logged step, `bt_bench_session.py amend r02 --amendment <this file>`, replays r02 with `snr_refused=True` and
+  no snr numbers, in place of its logged inputs.
 - The result, dry-run on copies of the real session logs with the frozen decision file (sha256 4bc50b6e…):
   - RETAKE_SAME_LEVEL;
   - level_used −69 and level_next −69 dBm;
   - relevels 1 (r01's re-level stands);
   - state None;
-  - check_order passes and the chain holds.
+  - `verify --decide`: chain, order and replay OK.
 - The r02 decision line stays in the log as written. The `amend` line after it carries:
   - this file's sha256;
   - the decision it supersedes;
@@ -112,21 +119,22 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
 - The slot's retake is then the next recording: slot 2 at −69 dBm.
 
 **4. These are prospective only.**
-- r01b (11 warnings, aligned whole, slot 1's retake) stays accepted. This was decided with its warnings seen.
-- r01 (1 warning, DISCARD_STEP) and its re-level stand.
+- r01b (11 warnings, sem 0.0096, aligned and accepted, slot 1's retake) stays accepted. It would not have been a fault
+  under the final rule either: its sem is under 0.10 dB and its aligner accepted it. This was decided with its
+  warnings seen.
+- r01 (1 warning, sem 0.0142, DISCARD_STEP) and its re-level stand.
 - Nothing recorded before this amendment is discarded or re-ruled except r02, by rule 3.
 - The 2026-10-23 recordings are not part of this registration; their two warnings are reported above.
 
-**5. What happens if a retake also faults.**
+**5. What happens if a retake also fails.**
 - One retake per slot and the 40-attempt cap are unchanged.
-- **Under the frozen decision file, a second non-KEEP in a slot does not just leave the slot absent: it makes the
-  whole session NOT DECIDABLE.** `LevelSession.decide`: `nonkeep >= 2` sets `state = "NOT DECIDABLE"`. After that,
+- **The frozen decision file governs, and the owner has been told:** a second non-KEEP in a slot makes the whole
+  sitting NOT DECIDABLE. In `LevelSession.decide`, `nonkeep >= 2` sets `state = "NOT DECIDABLE"`, and after that
   `bt_bench_session.py start` refuses every recording.
-- Checked on the dry-run log: a second recorder fault in slot 2 gives NOT DECIDABLE, and so does an out-of-band retake.
-- So "the slot is absent, no third attempt, G-align decides" is **not** what the code does. Under rule (a), one slot
-  with two recordings hit by overruns ends the sitting. **bluey to confirm which wording stands**; the code is frozen
-  and SDR does not change it.
-- This is why a quiet recorder host is required, not just preferred.
+- Checked on the dry-run log: a second fault in slot 2 gives NOT DECIDABLE, and so does an out-of-band retake.
+- bluey's earlier wording, "the slot is absent, G-align decides", is withdrawn.
+- So the quiet recorder host (6) still matters. Under rule (b), an overrun inside the shot that spreads the level
+  costs the slot's retake, and a second one ends the sitting.
 
 **6. Recorder-host conditions for every remaining play.**
 - On SDR's laptop: the performance governor and deep C-states off. The owner runs
@@ -137,8 +145,11 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
 - Every `start` line now logs the recorder host's load average (`load_avg`). SDR-helper also checks worklaptop1's
   load before each play.
 
-**6a. The noise-only recording** is outside LevelSession. If its recorder reports any overrun, or `overruns_counted`
-is not true, it is recorded again (logged, the first kept on the drive, the second named `noise2`).
+**6a. The noise-only recording** is outside LevelSession.
+- If `overruns_counted` is not true, or the recording looks broken, it is recorded again: the first is kept on the
+  drive, and the second is named `noise2` and logged.
+- "Looks broken" means: the wrong length, a recorder error, or a recorder that wrote no record.
+- Plain overruns on the noise recording are logged only.
 
 **7. Naming in the first delivery** (bluey's ruling):
 - Crops are named rNN by **slot**: slot 1's accepted crop, r01b, is delivered as `r01.cf32`.
@@ -154,21 +165,39 @@ A USB-status fault would change a decision input, and the cause is not on the VS
 KEEP means not accepted, with no retake), the 40-attempt cap, one retake per slot, the play order (sha256 f0d4727f…),
 the shots and their hashes, and the decision and allowed-keys files.
 
+## Disclosures
+
+- **Carrier values printed in SDR's session (blinding).** On 2026-10-26 at 06:44 UTC, while checking the 2026-10-23
+  sitting's two overrun warnings, SDR-helper printed four aligner values to its own console: `f_located_hz`,
+  `cfo_instrument_hz`, `cfo_instrument_spread_hz` and `reference_error_hz`. They were for the 2026-10-23 confirmatory
+  recordings r02 (bench_DBB3FB_d23) and r09 (bench_20C0AA_d23), read from `~/bench-raw/confirm-main2/r02.align.json`
+  and `r09.align.json`.
+  - They went to SDR-helper's console and this session's transcript only. They were not sent to bluey or any other
+    session, not written to any file, and not shown to the user in a reply.
+  - SDR-helper's own standing note says those console files hold sealed values and are never to be printed. That rule
+    was broken.
+  - The values belong to the 2026-10-23 shots, not to this registration's LAPs, and this registration's stage 1 has not
+    started (bluey).
+  - What SDR knows of that earlier confirmatory's freeze state: the sitting was made and reported on 2026-10-23 and its
+    files handed over for bluey's stage 1. SDR does not know whether that stage 1 had been frozen by 2026-10-26 06:44
+    UTC.
+
 ## Code (SDR branch `feat/frate-overrun-amend`)
 
 | file | before | after |
 |---|---|---|
 | `apps/bb60_source.py` | f0021948226d3b73217df50e00162cfb727ef520085b8f937e09ccfe8e3e1806 | 6c7836888670da936e209f6ccc3eb2605232ff07c47386d5f6417bb5caa010ca |
-| `scripts/bt_ota_hop_check.py` | 8d1def95f8caa8fb7799cabbce02d37c2cd4386fd7e48b0d6b6d6e907e9ab23b | e96819b46dc327ca765ec79a2f281fc97bbedd7c6fcbf3e78f5a7d4412ba1254 |
-| `scripts/bt_bench_session.py` | 0ca31485f08c8cb9cfe027de84f987c090bbd7f53bcac4102f53f0e2039b892f | 1261cb8d9698b13f97655f9137d7150eb9fc929af1a321de6ccc966fd06e749a |
+| `scripts/bt_ota_hop_check.py` | 8d1def95f8caa8fb7799cabbce02d37c2cd4386fd7e48b0d6b6d6e907e9ab23b | 040b329c9426cf228487e9942ecb2a4a3ef1f2be98c52ea676db96b2ac42bdb0 |
+| `scripts/bt_bench_session.py` | 0ca31485f08c8cb9cfe027de84f987c090bbd7f53bcac4102f53f0e2039b892f | f9defeaa346a858e988d3bbf2d966fe38dcbfe50c8cb94aba12b9e0cf9bee943 |
 | `scripts/bt_bench.py`, `scripts/bt_bench_play.py`, `apps/vsg_sink.py` | unchanged | unchanged |
 
 - `bb60_source`: the stderr filter (and the log handler) counts each line containing "overrun" with
   `overrun_count()`, reset by `reset_overflows()`, and still passes the line through. A source records whether its
   output was filtered (`overruns_counted`). The filter's drain waits up to 5 s, up from 1 s.
-- `bt_ota_hop_check.record`: the four keys above, read after `tb.run()`.
+- `bt_ota_hop_check.record`: `sample_overruns`, `readstream_overflows` and `overruns_counted`, read after `tb.run()`.
+  `lost_sample_overflows` is unchanged: readStream's count.
 - `bt_bench_session.py`:
-  - `finish`: the overrun and uncounted-recorder faults and the spread refusal;
+  - `finish`: logs the overruns; an uncounted recorder is a recorder fault; the spread refusal;
   - `amend`;
   - amended decisions in every replay (`_ruled`, `_decisions`, `_session`);
   - `check_order`'s amend rules;
@@ -181,11 +210,11 @@ the shots and their hashes, and the decision and allowed-keys files.
   - 500 warnings written to fd 2 through the real filter: 500 counted after release, all passed through;
   - an ADC overflow is not counted as an overrun;
   - `bt_ota_hop_check.record` through GNU Radio's own scheduler, with a fake device that prints warnings while
-    streaming: they are all in `sample_overruns` and `lost_sample_overflows`;
+    streaming: they are all in `sample_overruns`, `lost_sample_overflows` stays 0, and `overruns_counted` is true;
   - all 26 real recorder logs: each count equals its "Sample Overrun" lines (103 in all).
 - `python -B scripts/test_bt_bench_session.py`, the earlier tests plus:
-  - overruns → recorder fault, no snr, RETAKE_SAME_LEVEL;
-  - an uncounted recorder → fault;
+  - overruns with a good sem: logged, no fault, KEEP;
+  - an uncounted recorder: a recorder fault, RETAKE_SAME_LEVEL;
   - the r01/r01b/r02 pattern replayed and r02 amended to RETAKE_SAME_LEVEL at the earlier level with relevels back
     to 1;
   - amend refused: before the copy, of an earlier recording, twice, or with no amendment file;

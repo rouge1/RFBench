@@ -152,7 +152,7 @@ def recording(shots, side, name, here, snr_db=20.0, level=-68.0, sent=True, stat
     cap = os.path.join(here, name + '.cf32')
     bb.make_capture(os.path.join(shots, 'bench_885614_d23.cf32'), cap, pre=0.1, post=0.1, frac=0.37, ppm=-0.37,
                     cfo_hz=58900.0, vsg_offset_hz=58000.0, snr_db=snr_db)
-    json.dump(dict(recorded_s=1.0, adc_overflows=0, lost_sample_overflows=overruns, sample_overruns=overruns,
+    json.dump(dict(recorded_s=1.0, adc_overflows=0, lost_sample_overflows=0, sample_overruns=overruns,
                    readstream_overflows=0, overruns_counted=counted, file=name + '.cf32', center_mhz=2439.0,
                    sample_rate=bb.FS), open(cap + '.rec.json', 'w'))
     open(os.path.join(here, name + '.rec.log'), 'w').write('fake recorder\n')
@@ -529,17 +529,18 @@ def main():
         recording(shots, side, 'a01', h, overruns=3)
         code, out, err = fi_('a01')
         rl = [e for e in alines() if e['name'] == 'a01' and e['step'] == 'recorder'][0]
-        check(code == 0 and rl['fault'] and rl['sample_overruns'] == 3 and decision_of(d, 'a01')['action']
-              == 'RETAKE_SAME_LEVEL' and decision_of(d, 'a01')['inputs']['recorder_fault']
-              and not [e for e in alines() if e['name'] == 'a01' and e['step'] == 'snr'],
-              'a recording with Sample Overruns is a recorder fault: no snr, RETAKE_SAME_LEVEL (%s)' % err[-120:])
+        sl = [e for e in alines() if e['name'] == 'a01' and e['step'] == 'snr']
+        check(code == 0 and not rl['fault'] and rl['sample_overruns'] == 3 and rl['overruns_counted'] is True
+              and sl and sl[0]['snr_db_sem'] is not None and decision_of(d, 'a01')['action'] == 'KEEP',
+              'Sample Overruns with a good sem: logged, no fault, KEEP (%s)' % err[-120:])
         cl_('a01')
-        st_('a01b', 1)
-        recording(shots, side, 'a01b', h, counted=False)
-        fi_('a01b')
-        rl = [e for e in alines() if e['name'] == 'a01b' and e['step'] == 'recorder'][0]
-        check('could not count' in str(rl['fault']) and decision_of(d, 'a01b')['action'] == 'NOT DECIDABLE',
-              'a recorder that could not count overruns is a fault (here the slot\'s second non-keep)')
+        st_('a02', 2)
+        recording(shots, side, 'a02', h, counted=False)
+        fi_('a02')
+        rl = [e for e in alines() if e['name'] == 'a02' and e['step'] == 'recorder'][0]
+        check('could not count' in str(rl['fault']) and decision_of(d, 'a02')['action'] == 'RETAKE_SAME_LEVEL'
+              and decision_of(d, 'a02')['inputs']['recorder_fault'],
+              'a recorder that could not count overruns is a recorder fault: RETAKE_SAME_LEVEL')
 
         h, d = os.path.join(tmp, 'here_amend2'), os.path.join(tmp, 'drive_amend2')
         os.makedirs(d)
@@ -573,7 +574,7 @@ def main():
         check(code == 0 and len(am) == 1 and am[0]['action'] == 'RETAKE_SAME_LEVEL' and am[0]['level_next'] == lvl
               and am[0]['relevels'] == 1 and am[0]['superseded']['action'] == 'DISCARD_STEP'
               and am[0]['amendment']['sha256'] == bs.sha256_of(amendment) and am[0]['inputs'] == bs.AMEND_INPUTS,
-              'amend: m02 a recorder fault, RETAKE_SAME_LEVEL at %g dBm, re-levels back to 1 (%s)' % (lvl, err[-160:]))
+              'amend: m02 refused by the spread rule, RETAKE_SAME_LEVEL at %g dBm, re-levels back to 1 (%s)' % (lvl, err[-160:]))
         code, _, err = amend('m02')
         check(code != 0 and 'already amended' in err, 'a second amend is refused')
         code, _, err = st_('m03', 3)
@@ -610,7 +611,7 @@ def main():
                  'an amend line whose level was edited'),
                 ('orig_relevels', lambda e: dict(e, relevels=1) if e['step'] == 'decision' and e['name'] == 'm02'
                  else e, 'the superseded decision edited'),
-                ('amend_inputs', lambda e: dict(e, inputs=dict(bs.AMEND_INPUTS, recorder_fault=False,
+                ('amend_inputs', lambda e: dict(e, inputs=dict(bs.AMEND_INPUTS, snr_refused=False,
                                                                player_fault=True)) if e['step'] == 'amend' else e,
                  'an amend line with other inputs')):
             hh, dd = edited(h, d, edit, tag)
