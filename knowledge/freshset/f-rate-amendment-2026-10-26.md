@@ -70,14 +70,18 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
     `in_shot`. These are the inputs snr has always read before the decision. No aligner output and no carrier value
     is read, so nothing that reaches stage 1.
 - **Evidence for the threshold:** `knowledge/freshset/f-rate-sem-survey.txt`, sha256
-  8057340fdaeae18f07529f3fbee52e639180934321236da43e908a32e384d922, written by
-  `python -B scripts/bt_bench_sem_survey.py` (sha256 37e312661b995d1dc73203be89344547bf3adb64d33e59ee182e445123a6e14c).
-  - It covers every bench snr result on record, deduplicated by bytes: 43 recordings.
+  c46a15f20b5d08342cbc21752303c3cddf47bbf2d63e5379bc91ceb1498e8d4d, written by
+  `python -B scripts/bt_bench_sem_survey.py` (sha256 781026f41adfdcce52839a2a55bfcf270725463bdfd2223f580a376a56ef1834).
+  - It covers every bench snr result on record, deduplicated by bytes: 43 recordings. Of the aligner, each row shows only
+    whether it accepted (no counts, no carrier value).
+  - The 40 are not all verified whole: r15's aligner refused it; r01, cal2_raw, diag1-3 and the two passing calibrations
+    have no aligner result beside them; and several had overruns. SDR-helper's earlier message to bluey called them "40
+    whole plays", which was wrong.
   - The 40 that are not refused have a largest sem of 0.0151 dB (2026-10-23 r06), 6.6 times under the threshold. They
     include today's three diagnostic plays (0.0068, 0.0039, 0.0100), r01b and 2026-10-23 r15 (sem 0.0057; its
     0.50-sample step is not this fault).
   - The 3 refused are exactly the 3 spoiled recordings: cal-13B6FA_1 1.247, cal-66C0A6_1 none (NaN), r02 2.508.
-  - Observed false-positive rate: 0 of 40.
+  - Observed false-positive rate: 0 of the 40 recordings not spoiled.
   - Each row's sem can be recomputed from its recording with `python scripts/bt_bench.py snr CAPTURE SHOT --out DIR`.
 
 **3. r02 is re-ruled as a recorder fault (as bluey specified).**
@@ -96,7 +100,10 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
   - the replayed step keys;
   - the decision file's identity.
 - Every later replay checks both lines: the original decision against its own inputs, and the amend against the
-  amended ones. A hand-edited amend line, or an edited superseded decision, is refused even with the chain re-made.
+  amended ones. A hand-edited amend line, or an edited superseded decision, is caught even with the chain re-made:
+  - by the replay that `start`, `finish` and `amend` run, which then refuses to go on;
+  - after the sitting, by `bt_bench_session.py verify FOLDER --decide DECIDE` (new), which replays the whole log.
+  Plain `verify`, without `--decide`, checks only the chain, the order and the sums, and does not catch these edits.
 - `check_order` allows an amend only:
   - of a decision in RETAKE_SAME_LEVEL or DISCARD_STEP (not a KEEP or a halt);
   - once per recording;
@@ -130,6 +137,9 @@ was written.** It takes effect only once bluey's orchestrator approves it and th
 - Every `start` line now logs the recorder host's load average (`load_avg`). SDR-helper also checks worklaptop1's
   load before each play.
 
+**6a. The noise-only recording** is outside LevelSession. If its recorder reports any overrun, or `overruns_counted`
+is not true, it is recorded again (logged, the first kept on the drive, the second named `noise2`).
+
 **7. Naming in the first delivery** (bluey's ruling):
 - Crops are named rNN by **slot**: slot 1's accepted crop, r01b, is delivered as `r01.cf32`.
 - The registration's "NN = play index" is read as slot index.
@@ -150,7 +160,7 @@ the shots and their hashes, and the decision and allowed-keys files.
 |---|---|---|
 | `apps/bb60_source.py` | f0021948226d3b73217df50e00162cfb727ef520085b8f937e09ccfe8e3e1806 | 6c7836888670da936e209f6ccc3eb2605232ff07c47386d5f6417bb5caa010ca |
 | `scripts/bt_ota_hop_check.py` | 8d1def95f8caa8fb7799cabbce02d37c2cd4386fd7e48b0d6b6d6e907e9ab23b | e96819b46dc327ca765ec79a2f281fc97bbedd7c6fcbf3e78f5a7d4412ba1254 |
-| `scripts/bt_bench_session.py` | 0ca31485f08c8cb9cfe027de84f987c090bbd7f53bcac4102f53f0e2039b892f | 726a5de816fc600009ce4213c7dfd26c5187356b669802b223b9a8e9c243a820 |
+| `scripts/bt_bench_session.py` | 0ca31485f08c8cb9cfe027de84f987c090bbd7f53bcac4102f53f0e2039b892f | 1261cb8d9698b13f97655f9137d7150eb9fc929af1a321de6ccc966fd06e749a |
 | `scripts/bt_bench.py`, `scripts/bt_bench_play.py`, `apps/vsg_sink.py` | unchanged | unchanged |
 
 - `bb60_source`: the stderr filter (and the log handler) counts each line containing "overrun" with
@@ -162,7 +172,8 @@ the shots and their hashes, and the decision and allowed-keys files.
   - `amend`;
   - amended decisions in every replay (`_ruled`, `_decisions`, `_session`);
   - `check_order`'s amend rules;
-  - `load_avg` in `start`.
+  - `load_avg` in `start`;
+  - `verify --decide`, the replay after the sitting.
 
 ## No-radio tests (all pass)
 
@@ -179,9 +190,9 @@ the shots and their hashes, and the decision and allowed-keys files.
     to 1;
   - amend refused: before the copy, of an earlier recording, twice, or with no amendment file;
   - the retake starts at the earlier level, and a start in another slot is refused;
-  - verify passes on the amended session;
+  - `verify --decide` passes on the amended session;
   - an edited amend line, an edited superseded decision, or amend inputs changed (chain re-made): refused by the
-    replay or the order;
+    replay or the order, and `verify --decide` fails each;
   - spread 0.01 and 0.10 kept; 0.11, 2.5, None and NaN refused, with the numbers moved aside and NaN logged as None;
   - a finish with a 2.5 dB spread: snr refused, RETAKE_SAME_LEVEL, the order holds;
   - check_order breaches: an amend of a KEEP, before the copy, twice, after the next start, with snr numbers, with no
@@ -190,8 +201,19 @@ the shots and their hashes, and the decision and allowed-keys files.
 ## After approval
 
 1. The user merges the branch.
-2. SDR's laptop is at the merge commit. Its pinned files are checked against the table, and the r02 amend runs on the
-   real logs.
-3. Then the owner's go in SDR's session.
-4. Then fm-rec2 is sent "sitting starts", the host settings are applied, and r02's retake (slot 2, −69 dBm) is played,
-   followed by slots 3–20, the noise-only recording, and the first delivery.
+2. SDR's laptop is at the merge commit, and its pinned files are checked against the table.
+3. The r02 amend runs on the real logs, with:
+   - `--decide` set to the path the session's start lines logged, after checking that file is still sha256 4bc50b6e…;
+   - this file at the sha256 bluey approved.
+   Then `verify --decide` runs on the drive folder.
+4. Receive-only check, with the owner's OK: one 30 s `bt_bench.py record` on the new code, outside the session, with
+   the VSG60A not playing, the recorder host quiet and the host settings applied. It transmits nothing.
+   - Pass: `overruns_counted` true and `sample_overruns` 0. This shows the real device path counts, and that the
+     quiet host is clean, before slot 2's last attempt is spent.
+   - If it fails, nothing is played and bluey is told.
+5. Then the owner's go in SDR's session.
+6. Then:
+   - fm-rec2 is sent "sitting starts" and the host settings are applied;
+   - r02's retake is played (slot 2, −69 dBm), then slots 3–20, then the noise-only recording;
+   - the first delivery is made;
+   - fm-rec2 is sent "sitting ended".

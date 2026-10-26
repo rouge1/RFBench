@@ -585,8 +585,9 @@ def main():
         fi_('m02b')
         cl_('m02b')
         check(decision_of(d, 'm02b')['action'] == 'KEEP', 'the retake kept')
-        code, out, _ = run(['verify', d])
-        check(code == 0 and 'order OK' in out and 'chain OK' in out, 'verify: the amended session, chain and order OK')
+        code, out, _ = run(['verify', d, '--decide', decide])
+        check(code == 0 and 'order OK' in out and 'chain OK' in out and 'replay OK' in out,
+              'verify --decide: the amended session, chain, order and replay OK')
 
         def edited(src_h, src_d, edit, tag):
             """Copies of both session logs with one line edited and the chain re-made, as a careful forger would."""
@@ -624,6 +625,10 @@ def main():
                 refused.append(str(e))
             check(broken is None and (refused or order), '%s (chain re-made): refused by the replay or the order: %s'
                   % (why, (refused + order)[:1]))
+            open(os.path.join(dd, bs.SUMS), 'w').close()
+            code, out, _ = run(['verify', dd, '--decide', decide])
+            check(code != 0 and ('replay BROKEN' in out or 'order BROKEN' in out),
+                  '%s: verify --decide fails it' % why)
 
         print('\nthe snr spread')
         base = dict(problem=None, snr_db=20.0, snr_db_min=19.5, snr_db_max=20.5, snr_db_sem=0.01)

@@ -66,8 +66,9 @@ crop). A partial that does not match stays on the drive: nothing there is ever o
 Every line of ``session.jsonl`` carries ``prev``, the sha256 of the line before it, and is fsynced before the next
 step: the order of measurements and decisions, against the registration's freezes, is checkable afterwards.
 
-**``verify``** re-checks a folder's session log - the chain, then the order the registration asserts (``check_order``)
-- and its ``SHA256SUMS.txt`` from the disk, and fails on a file the sums do not list. The chain is unkeyed: it shows a
+**``verify``** re-checks a folder's session log - the chain, then the order the registration asserts (``check_order``),
+then with ``--decide`` the replay every command runs (each decision, halt, resume and amend as logged) - and its
+``SHA256SUMS.txt`` from the disk, and fails on a file the sums do not list. The chain is unkeyed: it shows a
 line changed, dropped or moved, not a log rewritten from its first line, which needs its head hash kept elsewhere.
 """
 import argparse
@@ -822,6 +823,13 @@ def cmd_verify(a):
             order = check_order(_entries(a.folder))
             print('%s: %s' % (LOG, 'order OK' if not order else 'order BROKEN: ' + '; '.join(order)))
             broken += order
+            if a.decide:
+                try:
+                    _session(a.decide, _entries(a.folder))
+                    print('%s: replay OK (%s)' % (LOG, sha256_of(a.decide)[:16]))
+                except SystemExit as e:
+                    print('%s: replay BROKEN: %s' % (LOG, e.code))
+                    broken.append('replay')
         else:
             broken.append(why)
     sums_path = os.path.join(a.folder, SUMS)
@@ -885,6 +893,7 @@ def main(argv=None):
             p.add_argument('--reason', required=True)
     p = sub.add_parser('verify')
     p.add_argument('folder')
+    p.add_argument('--decide', help='also replay every decision, halt, resume and amend with this decision file')
     a = ap.parse_args(argv)
     return {'start': cmd_start, 'finish': cmd_finish, 'close': cmd_close, 'log': cmd_log, 'amend': cmd_amend,
             'verify': cmd_verify}[a.cmd](a)

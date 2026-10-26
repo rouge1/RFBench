@@ -6,10 +6,10 @@
 Walks the folders for ``NAME.snr.json`` (``bt_bench.snr``'s result, whose ``snr_db_sem`` is the spread of the median
 level over the shot's ``SNR_PARTS`` parts), keeps one of each set of identical files (a recording's copy on the drive
 is the same bytes), and prints one JSON row per recording, sorted by path: the file and its sha256, the snr's own
-problem, ``snr_db_sem``, whether ``bt_bench_session.spread_refusal`` refuses it, the aligner's verdict beside it when
-there is one (``problem``, bursts found of bursts), and the "Sample Overrun" warnings in its ``NAME.rec.log`` when
-there is one. Then the largest sem among the rows not refused, and the rows refused. It reads only those three files of
-each recording: no carrier value, no truth.
+problem, ``snr_db_sem``, whether ``bt_bench_session.spread_refusal`` refuses it, whether the aligner beside it accepted
+it when there is one (only that), and the "Sample Overrun" warnings in its ``NAME.rec.log`` when there is one. Then
+the largest sem among the rows not refused, and the rows refused. It reads only those three files of each recording and
+prints nothing of the aligner's but its verdict: no carrier value, no count, no truth.
 
 A row's ``snr_db_sem`` is recomputed from its recording with ``python scripts/bt_bench.py snr CAPTURE SHOT --out DIR``
 (``bt_bench.snr``, unchanged since ad81b63).
@@ -40,12 +40,12 @@ def survey(roots):
         snr = json.load(open(paths[0]))
         row = dict(snr_json=paths[0], copies=len(paths), sha256=h, problem=snr.get('problem'),
                    snr_db_sem=_sem(snr.get('snr_db_sem')), sem_is_number=_sem(snr.get('snr_db_sem')) is not None,
-                   refused=bool(bs.spread_refusal(snr).get('problem')), align=None, overruns=None)
+                   refused=bool(bs.spread_refusal(snr).get('problem')), align_accepted=None, overruns=None)
         for p in paths:
             base = p[:-len('.snr.json')]
-            if row['align'] is None and os.path.exists(base + '.align.json'):
+            if row['align_accepted'] is None and os.path.exists(base + '.align.json'):
                 al = json.load(open(base + '.align.json'))
-                row['align'] = dict(problem=al.get('problem'), found=al.get('n_found'), bursts=al.get('n_bursts'))
+                row['align_accepted'] = al.get('problem') is None
             if row['overruns'] is None and os.path.exists(base + '.rec.log'):
                 row['overruns'] = open(base + '.rec.log', 'rb').read().count(b'Sample Overrun')
         rows.append(row)
