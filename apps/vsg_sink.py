@@ -425,13 +425,24 @@ class vsg_sink(gr.sync_block):
 
     # --- waveform mode ---------------------------------------------------
     # Streaming through work() is the normal path and needs a flowgraph
-    # feeding it. A short burst - a 433 MHz frame and the silence after it -
-    # is better handed over whole instead: the device plays it out of its own
-    # memory, so the timing between the pulses is the VSG's clock rather than
-    # whatever USB and the host scheduler did that second, and there is
-    # nothing left to underrun. Build the block on its own for this, with no
-    # top block around it; work() never runs. The two modes do not mix, and
-    # start() ends a repeat rather than stream on top of it.
+    # feeding it. A buffer can be handed over whole instead, two ways, and
+    # they are not alike:
+    #
+    # - repeat_waveform (vsgRepeatWaveform) copies the buffer into the device
+    #   and loops it out of the device's own memory. Nothing streams over USB
+    #   once it is going, so a short burst - a 433 MHz frame and the silence
+    #   after it - repeats at the VSG's clock rather than at whatever USB and
+    #   the host scheduler did that second, and there is nothing to underrun.
+    # - send_waveform (vsgOutputWaveform) is only vsgSubmitIQ followed by
+    #   vsgFlushAndWait: the buffer is streamed over USB like work()'s
+    #   samples, at the full sample rate (320 MB/s at 40 MS/s), with the host
+    #   in the path for the whole shot. It saves the flowgraph, not the USB
+    #   transfer; the vendor warns that host power saving can disturb such a
+    #   stream without an error.
+    #
+    # Build the block on its own for either, with no top block around it;
+    # work() never runs. The modes do not mix, and start() ends a repeat
+    # rather than stream on top of it.
 
     def _waveform_call(self, name, samples):
         """Hand one complex64 buffer to whichever waveform call `name` is."""
@@ -459,7 +470,11 @@ class vsg_sink(gr.sync_block):
                                % (name, _err(self._lib, status)))
 
     def send_waveform(self, samples):
-        """Play one buffer once, and return when the device has sent it."""
+        """Play one buffer once, and return when the device has sent it.
+
+        Streamed over USB as it plays (submit, then flush and wait), not
+        played from device memory - see the waveform-mode note above.
+        """
         self._waveform_call('vsgOutputWaveform', samples)
 
     def repeat_waveform(self, samples):

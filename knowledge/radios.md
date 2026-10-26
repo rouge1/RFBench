@@ -63,7 +63,11 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   rather than at whatever USB and the host scheduler did that second, and
   there is nothing left to underrun. `vsg_sink` exposes it as
   `repeat_waveform()`, with `send_waveform()` for one shot,
-  `waveform_active()` and `stop_waveform()`. Build the block on its own for
+  `waveform_active()` and `stop_waveform()`. **The one shot is not played
+  from device memory:** `vsgOutputWaveform` is `vsgSubmitIQ` plus
+  `vsgFlushAndWait` (below), so a 10 s shot at 40 MS/s streams 3.2 GB over
+  USB as it plays, with the host in the path throughout. `vsg_sink`'s own
+  comment said otherwise until 2026-10-26. Build the block on its own for
   this, with no top block around it; `work()` never runs.
 
   The vendor ships no header, so the three signatures were read out of
