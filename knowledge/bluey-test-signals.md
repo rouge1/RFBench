@@ -478,11 +478,15 @@ went over the air on its own map, see Stage 3 over the air below.
   stage 1, so the rule that gives both slots of a pair one channel is not on
   the air; a packet is on the channel of its first slot for its whole length.
 - **What a lock should return.** bluey told us on 2026-10-04 that its CLK27 lock
-  follows a hop array equal to the Part G rule shifted by one slot, so on an
-  adapted map it returns the true CLK[27:1] **minus one slot** (two clock
-  ticks); on a basic sequence there is no shift. It is fixing its pair roles,
-  after which the lock should return the true clock. Accept either. The
-  sidecar's `clock_lock_note` says this, dated.
+  then followed a hop array equal to the Part G rule shifted by one slot, so on
+  an adapted map it returned the true CLK[27:1] **minus one slot** (two clock
+  ticks); on a basic sequence there is no shift. It fixed its pair roles the
+  same day, and the fixed lock returns the true clock (the results above).
+  The minus-one allowance is only for a lock of before that fix. The sidecars
+  of the files delivered then (stage 3, dc, sync, pairs) carry the note as it
+  was written, still dated; the generator's `CLOCK_LOCK_NOTE` now says the fix
+  landed, so a file made again says so too. Later sets (conf onward) drop the
+  allowance altogether.
 - **The kernel, `apps/bt_hop.py`,** is the connection-state selection box of
   Core v6.0 Vol 2 Part B 2.6, basic and adapted, from the specification's text
   alone. Four places where the text is ambiguous are resolved in its docstring:

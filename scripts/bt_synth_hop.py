@@ -277,8 +277,9 @@ INSTANT_MEANING = ("CLK[27:1] from which a map applies. afh_map and afh_instant 
 CLOCK_LOCK_NOTE = ("As of 2026-10-04, before bluey-ox-walker's fix of its pair roles: its CLK27 "
                    "lock on an adapted map follows a hop array equal to the Part G rule shifted "
                    "by one slot, so it returns the true CLK[27:1] minus 1 (two clock ticks). "
-                   "Accept the true clock or that; a lock fixed since should return the true "
-                   "clock. A basic sequence has no shift.")
+                   "Accept the true clock or that from a lock of before the fix; the fixed lock "
+                   "returns the true clock (bluey, 2026-10-04, on hop20_dh1_long and hop20_dh5). "
+                   "A basic sequence has no shift.")
 HOP_KERNEL = ("apps/bt_hop.py, from Core v6.0 Vol 2 Part B 2.6, written from the "
               "specification text; checked against Part G section 2")
 
