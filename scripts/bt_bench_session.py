@@ -29,17 +29,25 @@ file, and otherwise ruled by ``LevelSession.resume`` and logged under the halted
 is the session's (``LevelSession`` replayed), never typed. It logs the cell and starts
 ``bt_bench.py record`` (``SECONDS`` s, the BB60D) in the background with its output in ``NAME.rec.log``.
 
+**``amend``** (the F + rate amendment of 2026-10-26) re-rules one recording, already decided and copied, as a recorder
+fault (``AMEND_INPUTS``): only a decision in ``AGAIN``, only the last recording started, once, before the next start.
+The decision line stays as it was; an ``amend`` line after it carries the amendment file's sha256, the decision it
+supersedes, and the replay with the new inputs, which from then on stands in for that decision in every replay. Every
+replay still checks the original decision against its own inputs, and the amend against the amended ones.
+
 **``log``** records an instrument fault (the player's non-zero exit, which only its console shows) or a note, both
 refused once ``finish`` has begun for the recording: nothing the snr shows can bring a fault in after it.
 
 **``finish``**, in this order, each step a line in ``session.jsonl`` (here and on the drive, flushed to the disk before
 the next step):
 1. waits for the recorder, and reads ``lost_sample_overflows`` and ``adc_overflows`` (a recorder that wrote no record,
-   or any loss or overflow, is a recorder fault);
+   any loss or overflow, or a record whose ``overruns_counted`` is not true, is a recorder fault; the loss count
+   includes the driver's "Sample Overrun" warnings since the amendment of 2026-10-26);
 2. fetches the player's sidecar ``NAME_tx.json`` (``--player-host``, ``--player-tx-dir``); missing, ``sent`` not
    true or ``state`` not ``sent`` is a player fault; a sidecar of another shot (by name or sha256) or level than the
    session's is an UNDECIDED halt (``LevelSession.halt``, logged; nothing further is measured);
-3. only with no fault: ``bt_bench.snr``, ``NAME.snr.json``, its summary printed;
+3. only with no fault: ``bt_bench.snr``, ``NAME.snr.json``, its summary printed; a spread ``snr_db_sem`` over
+   ``SNR_MAX_SEM_DB``, or none, refuses it (``snr_refused``, its numbers under ``SPREAD_KEYS``);
 4. the decision: ``LevelSession.decide`` over every earlier attempt and this one (an earlier decision, halt or resume
    that does not replay the same in action, levels, re-level count, cap and state refuses everything), logged with its
    inputs; a decision file that raises on this attempt is an UNDECIDED halt instead.
@@ -65,6 +73,7 @@ line changed, dropped or moved, not a log rewritten from its first line, which n
 import argparse
 import hashlib
 import json
+import math
 import os
 import shlex
 import shutil
@@ -93,6 +102,14 @@ AGAIN = ('RETAKE_SAME_LEVEL', 'DISCARD_STEP')
 RULED = ('decision', 'halt', 'resume')
 #: What a replayed step must match of its logged decision.
 STEP_KEYS = ('action', 'level_used', 'level_next', 'relevels', 'capped', 'state')
+#: The F + rate amendment of 2026-10-26 (``knowledge/freshset/f-rate-amendment-2026-10-26.md``): a recording whose
+#: ``bt_bench.snr`` spread over the shot's parts, ``snr_db_sem``, is over this, or missing, is refused as a recorder
+#: fault (dropped samples move part of the shot), its numbers logged under ``SPREAD_KEYS`` and not given to the decision.
+SNR_MAX_SEM_DB = 0.10
+SPREAD_KEYS = ('refused_snr_db', 'refused_snr_db_min', 'refused_snr_db_max')
+#: The one input an ``amend`` gives a decision: the recording was a recorder fault (no snr numbers).
+AMEND_INPUTS = dict(recorder_fault=True, player_fault=False, exit_fault=False, snr_refused=False, median=None, lo=None,
+                    hi=None)
 #: Keys that are carrier values (or carry them) and never reach the console or the session log before the stage-1
 #: freeze, whatever the allowed-keys script returns.
 CARRIER_KEYS = ('f_located_hz', 'cfo_instrument_hz', 'cfo_instrument_spread_hz', 'reference_error_hz', 'cfo_hz',
@@ -184,9 +201,11 @@ def check_order(entries):
     DECIDABLE; the slot a retake or discard left open is the next one started; a kept slot never started again; one
     KEEP per slot; no slot started again once one of its recordings was aligned. An UNDECIDED halt stands in for a
     recording's decision (never both, nothing measured after it, never aligned); after one, nothing but a resume of
-    that slot, logged under the halted recording, and then a start of that slot."""
+    that slot, logged under the halted recording, and then a start of that slot. An amend (the amendment of 2026-10-26)
+    only of a decision in ``AGAIN``, once, after its copy and before the next start, with ``AMEND_INPUTS`` and the
+    amendment's sha256; its action then stands for the decision's."""
     bad, slot_of, decided, kept, aligned_slots = [], {}, {}, {}, set()
-    began, snr_of, faults, copied = set(), {}, {}, set()
+    began, snr_of, faults, copied, amended = set(), {}, {}, set(), set()
     last, open_slot, ended, halted, pending = None, None, False, set(), None
     for n, e in enumerate(entries, 1):
         name, step = e.get('name'), e.get('step')
@@ -277,6 +296,32 @@ def check_order(entries):
                 bad.append('line %d: %s aligned %s' % (n, name, 'with no decision before it' if name not in decided
                                                        else 'after a %s decision' % decided[name]))
             aligned_slots.add(slot_of[name])
+        elif step == 'amend':
+            if name not in decided or name in halted:
+                bad.append('line %d: %s amended with no decision' % (n, name))
+            elif name in amended:
+                bad.append('line %d: %s amended twice' % (n, name))
+            elif decided[name] not in AGAIN:
+                bad.append('line %d: %s amended after a %s decision' % (n, name, decided[name]))
+            if name not in copied:
+                bad.append('line %d: %s amended before it was copied' % (n, name))
+            if name != last:
+                bad.append('line %d: %s amended after %s was started' % (n, name, last))
+            if e.get('slot') != slot_of[name]:
+                bad.append('line %d: %s amended in slot %s, started in slot %s' % (n, name, e.get('slot'),
+                                                                                   slot_of[name]))
+            if e.get('inputs') != AMEND_INPUTS:
+                bad.append('line %d: %s amended with inputs %s, not %s' % (n, name, e.get('inputs'), AMEND_INPUTS))
+            if not (e.get('amendment') or {}).get('sha256'):
+                bad.append('line %d: %s amended with no amendment sha256' % (n, name))
+            amended.add(name)
+            action = e.get('action')
+            decided[name] = action
+            open_slot = slot_of[name] if action in AGAIN else None
+            if action == 'KEEP':
+                kept.setdefault(slot_of[name], name)
+            if action == 'NOT DECIDABLE' or e.get('state') == 'NOT DECIDABLE':
+                ended = True
         elif step == 'copy' and not e.get('fault'):
             copied.add(name)
     return bad
@@ -317,12 +362,23 @@ def _entries(drive):
     return [json.loads(ln) for ln in open(path).read().splitlines()] if os.path.exists(path) else []
 
 
+def _amended(entries, e):
+    """A decision line as it stands: re-ruled by its recording's ``amend`` line, if there is one (the amend's inputs and
+    outcome, the original kept under ``superseded_line``), else as logged."""
+    if e.get('step') != 'decision':
+        return e
+    amend = [x for x in entries if x.get('step') == 'amend' and x.get('name') == e['name']]
+    if not amend:
+        return e
+    return dict(e, inputs=amend[0]['inputs'], **{k: amend[0].get(k) for k in STEP_KEYS}, superseded_line=e)
+
+
 def _decisions(entries):
-    return [e for e in entries if e.get('step') == 'decision']
+    return [_amended(entries, e) for e in entries if e.get('step') == 'decision']
 
 
 def _ruled(entries):
-    return [e for e in entries if e.get('step') in RULED]
+    return [_amended(entries, e) for e in entries if e.get('step') in RULED]
 
 
 def _attempt(e):
@@ -378,6 +434,15 @@ def _session(decide, entries):
         if [d.get(k) for k in STEP_KEYS] != [g.get(k) for k in STEP_KEYS]:
             sys.exit('refused: %s was logged %s, the decision file now gives %s: the log or the code changed'
                      % (d['name'], {k: d.get(k) for k in STEP_KEYS}, {k: g.get(k) for k in STEP_KEYS}))
+    # An amended decision must still have been what its own inputs gave, over the session before it.
+    for i, d in enumerate(done):
+        if 'superseded_line' in d:
+            orig = d['superseded_line']
+            g = _replay(decide, [_attempt(x) for x in done[:i]] + [_attempt(orig)])['steps'][-1]
+            if [orig.get(k) for k in STEP_KEYS] != [g.get(k) for k in STEP_KEYS]:
+                sys.exit('refused: %s was decided %s before its amend, the decision file now gives %s: the log or the '
+                         'code changed' % (d['name'], {k: orig.get(k) for k in STEP_KEYS},
+                                           {k: g.get(k) for k in STEP_KEYS}))
     return got
 
 
@@ -441,7 +506,7 @@ def cmd_start(a):
     cap = os.path.join(a.dir, a.name + '.cf32')
     shot = bb.shot_name(a.lap)
     _log([a.dir, a.drive], a.name, 'start', slot=a.slot, lap=a.lap, offset_khz=a.offset_khz, level_dbm=level,
-         shot=shot, seconds=a.seconds, decide=_code_id(a.decide, ses['sha256']))
+         shot=shot, seconds=a.seconds, decide=_code_id(a.decide, ses['sha256']), load_avg=list(os.getloadavg()))
     with open(os.path.join(a.dir, a.name + '.rec.log'), 'w') as out:
         p = subprocess.Popen([PY, os.path.join(ROOT, 'scripts', 'bt_bench.py'), 'record', cap, '--seconds',
                               '%g' % a.seconds], stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -478,6 +543,25 @@ def _wait_recorder(a):
     return json.load(open(rec_path)), None
 
 
+def spread_refusal(snr):
+    """``bt_bench.snr``'s result as the decision takes it (the amendment of 2026-10-26): with no problem but a spread
+    ``snr_db_sem`` over ``SNR_MAX_SEM_DB``, or none (or not a number), it is refused - ``problem`` set, ``spread_problem``
+    true, and ``snr_db``, ``snr_db_min`` and ``snr_db_max`` moved under ``SPREAD_KEYS``, since the decision file takes a
+    refusal or numbers, never both. A NaN sem is logged as None."""
+    if snr.get('problem'):
+        return snr
+    sem = snr.get('snr_db_sem')
+    ok = isinstance(sem, (int, float)) and math.isfinite(sem)
+    if ok and sem <= SNR_MAX_SEM_DB:
+        return snr
+    out = dict(snr, snr_db_sem=sem if ok else None, spread_problem=True,
+               problem=('the level over the shot\'s parts spreads %s dB (snr_db_sem over %.2f dB, or none): samples '
+                        'dropped in the recording' % ('%.3f' % sem if ok else 'by no number', SNR_MAX_SEM_DB)))
+    for k, r in zip(('snr_db', 'snr_db_min', 'snr_db_max'), SPREAD_KEYS):
+        out[r] = out.pop(k, None)
+    return out
+
+
 def cmd_finish(a):
     here, drive, name = a.dir, a.drive, a.name
     dirs = [here, drive]
@@ -497,8 +581,10 @@ def cmd_finish(a):
         rec = {}
     lost, adc = rec.get('lost_sample_overflows'), rec.get('adc_overflows')
     recorder_fault = why or ('lost samples or ADC overflows' if (lost or adc) else None)
+    if not recorder_fault and rec.get('overruns_counted') is not True:
+        recorder_fault = 'the recorder could not count the driver\'s Sample Overrun warnings'
     _log(dirs, name, 'recorder', lost_sample_overflows=lost, adc_overflows=adc, recorded_s=rec.get('recorded_s'),
-         fault=recorder_fault)
+         sample_overruns=rec.get('sample_overruns'), overruns_counted=rec.get('overruns_counted'), fault=recorder_fault)
 
     tx_path = os.path.join(here, name + '_tx.json')
     tx, player_fault = {}, None
@@ -528,8 +614,13 @@ def cmd_finish(a):
         with open(os.path.join(here, name + '.snr.json'), 'w') as f:
             json.dump(snr, f, indent=1)
         print('snr:', bb.snr_summary(snr), '(%.0f s)' % (time.time() - t0), flush=True)
+        snr = spread_refusal(snr)
+        if snr.get('spread_problem'):
+            print('snr refused: %s' % snr['problem'], flush=True)
         _log(dirs, name, 'snr', problem=snr['problem'], snr_db=snr.get('snr_db'), snr_db_min=snr.get('snr_db_min'),
-             snr_db_max=snr.get('snr_db_max'), noise_1mhz_dbm=snr.get('noise_1mhz_dbm'), code=_commit(ROOT))
+             snr_db_max=snr.get('snr_db_max'), snr_db_sem=snr.get('snr_db_sem'),
+             **{k: snr[k] for k in SPREAD_KEYS if k in snr}, noise_1mhz_dbm=snr.get('noise_1mhz_dbm'),
+             code=_commit(ROOT))
 
     inputs = dict(recorder_fault=bool(recorder_fault), player_fault=bool(player_fault), exit_fault=bool(exit_fault),
                   snr_refused=bool(snr.get('problem')), median=snr.get('snr_db'), lo=snr.get('snr_db_min'),
@@ -546,6 +637,41 @@ def cmd_finish(a):
           % (step['action'], start['slot'], step['level_next'],
              '; the session is NOT DECIDABLE' if step['state'] == 'NOT DECIDABLE' else ''))
     print('now: close %s' % name)
+    return 0
+
+
+def cmd_amend(a):
+    """Re-rule ``a.name`` as a recorder fault under the amendment ``a.amendment`` (see the module docstring)."""
+    here, drive, name = a.dir, a.drive, a.name
+    entries = _agreed(here, drive)
+    dec = [e for e in entries if e['name'] == name and e.get('step') == 'decision']
+    starts = [e['name'] for e in entries if e.get('step') == 'start']
+    if not dec:
+        sys.exit('refused: %s has no decision' % name)
+    if any(e['name'] == name and e.get('step') == 'halt' for e in entries):
+        sys.exit('refused: %s halted' % name)
+    if starts[-1] != name:
+        sys.exit('refused: %s was started after %s; only the last recording can be amended' % (starts[-1], name))
+    if not any(e['name'] == name and e.get('step') == 'copy' and not e.get('fault') for e in entries):
+        sys.exit('refused: %s is not on the drive yet (close it first)' % name)
+    if any(e['name'] == name and e.get('step') == 'amend' for e in entries):
+        sys.exit('refused: %s is already amended' % name)
+    if dec[-1]['action'] not in AGAIN:
+        sys.exit('refused: %s was decided %s; only %s can be amended' % (name, dec[-1]['action'], ' or '.join(AGAIN)))
+    if not os.path.isfile(a.amendment):
+        sys.exit('refused: no amendment file %s' % a.amendment)
+    _session(a.decide, entries)
+    ruled = _ruled(entries)
+    if ruled[-1]['name'] != name or ruled[-1]['step'] != 'decision':
+        sys.exit('refused: %s is not the last ruled step' % name)
+    got = _replay(a.decide, [_attempt(x) for x in ruled[:-1]] + [dict(slot=dec[-1]['slot'], inputs=AMEND_INPUTS)])
+    step = got['steps'][-1]
+    _log([here, drive], name, 'amend', slot=dec[-1]['slot'], inputs=AMEND_INPUTS, reason=a.reason,
+         superseded={k: dec[-1].get(k) for k in STEP_KEYS}, **{k: step[k] for k in STEP_KEYS},
+         amendment=_code_id(a.amendment), decide=_code_id(a.decide, got['sha256']))
+    print('%s amended (a recorder fault): %s, was %s; slot %d; the next recording at %g dBm%s'
+          % (name, step['action'], dec[-1]['action'], dec[-1]['slot'], step['level_next'],
+             '; the session is NOT DECIDABLE' if step['state'] == 'NOT DECIDABLE' else ''))
     return 0
 
 
@@ -731,12 +857,12 @@ def _commit(path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
-    for c in ('start', 'finish', 'close', 'log'):
+    for c in ('start', 'finish', 'close', 'log', 'amend'):
         p = sub.add_parser(c)
         p.add_argument('name')
         p.add_argument('--dir', required=True, help='this laptop\'s folder for the recording')
         p.add_argument('--drive', required=True, help='the folder on the 4 TB drive the recording goes to')
-        if c in ('start', 'finish'):
+        if c in ('start', 'finish', 'amend'):
             p.add_argument('--decide', required=True, help='the registration\'s diag_s4_bench_decide.py')
             p.add_argument('--player-host', default='worklaptop1-fast')
             p.add_argument('--player-tx-dir', default='rg/bench/tx', help='the player\'s sidecar folder, under its home')
@@ -754,10 +880,13 @@ def main(argv=None):
         if c == 'log':
             p.add_argument('--event', required=True, choices=EVENTS)
             p.add_argument('--reason', required=True)
+        if c == 'amend':
+            p.add_argument('--amendment', required=True, help='the dated amendment text bluey approved')
+            p.add_argument('--reason', required=True)
     p = sub.add_parser('verify')
     p.add_argument('folder')
     a = ap.parse_args(argv)
-    return {'start': cmd_start, 'finish': cmd_finish, 'close': cmd_close, 'log': cmd_log,
+    return {'start': cmd_start, 'finish': cmd_finish, 'close': cmd_close, 'log': cmd_log, 'amend': cmd_amend,
             'verify': cmd_verify}[a.cmd](a)
 
 

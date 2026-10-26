@@ -145,13 +145,15 @@ def run(argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def recording(shots, side, name, here, snr_db=20.0, level=-68.0, sent=True, state=None, sha=None):
+def recording(shots, side, name, here, snr_db=20.0, level=-68.0, sent=True, state=None, sha=None, overruns=0,
+              counted=True):
     """A finished fake recording in ``here``: the capture, the recorder's json and the player's sidecar."""
     os.makedirs(here, exist_ok=True)
     cap = os.path.join(here, name + '.cf32')
     bb.make_capture(os.path.join(shots, 'bench_885614_d23.cf32'), cap, pre=0.1, post=0.1, frac=0.37, ppm=-0.37,
                     cfo_hz=58900.0, vsg_offset_hz=58000.0, snr_db=snr_db)
-    json.dump(dict(recorded_s=1.0, adc_overflows=0, lost_sample_overflows=0, file=name + '.cf32', center_mhz=2439.0,
+    json.dump(dict(recorded_s=1.0, adc_overflows=0, lost_sample_overflows=overruns, sample_overruns=overruns,
+                   readstream_overflows=0, overruns_counted=counted, file=name + '.cf32', center_mhz=2439.0,
                    sample_rate=bb.FS), open(cap + '.rec.json', 'w'))
     open(os.path.join(here, name + '.rec.log'), 'w').write('fake recorder\n')
     json.dump(dict(name=name, shot='bench_885614_d23', shot_sha256=sha or side['bench_shot']['sha256'],
@@ -181,6 +183,10 @@ def events(name, slot, action, median=20.0, lo=19.8, hi=20.2, aligned=None):
     aligned = action == 'KEEP' if aligned is None else aligned
     out.append((name, 'align', dict(exit=0) if aligned else dict(skipped='not aligned')))
     return out + [(name, 'copy', dict(files={}))]
+
+
+def decision_of(folder, name):
+    return [e for e in bs._entries(folder) if e['name'] == name and e['step'] == 'decision'][-1]
 
 
 def order_of(tmp, lines):
@@ -505,6 +511,149 @@ def main():
               and not [e for e in bs._entries(d) if e['step'] == 'decision'],
               'the decision file raised on the attempt: a halt, after the snr line, no decision')
 
+        print('\nthe amendment of 2026-10-26: overruns, the snr spread, and amend')
+        h, d = os.path.join(tmp, 'here_amend'), os.path.join(tmp, 'drive_amend')
+        os.makedirs(d)
+        st_, fi_, cl_ = session(h, d)[:3]
+        amendment = os.path.join(keydir, 'amendment.md')
+        open(amendment, 'w').write('the amendment\n')
+
+        def amend(name, amd=amendment):
+            return run(['amend', name, '--decide', decide, '--amendment', amd, '--reason', 'test', '--dir', h,
+                        '--drive', d])
+
+        def alines(dd=None):
+            return bs._entries(dd or d)
+        st_('a01', 1)
+        check('load_avg' in alines()[-1] and len(alines()[-1]['load_avg']) == 3, 'start logs the load average')
+        recording(shots, side, 'a01', h, overruns=3)
+        code, out, err = fi_('a01')
+        rl = [e for e in alines() if e['name'] == 'a01' and e['step'] == 'recorder'][0]
+        check(code == 0 and rl['fault'] and rl['sample_overruns'] == 3 and decision_of(d, 'a01')['action']
+              == 'RETAKE_SAME_LEVEL' and decision_of(d, 'a01')['inputs']['recorder_fault']
+              and not [e for e in alines() if e['name'] == 'a01' and e['step'] == 'snr'],
+              'a recording with Sample Overruns is a recorder fault: no snr, RETAKE_SAME_LEVEL (%s)' % err[-120:])
+        cl_('a01')
+        st_('a01b', 1)
+        recording(shots, side, 'a01b', h, counted=False)
+        fi_('a01b')
+        rl = [e for e in alines() if e['name'] == 'a01b' and e['step'] == 'recorder'][0]
+        check('could not count' in str(rl['fault']) and decision_of(d, 'a01b')['action'] == 'NOT DECIDABLE',
+              'a recorder that could not count overruns is a fault (here the slot\'s second non-keep)')
+
+        h, d = os.path.join(tmp, 'here_amend2'), os.path.join(tmp, 'drive_amend2')
+        os.makedirs(d)
+        st_, fi_, cl_ = session(h, d)[:3]
+        st_('m01', 1)
+        recording(shots, side, 'm01', h, snr_db=22.0)
+        fi_('m01')
+        cl_('m01')
+        st_('m01b', 1)
+        recording(shots, side, 'm01b', h, level=decision_of(d, 'm01')['level_next'])
+        fi_('m01b')
+        cl_('m01b')
+        st_('m02', 2)
+        recording(shots, side, 'm02', h, snr_db=17.0, level=decision_of(d, 'm01b')['level_next'])
+        fi_('m02')
+        d2 = decision_of(d, 'm02')
+        check([decision_of(d, n)['action'] for n in ('m01', 'm01b', 'm02')] == ['DISCARD_STEP', 'KEEP', 'DISCARD_STEP']
+              and d2['relevels'] == 2, 'r01/r01b/r02 as on the bench: discard, keep, discard (%s)'
+              % [(decision_of(d, n)['action'], decision_of(d, n)['level_next']) for n in ('m01', 'm01b', 'm02')])
+        code, _, err = amend('m02')
+        check(code != 0 and 'close it first' in err and 'amend' not in [e['step'] for e in alines(d)],
+              'amend before the copy is refused')
+        cl_('m02')
+        code, _, err = amend('m01b')
+        check(code != 0 and 'only the last recording' in err, 'amend of an earlier recording is refused')
+        code, _, err = amend('m02', amd=os.path.join(keydir, 'missing.md'))
+        check(code != 0 and 'no amendment file' in err, 'amend with no amendment file is refused')
+        lvl = decision_of(d, 'm01b')['level_next']
+        code, out, err = amend('m02')
+        am = [e for e in alines(d) if e['step'] == 'amend']
+        check(code == 0 and len(am) == 1 and am[0]['action'] == 'RETAKE_SAME_LEVEL' and am[0]['level_next'] == lvl
+              and am[0]['relevels'] == 1 and am[0]['superseded']['action'] == 'DISCARD_STEP'
+              and am[0]['amendment']['sha256'] == bs.sha256_of(amendment) and am[0]['inputs'] == bs.AMEND_INPUTS,
+              'amend: m02 a recorder fault, RETAKE_SAME_LEVEL at %g dBm, re-levels back to 1 (%s)' % (lvl, err[-160:]))
+        code, _, err = amend('m02')
+        check(code != 0 and 'already amended' in err, 'a second amend is refused')
+        code, _, err = st_('m03', 3)
+        check(code != 0 and 'left for a retake' in err, 'after the amend, slot 2 is left for its retake')
+        code, out, err = st_('m02b', 2)
+        check(code == 0 and '--level %g ' % lvl in out, 'the retake starts at the level before m02 (%g dBm) %s'
+              % (lvl, err[-160:]))
+        recording(shots, side, 'm02b', h, level=lvl)
+        fi_('m02b')
+        cl_('m02b')
+        check(decision_of(d, 'm02b')['action'] == 'KEEP', 'the retake kept')
+        code, out, _ = run(['verify', d])
+        check(code == 0 and 'order OK' in out and 'chain OK' in out, 'verify: the amended session, chain and order OK')
+
+        def edited(src_h, src_d, edit, tag):
+            """Copies of both session logs with one line edited and the chain re-made, as a careful forger would."""
+            hh, dd = os.path.join(tmp, 'eh_' + tag), os.path.join(tmp, 'ed_' + tag)
+            for src, dst in ((src_h, hh), (src_d, dd)):
+                os.makedirs(dst)
+                prev = None
+                with open(os.path.join(dst, bs.LOG), 'w') as f:
+                    for e in bs._entries(src):
+                        e = edit(dict(e))
+                        e['prev'] = bs._line_sha(prev)
+                        prev = json.dumps(e)
+                        f.write(prev + '\n')
+            return hh, dd
+
+        def finish_attempt(hh, dd):
+            return run(['finish', 'm02b', '--shots', shots, '--decide', decide, '--dir', hh, '--drive', dd])
+        for tag, edit, why in (
+                ('amend_level', lambda e: dict(e, level_next=-60.0) if e['step'] == 'amend' else e,
+                 'an amend line whose level was edited'),
+                ('orig_relevels', lambda e: dict(e, relevels=1) if e['step'] == 'decision' and e['name'] == 'm02'
+                 else e, 'the superseded decision edited'),
+                ('amend_inputs', lambda e: dict(e, inputs=dict(bs.AMEND_INPUTS, recorder_fault=False,
+                                                               player_fault=True)) if e['step'] == 'amend' else e,
+                 'an amend line with other inputs')):
+            hh, dd = edited(h, d, edit, tag)
+            at, broken = bs.check_chain(os.path.join(dd, bs.LOG))
+            order = bs.check_order(bs._entries(dd))
+            code, _, err = run(['amend', 'm02', '--decide', decide, '--amendment', amendment, '--reason', 'x',
+                                '--dir', hh, '--drive', dd])
+            refused = []
+            try:
+                bs._session(decide, bs._entries(dd))
+            except SystemExit as e:
+                refused.append(str(e))
+            check(broken is None and (refused or order), '%s (chain re-made): refused by the replay or the order: %s'
+                  % (why, (refused + order)[:1]))
+
+        print('\nthe snr spread')
+        base = dict(problem=None, snr_db=20.0, snr_db_min=19.5, snr_db_max=20.5, snr_db_sem=0.01)
+        check(bs.spread_refusal(base) == base, 'sem 0.01 dB: the snr unchanged')
+        check(bs.spread_refusal(dict(base, snr_db_sem=0.10)) == dict(base, snr_db_sem=0.10), 'sem 0.10 dB: kept')
+        for sem in (0.11, 2.5, None, float('nan')):
+            r = bs.spread_refusal(dict(base, snr_db_sem=sem))
+            check(r['problem'] and r.get('spread_problem') and 'snr_db' not in r and r['refused_snr_db'] == 20.0
+                  and r['snr_db_sem'] == (sem if sem is not None and sem == sem else None),
+                  'sem %r: refused, the numbers moved aside, NaN logged as None' % sem)
+        r = bs.spread_refusal(dict(base, problem='the shot was not found'))
+        check(r['problem'] == 'the shot was not found' and 'spread_problem' not in r, 'an snr already refused: as it was')
+        h, d = os.path.join(tmp, 'here_spread'), os.path.join(tmp, 'drive_spread')
+        os.makedirs(d)
+        st_, fi_, cl_ = session(h, d)[:3]
+        st_('s01', 1)
+        recording(shots, side, 's01', h)
+        real_snr = bs.bb.snr
+        bs.bb.snr = lambda *a_: dict(real_snr(*a_), snr_db_sem=2.508)
+        try:
+            code, out, err = fi_('s01')
+        finally:
+            bs.bb.snr = real_snr
+        sl = [e for e in bs._entries(d) if e['step'] == 'snr'][0]
+        dec = decision_of(d, 's01')
+        check(code == 0 and sl['problem'] and sl['snr_db'] is None and sl['refused_snr_db'] and sl['snr_db_sem'] == 2.508
+              and dec['action'] == 'RETAKE_SAME_LEVEL' and dec['inputs']['snr_refused'] and dec['inputs']['median'] is None
+              and not bs.check_order(bs._entries(d)),
+              'finish with a spread of 2.5 dB: the snr refused, RETAKE_SAME_LEVEL, the order holds (%s)' % err[-160:])
+
         print('\na keys script that lets a carrier value through')
         h, d = os.path.join(tmp, 'here_leak'), os.path.join(tmp, 'drive_leak')
         os.makedirs(d)
@@ -553,6 +702,25 @@ def main():
         check(why is not None and at == 2, 'a session log with a line dropped breaks its chain at that line')
 
         print('\nthe order verify asserts')
+        amd = dict(slot=2, action='RETAKE_SAME_LEVEL', inputs=bs.AMEND_INPUTS, amendment=dict(sha256='a' * 64))
+        disc = events('b', 2, 'DISCARD_STEP', median=17.0, lo=16.8, hi=17.4)
+        for what, lns, want in (
+                ('an amend of a KEEP', events('b', 2, 'KEEP') + [('b', 'amend', amd)], 'amended after a KEEP'),
+                ('an amend before the copy', disc[:-1] + [('b', 'amend', amd)], 'amended before it was copied'),
+                ('a second amend', disc + [('b', 'amend', amd), ('b', 'amend', amd)], 'amended twice'),
+                ('an amend after the next start', disc + [('c', 'start', dict(slot=2)), ('b', 'amend', amd)],
+                 'amended after c was started'),
+                ('an amend with snr numbers', disc + [('b', 'amend', dict(amd, inputs=dict(bs.AMEND_INPUTS,
+                                                                                       median=17.0)))], 'amended with inputs'),
+                ('an amend with no amendment sha', disc + [('b', 'amend', dict(amd, amendment=None))],
+                 'no amendment sha256'),
+                ('an amend of a halt', halted('b', 2) + [('b', 'amend', amd)], 'amended with no decision')):
+            bad = order_of(tmp, lns)
+            check(any(want in b for b in bad), '%s: %s' % (what, bad[:1]))
+        bad = order_of(tmp, disc + [('b', 'amend', amd), ('c', 'start', dict(slot=3))])
+        check(any('left for a retake' in b for b in bad), 'after an amend to a retake, another slot cannot start')
+        bad = order_of(tmp, disc + [('b', 'amend', amd)] + events('b2', 2, 'KEEP'))
+        check(not bad, 'a discard amended to a retake, then the retake kept: order OK %s' % bad)
         retake = events('a', 1, 'RETAKE_SAME_LEVEL', lo=17.0, hi=20.5)
         for what, lns, want in (
                 ('an alignment after a retake decision', retake[:5] + [('a', 'align', dict(exit=0))], 'aligned after'),

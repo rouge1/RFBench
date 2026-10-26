@@ -57,6 +57,17 @@ _EXPECTED_CHATTER = ('ConfigureIQCenter', 'ConfigureIO', 'Using format',
                      'set decimation', 'deprecrated')
 _overflows = [0]
 _last_message = ['']
+#: "Sample Overrun" warnings: the driver dropped samples (the host did not read them in time). The samples that come
+#: back are simply fewer, so everything after moves earlier; readStream returns no error for it with this driver.
+_overruns = [0]
+
+
+def _count_overrun(message):
+    """Count a "Sample Overrun" warning; True if ``message`` was one. The line itself is still passed on."""
+    if 'overrun' in message.lower():
+        _overruns[0] += 1
+        return True
+    return False
 
 
 def _log_handler(level, text):
@@ -69,6 +80,7 @@ def _log_handler(level, text):
     in a terminal nobody is looking at.
     """
     message = str(text).strip()
+    _count_overrun(message)
     if 'overflow' in message.lower():
         _overflows[0] += 1
         _last_message[0] = message
@@ -134,7 +146,11 @@ def install_log_handler():
     stayed at zero however hard the front end was driven, and the ATSC
     receiver's "Input overloaded - turn the RF gain down" could not fire.
     (The separate ``overflows`` counter, for samples actually lost, comes
-    from ``readStream``'s return code and was never affected.)
+    from ``readStream``'s return code and was never affected - but the
+    SignalHound module never returns that code: a drop is only ever the
+    printed "Sample Overrun" warning, which `overrun_count` counts. Every
+    bench recording before 2026-10-26 reported 0 lost samples whatever it
+    lost, and a 10 s one-shot came back cut.)
 
     So the handler goes into every one of them, through the C API. Calling
     this more than once is cheap and is meant to happen: the module - and
@@ -229,6 +245,7 @@ class _DriverOutput:
         try:
             text = raw.decode('utf-8', 'replace')
             plain = _LEVEL.sub('', _ANSI.sub('', text)).strip()
+            _count_overrun(plain)
             if 'overflow' in plain.lower():
                 _overflows[0] += 1
                 _last_message[0] = plain
@@ -249,7 +266,7 @@ class _DriverOutput:
             pass
         thread, self._thread = self._thread, None
         if thread is not None:
-            thread.join(timeout=1.0)
+            thread.join(timeout=5.0)
         for fd in (self._read, self._saved):
             try:
                 os.close(fd)
@@ -290,8 +307,14 @@ def overflow_count():
     return _overflows[0]
 
 
+def overrun_count():
+    """How many "Sample Overrun" warnings - samples dropped - since reset."""
+    return _overruns[0]
+
+
 def reset_overflows():
     _overflows[0] = 0
+    _overruns[0] = 0
     _last_message[0] = ''
 
 _MODULE_DIRS = [
@@ -520,6 +543,9 @@ class bb60_source(gr.sync_block):
         self.sample_rate = nearest_rate(sample_rate)
         self.gain_percent = float(gain_percent)
         self.overflows = 0
+        #: Whether this source's driver output went through `_DriverOutput`, so that ``overrun_count`` saw every
+        #: "Sample Overrun"; without it a drop is printed and not counted.
+        self.overruns_counted = False
         self._sdr = None
         self._stream = None
         self._capturing = False
@@ -551,6 +577,7 @@ class bb60_source(gr.sync_block):
         ensure_plugin_path()
         install_log_handler()
         self._capturing = capture_driver_output()
+        self.overruns_counted = self._capturing
         reset_overflows()
         import SoapySDR  # type: ignore
         from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32  # type: ignore

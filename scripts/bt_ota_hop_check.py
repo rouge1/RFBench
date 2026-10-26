@@ -315,6 +315,13 @@ def record(path, seconds, center_hz, fs, gain_percent):
     lost samples (it hands back none, so everything after moves earlier and
     the file is still the length asked for). ``adc_overflows`` is something
     else: the converter clipping, a gain problem that costs no samples.
+
+    The SignalHound module never returns readStream's overflow code: it
+    prints "Sample Overrun" instead, which ``bb.overrun_count`` counts. So
+    ``lost_sample_overflows`` is both added together (``readstream_overflows``
+    and ``sample_overruns`` beside it), and ``overruns_counted`` says whether
+    the driver's output was filtered at all - false means a drop could have
+    been printed and not counted.
     """
     from gnuradio import blocks, gr
     from apps import bb60_source as bb
@@ -326,9 +333,16 @@ def record(path, seconds, center_hz, fs, gain_percent):
                blocks.file_sink(gr.sizeof_gr_complex, path))
     t0 = time.time()
     tb.run()
+    # Read after tb.run(): the source's stop() has run by then, and with it
+    # the driver-output filter closed and drained, so every "Sample Overrun"
+    # printed during the recording has been counted.
+    overruns = bb.overrun_count()
     return {'recorded_s': seconds, 'record_start_unix': t0,
             'gain_percent': gain_percent, 'adc_overflows': bb.overflow_count(),
-            'lost_sample_overflows': int(src.overflows)}
+            'readstream_overflows': int(src.overflows),
+            'sample_overruns': int(overruns),
+            'overruns_counted': bool(src.overruns_counted),
+            'lost_sample_overflows': int(src.overflows) + int(overruns)}
 
 
 class _Recording:

@@ -147,6 +147,11 @@ damage something. Each links to the why.
 - **Hand `file_descriptor_source` an `os.dup()` of a pipe**, never the
   pipe's own descriptor, or the second launch of the app goes out silent.
   [ntsc](knowledge/ntsc.md#ntsc-video-sources)
+- **A BB60D that drops samples says so only on stderr**, as `[WARNING]
+  Sample Overrun`: `readStream` returns no error, the file keeps its
+  length and everything after the drop is early. Count the warning
+  (`bb60_source.overrun_count()`), and record on a quiet host.
+  [radios](knowledge/radios.md#signal-hound-bb60d-as-a-receiver)
 - **The BB60D is not driven through gr-soapy**: `setupStream` comes before
   any setting, and it is opened by driver name alone.
   [radios](knowledge/radios.md#signal-hound-bb60d-as-a-receiver)

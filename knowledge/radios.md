@@ -268,6 +268,27 @@ error passed through, and stderr restored when the last source stops.
 `readStream`'s return code and was never affected** — the off-air figures
 quoted in this file are that one.
 
+**And that counter never counts anything: the SignalHound module never
+returns readStream's overflow code.** When the host does not read in time it
+drops samples and prints `[WARNING] Sample Overrun` on stderr, nothing else;
+the samples after the drop simply arrive early, and the file is still the
+length asked for. Found on 2026-10-26 after a bench sitting for bluey-ox-walker
+lost three recordings - two 10 s one-shots cut part way, one level 2.5 dB
+low - while every recorder record said `lost_sample_overflows: 0`, and the
+VSG60 on the other laptop got the blame first. The warnings were in the
+recorders' own logs: 103 across the 26 bench recordings on record, 0 in the
+12 of 2026-10-20, 2 in the 16 of 2026-10-23, and up to 29 in one recording
+on 2026-10-25, with this laptop at load average 6-10 on the powersave
+governor with deep C-states on. `_DriverOutput` now counts them too
+(`overrun_count()`, still passing the line through), and
+`bt_ota_hop_check.record` adds them into `lost_sample_overflows`, with
+`sample_overruns`, `readstream_overflows` and `overruns_counted` beside it;
+`scripts/test_bb60_overrun.py` holds the count to the driver's real text.
+A drop outside the part of a capture that matters is harmless (two
+2026-10-23 recordings with one each aligned whole), but nothing in the
+samples says where it fell. Record on a quiet host: nothing heavy running,
+`cpupower frequency-set -g performance` and `cpupower idle-set -D 2`.
+
 Recording with raw SoapySDR and decoding offline still works too, and is
 still the right thing for anything that does not need to be live -
 `record_iq.py --driver SignalHoundBB60` writes complex float32, which
