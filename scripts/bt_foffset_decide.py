@@ -16,6 +16,8 @@ so it imports only the standard library and keeps the interface of the confirmat
   problem or the spread rule's ``snr_db_sem`` over 0.10 dB or none (``snr_refused``). An overrun counted is not a fault.
 * **A second non-KEEP in a slot leaves it absent** (``FAULT_ABSENT``): no third play, and the sitting goes on to the
   next slot. It is never NOT DECIDABLE for a fault.
+* **The start play (slot 0) has no retake.** A fault in it is NOT DECIDABLE: the session stops before any scored
+  play, and the owner decides whether to retake, change or stop (registration O5). Slots 1 to 14 keep the rule above.
 * **Otherwise KEEP**, whatever the SNR's median or its spread over the channels.
 
 An UNDECIDED halt (a player sidecar of another shot or level, or this file raising) is as before: an attempt and the
@@ -34,6 +36,8 @@ import math
 FIRST_COMMAND_DBM = -69.0
 #: The start play (slot 0, unscored) and the 14 scored slots.
 SLOTS = range(0, 15)
+#: A fault in the start play is no retake: the session stops and the owner decides (registration O5).
+START_SLOT = 0
 
 
 class LevelSession:
@@ -42,7 +46,7 @@ class LevelSession:
     ``decide(slot, recorder_fault=..., player_fault=..., exit_fault=..., snr_refused=..., median=..., lo=..., hi=...)``
     takes either one or more fault flags and no snr numbers, or no fault and all three numbers (finite): anything else
     is a caller error (ValueError, no attempt counted), as is a slot outside ``SLOTS`` or one already closed (kept or
-    absent). It returns KEEP, RETAKE_SAME_LEVEL or FAULT_ABSENT."""
+    absent). It returns KEEP, RETAKE_SAME_LEVEL or FAULT_ABSENT, or NOT DECIDABLE for a fault in the start play."""
 
     def __init__(self):
         self.level = FIRST_COMMAND_DBM
@@ -84,6 +88,9 @@ class LevelSession:
         if not fault:
             self.closed[slot] = "KEEP"
             return "KEEP"
+        if slot == START_SLOT:
+            self.state = "NOT DECIDABLE"
+            return "NOT DECIDABLE"
         nonkeep = self.slot_nonkeep.get(slot, 0) + 1
         self.slot_nonkeep[slot] = nonkeep
         if nonkeep >= 2:

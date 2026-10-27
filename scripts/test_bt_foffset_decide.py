@@ -8,6 +8,8 @@
 * **Each fault path** (recorder, player, a fault logged before finish, snr refused) is ``RETAKE_SAME_LEVEL`` the first
   time in a slot and ``FAULT_ABSENT`` the second: one retake per slot, never NOT DECIDABLE for a fault; a retake that
   keeps closes the slot as KEEP; a closed slot (kept or absent) cannot be decided again.
+* **The start play** (slot 0): any fault is NOT DECIDABLE, after which nothing is decided; so is a fault after the
+  owner's resume of a halt there; the session's replay gives the same.
 * **Caller errors** raise and count no attempt: a fault with snr numbers, no fault without all three, a number that is
   NaN or a bool, a slot outside 0..14.
 * **Halt and resume**: a resume at the same slot, level and sha256 is a retake, after which a fault leaves the slot
@@ -95,6 +97,21 @@ def main():
     a = [s.decide(3, recorder_fault=True, player_fault=True), s.decide(3, **GOOD)]
     check(a == ['RETAKE_SAME_LEVEL', 'KEEP'] and s.closed == {3: 'KEEP'}, 'a fault then a good retake: KEEP')
     check(raises(lambda: s.decide(3, **GOOD)), 'a kept slot cannot be decided again')
+
+    print('\nthe start play (slot 0): no retake')
+    for f in FAULTS:
+        s = m.LevelSession()
+        a = s.decide(0, **{f: True})
+        check(a == 'NOT DECIDABLE' and s.state == 'NOT DECIDABLE' and s.decide(1, **GOOD) == 'NOT DECIDABLE'
+              and s.decide(0, **GOOD) == 'NOT DECIDABLE' and unchanged(s),
+              '%s in slot 0: %s, and nothing after it is decided' % (f, a))
+    s = m.LevelSession()
+    a = [s.halt(0, -69.0, sha := 'c' * 64), s.resume(0, -69.0, sha), s.decide(0, player_fault=True)]
+    check(a == ['HALT', 'RESUME_AS_RETAKE', 'NOT DECIDABLE'], 'slot 0 halted, resumed by the owner, then a fault: %s' % a)
+    got, why = bs._try_replay(DECIDE, [dict(slot=0, inputs=dict(bs.AMEND_INPUTS)),
+                                       dict(slot=1, inputs=dict(bs.AMEND_INPUTS, snr_refused=False, **GOOD))])
+    check(why is None and [x['action'] for x in got['steps']] == ['NOT DECIDABLE', 'NOT DECIDABLE']
+          and got['state'] == 'NOT DECIDABLE', 'through the session\'s replay: slot 0 refused by snr stops the session')
 
     print('\ncaller errors count no attempt')
     s = m.LevelSession()

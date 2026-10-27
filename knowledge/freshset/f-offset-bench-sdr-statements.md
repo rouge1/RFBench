@@ -81,8 +81,8 @@ The decision file keeps the interface the session replays: `FIRST_COMMAND_DBM` a
     the session script).
 
   An overrun counted is not a fault.
-- **Retakes.** A first fault in a slot is `RETAKE_SAME_LEVEL`. A second leaves the slot absent (`FAULT_ABSENT`): it
-  is not played again, and the sitting moves on to the next slot. A fault never makes the sitting NOT DECIDABLE.
+- **Retakes (slots 1 to 14).** A first fault in a slot is `RETAKE_SAME_LEVEL`. A second leaves the slot absent (`FAULT_ABSENT`): it
+  is not played again, and the sitting moves on to the next slot. A fault in slots 1 to 14 never makes the sitting NOT DECIDABLE.
 - **Aligner refusals.** A refusal after a KEEP is the session's `close`. The recording is not aligned into a crop
   and is not retaken. It never reaches the decision file.
 - **Halts.** An UNDECIDED halt (a player sidecar of another shot or level, or the decision file raising) works as in
@@ -90,7 +90,11 @@ The decision file keeps the interface the session replays: `FIRST_COMMAND_DBM` a
   the same level with the same decision file. A fault after that resume leaves the slot absent. Any other resume, a
   second halt in a slot, or a decision for another slot while a halt waits, is NOT DECIDABLE. The session then stops
   and the owner is asked.
-- **Slots.** Slots 0 to 14 are accepted. Slot 0 is the start play.
+- **Slots.** Slots 0 to 14 are accepted.
+- **The start play (slot 0) has no retake.** Any fault in it is NOT DECIDABLE: the session stops before any
+  scored play, and the owner decides whether to retake, change or stop (registration O5, bluey's ruling of
+  2026-10-26). A fault after the owner's resume of a halt in slot 0 stops it too. Slots 1 to 14 keep one retake,
+  then `FAULT_ABSENT`.
 
 The session needed no change. It aligns only a KEEP. It holds open for a retake only after `RETAKE_SAME_LEVEL` (or
 the confirmatory's `DISCARD_STEP`). `check_order` passes a log with a slot left absent and the next slot started
@@ -160,9 +164,9 @@ SDR repository: these files as committed on `foffset-decide` (the commit is give
 | `scripts/bt_bench_session.py` | `f9defeaa346a858e988d3bbf2d966fe38dcbfe50c8cb94aba12b9e0cf9bee943` |
 | `apps/bb60_source.py` | `6c7836888670da936e209f6ccc3eb2605232ff07c47386d5f6417bb5caa010ca` |
 | `scripts/bt_ota_hop_check.py` | `040b329c9426cf228487e9942ecb2a4a3ef1f2be98c52ea676db96b2ac42bdb0` |
-| `scripts/bt_foffset_decide.py` (the decision file) | `680175a363e61c1dec77698b750ea0c54cec226315e0973012494bd1c967ff03` |
+| `scripts/bt_foffset_decide.py` (the decision file) | `891915119ac3d1a92bf8d65efe27061e1d44dda11ff87a72381c82841b0549d7` |
 | `scripts/bt_foffset_allowed_keys.py` | `713fbb9b308198b513705675e669631c77669b25e093b9e4b9535e48067e483a` |
-| `scripts/test_bt_foffset_decide.py` | `c8d988ca17001c8fa7e606fdffb1ccae3c2d0c6acddc65a86107f1ba1cdcc74a` |
+| `scripts/test_bt_foffset_decide.py` | `694a09b9ce10f383b6de1df4e46b3d2f5d5a2a3ef6fe1b0024cc5f2e4f87a00d` |
 | `knowledge/freshset/f-rate-confirm-sdr-statements.md` | `185644d19f650f4e4eb5cb830871eb4d2301605edf036042b45961cb04905bdf` |
 | `knowledge/freshset/f-rate-amendment-2026-10-26.md` | `b3c573a9b569d24327d4e1aa4cfcf83dec48c7fcc68e99424d35170937cc6ddd` |
 
