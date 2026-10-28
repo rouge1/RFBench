@@ -1190,6 +1190,18 @@ reviewed by Opus against the real files, write them; the files are not in git.
   0x66C0A6's shot uses 2428 and 2430 MHz, below anything played before. Only the d23 cell exists, for `bt_bench.py`'s
   shots (noise seeds 3101 and 3102). The shots, pins and bench statements are in
   `knowledge/freshset/f-rate-confirm-sdr-statements.md`.
+- **The lost-pair set (2026-10-27) and `--lap`.** For bluey's question whether F should become the default detector:
+  on real captures P and F placed a few bursts at different offsets, some about 6 symbols before the access code, near
+  -58 kHz and the SNR where its access-code check stops verifying. Rendered with no code change: the two FC stems, the
+  first 2 s of each, master offset -58 / 0 / +58 kHz, SNR 4 to 20 dB in 2 dB steps, noise seed 5000 + SNR (paired
+  across offsets and LAPs), 54 files `lp_<LAP>_<m58|z00|p58>_s<SNR>` with a `lostpair` block in each sidecar; on the
+  drive in `sdr-synth-tmp/lostpair`. Most of bluey's real lost pairs are on LAP 0xD64727, which no stem draws, so
+  `--lap HEX` (X and C files) now puts a given LAP in place of the drawn one. The draw is still made, so a file without
+  it is byte for byte as before; with it the UAP, clock and schedule are drawn for that LAP by the same rejection, so
+  they are not the stem's, and the sidecar says so (`x_plan.lap_forced`, `lap_forced_note`). 0xD64727's page train
+  puts fewer channels in the 24 MHz window: about 460 rendered bursts in 2 s against 1,308 for 0x66C0A6. Limitations
+  bluey accepted: an ideal transmitter (h 0.32, BT 0.5), white noise, no receiver chain, two or three LAPs, the
+  generator's SNR (not `bt_bench.snr`'s), a transmitter offset only, one noise draw per SNR, no fading.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.

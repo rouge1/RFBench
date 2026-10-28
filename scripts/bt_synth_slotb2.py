@@ -596,9 +596,13 @@ def plan_exchanges(spec, rng, ident, n_slots, slave_cfo, fs, center):
 
 # --- the plan: P2 and P4 (the page train and the connection of one LAP) -------------------------------------
 
-def draw_train(rng, fs, center, n_slots, first_slot, last_slot, need_43, need_first_in_window=4):
+def draw_train(rng, fs, center, n_slots, first_slot, last_slot, need_43, need_first_in_window=4, lap_forced=None):
     """(lap, uap, clke0, table) by rejection: the train's blocks over [first_slot, last_slot) have no centre
-    channel, and its first train holds 43 (if wanted) and at least ``need_first_in_window`` in-window channels."""
+    channel, and its first train holds 43 (if wanted) and at least ``need_first_in_window`` in-window channels.
+    ``lap_forced`` replaces each drawn LAP (the draw is still made, so the rng runs as before) and the UAP and
+    clock are drawn for it by the same rejection."""
+    if lap_forced is not None and (not 0 < lap_forced < 1 << 24 or lap_forced in RESERVED_LAPS):
+        raise ValueError('LAP 0x%06X is reserved or out of range' % lap_forced)
     ctr = centre_channel(center)
     tries = 0
     ks = np.arange(first_slot, last_slot)
@@ -607,6 +611,8 @@ def draw_train(rng, fs, center, n_slots, first_slot, last_slot, need_43, need_fi
         lap = int(rng.integers(1, 1 << 24))
         if lap in RESERVED_LAPS:
             continue
+        if lap_forced is not None:
+            lap = lap_forced
         uap = draw_uap(rng)
         base = int(rng.integers(1, 1000))
         b0 = int(rng.integers(0, 16)) * 2
@@ -657,7 +663,7 @@ def train_events(slots, clke_at_k0, lap, uap, table):
     return evs
 
 
-def plan_x(spec, rng, n_slots, duration, fs, center):
+def plan_x(spec, rng, n_slots, duration, fs, center, lap_forced=None):
     """The events of an X file and the calibration numbers."""
     mode, share = spec['mode'], spec['share']
     frac_third = 1.0 / 3.0
@@ -666,7 +672,8 @@ def plan_x(spec, rng, n_slots, duration, fs, center):
         t_lo, t_hi, c_lo, c_hi = x_first_intervals(n_slots, split)
     else:
         t_lo, t_hi, c_lo, c_hi = 0, n_slots, int(round(0.25 * n_slots)), int(round(0.75 * n_slots))
-    lap, uap, clke_k0, table, tries = draw_train(rng, fs, center, n_slots, K0 + t_lo, K0 + t_hi, need_43=False)
+    lap, uap, clke_k0, table, tries = draw_train(rng, fs, center, n_slots, K0 + t_lo, K0 + t_hi, need_43=False,
+                                                 lap_forced=lap_forced)
     ks_t = np.arange(K0 + t_lo, K0 + t_hi)
     tk = np.stack([clke_k0 + 4 * (ks_t - K0), clke_k0 + 4 * (ks_t - K0) + 1])
     r_t = np.array([[in_win(int(c), fs, center) for c in col] for col in page_vec(table, tk).T]).sum(axis=1)
@@ -705,13 +712,19 @@ def plan_x(spec, rng, n_slots, duration, fs, center):
                 taken_slots=len(taken), fraction_taken=(len(taken) / len(free)) if free else None,
                 t_lo=t_lo, t_hi=t_hi, c_lo=c_lo, c_hi=c_hi, i_full=int(i_now), i_target=i_target,
                 clke_at_slot16=clke_k0, conn_clk_start=clk_start)
+    if lap_forced is not None:
+        info['lap_forced'] = True
     return evs, info
 
 
-def plan_c(spec, rng, n_slots, fs, center):
-    lap, uap, clke_k0, table, tries = draw_train(rng, fs, center, n_slots, K0, K0 + n_slots, need_43=True)
+def plan_c(spec, rng, n_slots, fs, center, lap_forced=None):
+    lap, uap, clke_k0, table, tries = draw_train(rng, fs, center, n_slots, K0, K0 + n_slots, need_43=True,
+                                                 lap_forced=lap_forced)
     evs = train_events(range(K0, K0 + n_slots), clke_k0, lap, uap, table)
-    return evs, dict(lap=lap, uap=uap, tries=tries, clke_at_slot16=clke_k0)
+    info = dict(lap=lap, uap=uap, tries=tries, clke_at_slot16=clke_k0)
+    if lap_forced is not None:
+        info['lap_forced'] = True
+    return evs, info
 
 
 # --- positions, entries, jobs --------------------------------------------------------------------------------
@@ -915,9 +928,11 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
 # --- the file --------------------------------------------------------------------------------------------
 
 def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift_ppm=None, slave_cfo_hz=None,
-              master_cfo_hz=None, noise_seed=None):
+              master_cfo_hz=None, noise_seed=None, lap=None):
     """The sidecar and the render jobs of a file, no samples made. ``duration`` shortens a file for a test (the
-    plan of its first part is that of the full file for the P1 and C files)."""
+    plan of its first part is that of the full file for the P1 and C files). ``lap`` (X and C files only) puts
+    that LAP in place of the drawn one; the UAP, clock and schedule are then drawn for it, so they are not the
+    stem's."""
     spec = dict(SPECS[stem])
     if seed is not None:
         spec['seed'] = seed
@@ -933,6 +948,8 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
     extra = {}
     exch = []
     draws_total = 0
+    if lap is not None and spec['kind'] == 'R':
+        raise ValueError('--lap is for X and C files; an R file draws two identities')
     if spec['kind'] == 'R':
         for attempt in range(1, 60):
             ident = draw_identities(rng, fs, center)
@@ -959,7 +976,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
                            'change of a kernel' % (ident['tries'], ident['attempts'], ctr, draws_total),
             channels=dict(window=[c for c in range(79) if in_win(c, fs, center)], centre_channel=ctr))
     elif spec['kind'] == 'X':
-        evs, info = plan_x(spec, rng, n_slots, dur, fs, center)
+        evs, info = plan_x(spec, rng, n_slots, dur, fs, center, lap_forced=lap)
         extra.update(
             lap=info['lap'], uap=info['uap'], x_plan=info,
             selection_note='LAP/UAP by %d draws: no centre channel in any train of the file, UAP outside {0x00, '
@@ -969,7 +986,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
             channels=dict(connection=sorted(X_CHANNELS), window=[c for c in range(79) if in_win(c, fs, center)],
                           centre_channel=centre_channel(center)))
     else:
-        evs, info = plan_c(spec, rng, n_slots, fs, center)
+        evs, info = plan_c(spec, rng, n_slots, fs, center, lap_forced=lap)
         extra.update(
             lap=info['lap'], uap=info['uap'],
             selection_note='LAP/UAP/clock by %d draws: the first train holds channel 43 and at least 4 in-window '
@@ -977,6 +994,10 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
                            'at 2441.0 MHz; the brief\'s "39 and 43" is not possible with "none the centre")' %
                            info['tries'],
             channels=dict(window=[c for c in range(79) if in_win(c, fs, center)], centre_channel=centre_channel(center)))
+    if lap is not None:
+        extra['lap_forced_note'] = ('the LAP 0x%06X was given (--lap), not drawn: the UAP, the clock and the schedule were drawn '
+                                    'for it by the stem\'s rejection, so they are not the stem\'s; every other key as the '
+                                    'stem has it' % lap)
     mcfo = spec['master_cfo_hz'] if master_cfo_hz is None else master_cfo_hz
     if spec['kind'] != 'R':
         cfo = mcfo                              # X: the slave answers use the master's offset; C: no slave
@@ -1081,6 +1102,7 @@ def main(argv=None):
     ap.add_argument('--seed', type=int, help='the schedule seed (LAP, clock, connection, train, slave timing)')
     ap.add_argument('--noise-seed', type=int, help='the noise and the carrier phase of each burst (default: the file\'s own)')
     ap.add_argument('--snr-db', type=float, default=20.0)
+    ap.add_argument('--lap', type=lambda v: int(v, 16), help='X and C files: this LAP (hex) in place of the drawn one')
     ap.add_argument('--slave-cfo-hz', type=float, help='the paged device\'s carrier offset (default +30000)')
     ap.add_argument('--master-cfo-hz', type=float, help='the master/pager\'s carrier offset (default per file: -30000, '
                     '+30000 or 0, see SPECS)')
@@ -1090,7 +1112,7 @@ def main(argv=None):
         ap.error('give --set or --stem')
     kw = dict(snr_db=a.snr_db)
     for k, v in (('offset_us', a.offset_us), ('drift_ppm', a.drift_ppm), ('duration', a.duration), ('seed', a.seed), ('noise_seed', a.noise_seed),
-                 ('slave_cfo_hz', a.slave_cfo_hz), ('master_cfo_hz', a.master_cfo_hz)):
+                 ('slave_cfo_hz', a.slave_cfo_hz), ('master_cfo_hz', a.master_cfo_hz), ('lap', a.lap)):
         if v is not None:
             kw[k] = v
     for stem in stems:

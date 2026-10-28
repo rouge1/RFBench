@@ -1524,11 +1524,60 @@ def _verify(cf32, side, n_pos, n_cfo, n_ids, n_dec):
     return 1 if failed else 0
 
 
+def test_lap_option():
+    print('== --lap: a given LAP in place of the drawn one', flush=True)
+    stem, lap = 'F_66C0A6_d23_n3102', 0xD64727
+    base = g.plan_file(stem, duration=0.3)
+    same = g.plan_file(stem, duration=0.3, lap=None)
+    check(json.dumps(base['sidecar'], sort_keys=True) == json.dumps(same['sidecar'], sort_keys=True)
+          and 'lap_forced' not in base['sidecar']['x_plan'] and 'lap_forced_note' not in base['sidecar'],
+          '%s: no --lap gives the stem\'s own plan, with no lap_forced key' % stem)
+    a = g.plan_file(stem, duration=0.3, lap=lap)
+    side = a['sidecar']
+    bursts = side['bursts']
+    ctr = side['channels']['centre_channel']
+    check(side['lap'] == lap and all(b['lap'] == lap for b in bursts) and side['x_plan'].get('lap_forced') is True
+          and 'lap_forced_note' in side and side['uap'] not in AVOID_UAPS and all(b['uap'] == side['uap'] for b in bursts),
+          '%s --lap 0x%06X: every burst carries the LAP, the plan says it was given, UAP 0x%02X drawn outside the avoided set'
+          % (stem, lap, side['uap']))
+    check(not any(b['channel'] == ctr for b in bursts) and sum(b['rendered'] for b in bursts) > 40
+          and {b['ptype'] for b in bursts} > {'ID'},
+          '%s --lap: %d bursts (%d rendered), IDs and packets, none on the centre channel %d'
+          % (stem, len(bursts), sum(b['rendered'] for b in bursts), ctr))
+    q = g.plan_file(stem, duration=0.05, lap=lap)
+    iq = np.concatenate(list(g.render_blocks(q, noise=False)))
+    sps = int(q['sidecar']['samples_per_symbol'])
+    want = br.access_code(lap, trailer=False)[:68]
+    ok, n = True, 0
+    for b in q['sidecar']['bursts']:
+        if b['ptype'] != 'ID' or not b['rendered'] or not b['in_window']:
+            continue
+        s0 = b['start_sample'] + b['timing_frac']
+        f = (b['channel_mhz'] - q['sidecar']['center_mhz']) * 1e6 + b['cfo_hz']
+        i = int(round(s0)) + np.arange(68 * sps + 1)
+        x = iq[i] * np.exp(-2j * np.pi * f * i / q['sidecar']['sample_rate'])
+        d = np.angle(x[1:] * np.conj(x[:-1]))
+        mid = (s0 - int(round(s0)) + sps * np.arange(68) + sps / 2).astype(int)
+        ok = ok and list((d[mid] > 0).astype(int)) == list(want)
+        n += 1
+    check(ok and n >= 3, '%s --lap: the access code of 0x%06X read back from %d noise-free IDs' % (stem, lap, n))
+    try:
+        g.plan_file(stem, duration=0.05, lap=0x9E8B33)
+        check(False, '--lap refuses a reserved LAP')
+    except ValueError:
+        check(True, '--lap refuses a reserved LAP')
+    try:
+        g.plan_file('R_s1', duration=0.05, lap=lap)
+        check(False, '--lap refuses an R file')
+    except ValueError:
+        check(True, '--lap refuses an R file')
+
+
 def main():
     t0 = time.time()
     steps = []
     for name, fn in (('p1_samples', test_p1_samples), ('p1_plans', test_p1_plans), ('p4', test_p4_samples),
-                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('freshset', test_freshset), ('regen', test_regen),
+                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('freshset', test_freshset), ('regen', test_regen), ('lap', test_lap_option),
                      ('mutants', test_mutants)):
         t = time.time()
         fn()
