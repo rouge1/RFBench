@@ -1573,11 +1573,47 @@ def test_lap_option():
         check(True, '--lap refuses an R file')
 
 
+def test_cfo_ramp():
+    print('== --cfo-ramp-hz: a carrier that walks through the file', flush=True)
+    stem, lap, dur, ramp = 'F_66C0A6_d23_n3102', 0x710E62, 0.3, 10e3
+    base = g.plan_file(stem, duration=dur, lap=lap, master_cfo_hz=-58e3)
+    zero = g.plan_file(stem, duration=dur, lap=lap, master_cfo_hz=-58e3, cfo_ramp_hz=0.0)
+    check(json.dumps(base['sidecar'], sort_keys=True) == json.dumps(zero['sidecar'], sort_keys=True)
+          and 'cfo_ramp_hz' not in base['sidecar'],
+          '%s: --cfo-ramp-hz 0 gives the plan without it, with no cfo_ramp key' % stem)
+    a = g.plan_file(stem, duration=dur, lap=lap, master_cfo_hz=-58e3, cfo_ramp_hz=ramp)
+    side = a['sidecar']
+    b0, b1 = base['sidecar']['bursts'], side['bursts']
+    want = [-58e3 + ramp * min(max((e['start_us'] - g.LEAD_S * 1e6) / (dur * 1e6), 0.0), 1.0) for e in b1]
+    same = all({k: v for k, v in x.items() if k != 'cfo_hz'} == {k: v for k, v in y.items() if k != 'cfo_hz'}
+               for x, y in zip(b0, b1))
+    check(len(b0) == len(b1) and same and all(abs(e['cfo_hz'] - w) < 1e-6 for e, w in zip(b1, want))
+          and side['cfo_ramp_hz'] == ramp and 'cfo_ramp_law' in side,
+          '%s --cfo-ramp-hz %g: every burst as without it but cfo_hz, which is the sender\'s offset + the ramp at its '
+          'start (%.0f to %.0f Hz)' % (stem, ramp, min(want), max(want)))
+    check(b1[0]['cfo_hz'] - (-58e3) < 0.01 * ramp and (-58e3 + ramp) - b1[-1]['cfo_hz'] < 0.02 * ramp,
+          '%s --cfo-ramp-hz: the first burst near the start offset, the last near start + ramp' % stem)
+    iq0 = np.concatenate(list(g.render_blocks(base, noise=False)))
+    iq1 = np.concatenate(list(g.render_blocks(a, noise=False)))
+    fs, sps = side['sample_rate'], int(side['samples_per_symbol'])
+    errs = []
+    for e in b1:
+        if e['ptype'] != 'ID' or not e['rendered']:
+            continue
+        s0 = int(round(e['start_sample'] + e['timing_frac'])) + 2 * sps
+        z = iq1[s0:s0 + 60 * sps] * np.conj(iq0[s0:s0 + 60 * sps])
+        f = np.angle(np.sum(z[1:] * np.conj(z[:-1]))) * fs / (2 * np.pi)
+        errs.append(f - (e['cfo_hz'] + 58e3))
+    check(len(errs) >= 20 and max(abs(x) for x in errs) < 50,
+          '%s --cfo-ramp-hz: the samples carry it: the tone between the ramped and the plain render of %d IDs is the '
+          'burst\'s ramp to %.1f Hz' % (stem, len(errs), max(abs(x) for x in errs) if errs else float('nan')))
+
+
 def main():
     t0 = time.time()
     steps = []
     for name, fn in (('p1_samples', test_p1_samples), ('p1_plans', test_p1_plans), ('p4', test_p4_samples),
-                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('freshset', test_freshset), ('regen', test_regen), ('lap', test_lap_option),
+                     ('p2_plans', test_p2_plans), ('p2_samples', test_p2_samples), ('samelap', test_samelap), ('laptest', test_laptest), ('freshset', test_freshset), ('regen', test_regen), ('lap', test_lap_option), ('ramp', test_cfo_ramp),
                      ('mutants', test_mutants)):
         t = time.time()
         fn()

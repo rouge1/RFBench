@@ -730,7 +730,7 @@ def plan_c(spec, rng, n_slots, fs, center, lap_forced=None):
 # --- positions, entries, jobs --------------------------------------------------------------------------------
 
 def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, snr_db, off, drift, slave_cfo,
-           draws_total, extra_top, master_cfo=0.0):
+           draws_total, extra_top, master_cfo=0.0, cfo_ramp_hz=0.0):
     ups = int(round(fs / 1e6))
     sps = ups
     s_scale, t_scale = sb.sample_scale(drift), sb.truth_scale(drift)
@@ -758,6 +758,10 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
         slot_start_us = 20000 + off + Fraction(1250) * (k - K0) * t_scale
         unwrapped.append(slot_start_us - 1250 * k)
         start_us = float(pos_t / ups_f)
+        if cfo_ramp_hz:
+            # a carrier that walks linearly through the file: + cfo_ramp_hz * (start - lead-in) / duration, held
+            # constant within a burst
+            ev['cfo_hz'] += cfo_ramp_hz * min(max((start_us - LEAD_S * 1e6) / (duration * 1e6), 0.0), 1.0)
         window_ok = in_win(ev['channel'], fs, center)
         is_id = ev['ptype'] == 'ID'
         wc = None if ev['wclk'] is None else int((ev['wclk'] >> 1) & 0x3F)
@@ -902,6 +906,14 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
         'bursts': entries,
     }
     side.update({k: v for k, v in extra_top.items() if k not in ('lap', 'uap', 'channels', 'selection_note')})
+    if cfo_ramp_hz:
+        side['cfo_ramp_hz'] = float(cfo_ramp_hz)
+        side['cfo_ramp_law'] = ('per burst cfo_hz = the sender\'s offset (master_cfo_hz or slave_cfo_hz) + cfo_ramp_hz * '
+                                'clip((start_us - %g) / %g, 0, 1): the carrier walks linearly by cfo_ramp_hz from the '
+                                'first TX slot to the end of the file\'s %g s, on every burst, and is constant within a '
+                                'burst; the top-level offsets are the values at the start' % (LEAD_S * 1e6, duration * 1e6,
+                                                                                           duration))
+        side['notes'][1] = side['notes'][1].replace('Not modelled: ', 'Not modelled: a carrier that changes within a burst, ')
     if d1 != 0:
         # a drift copy (P7 d23): the fixed-grid wording above does not hold for it
         side['drift_law'] = ('as bt_synth_slotb: TX slot k begins at file microsecond 20000 + offset + 1250 (k - 16) / (1 + '
@@ -928,11 +940,11 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
 # --- the file --------------------------------------------------------------------------------------------
 
 def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift_ppm=None, slave_cfo_hz=None,
-              master_cfo_hz=None, noise_seed=None, lap=None):
+              master_cfo_hz=None, noise_seed=None, lap=None, cfo_ramp_hz=0.0):
     """The sidecar and the render jobs of a file, no samples made. ``duration`` shortens a file for a test (the
     plan of its first part is that of the full file for the P1 and C files). ``lap`` (X and C files only) puts
     that LAP in place of the drawn one; the UAP, clock and schedule are then drawn for it, so they are not the
-    stem's."""
+    stem's. ``cfo_hz`` of every burst walks linearly by ``cfo_ramp_hz`` through the file (0: a constant carrier)."""
     spec = dict(SPECS[stem])
     if seed is not None:
         spec['seed'] = seed
@@ -1006,7 +1018,7 @@ def plan_file(stem, seed=None, duration=None, snr_db=20.0, offset_us=None, drift
                              master_cfo_hz=float(spec['master_cfo_hz'] if master_cfo_hz is None else master_cfo_hz),
                              id_share_target=spec['share'])
     plan = finish(spec, evs, None, None, exch, plan_seed, seed, fs, center, dur, snr_db, off, drift, cfo, draws_total, extra,
-                  master_cfo=mcfo)
+                  master_cfo=mcfo, cfo_ramp_hz=cfo_ramp_hz)
     side = plan['sidecar']
     if spec['kind'] == 'X':
         ids = [e for e in side['bursts'] if e['role'] == 'id_page']
@@ -1104,6 +1116,8 @@ def main(argv=None):
     ap.add_argument('--snr-db', type=float, default=20.0)
     ap.add_argument('--lap', type=lambda v: int(v, 16), help='X and C files: this LAP (hex) in place of the drawn one')
     ap.add_argument('--slave-cfo-hz', type=float, help='the paged device\'s carrier offset (default +30000)')
+    ap.add_argument('--cfo-ramp-hz', type=float, help='the carrier walks linearly by this much from the start to the end '
+                    'of the file, on every burst (default 0)')
     ap.add_argument('--master-cfo-hz', type=float, help='the master/pager\'s carrier offset (default per file: -30000, '
                     '+30000 or 0, see SPECS)')
     a = ap.parse_args(argv)
@@ -1112,7 +1126,8 @@ def main(argv=None):
         ap.error('give --set or --stem')
     kw = dict(snr_db=a.snr_db)
     for k, v in (('offset_us', a.offset_us), ('drift_ppm', a.drift_ppm), ('duration', a.duration), ('seed', a.seed), ('noise_seed', a.noise_seed),
-                 ('slave_cfo_hz', a.slave_cfo_hz), ('master_cfo_hz', a.master_cfo_hz), ('lap', a.lap)):
+                 ('slave_cfo_hz', a.slave_cfo_hz), ('master_cfo_hz', a.master_cfo_hz), ('lap', a.lap),
+                 ('cfo_ramp_hz', a.cfo_ramp_hz)):
         if v is not None:
             kw[k] = v
     for stem in stems:
