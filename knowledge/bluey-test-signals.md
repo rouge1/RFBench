@@ -1201,7 +1201,24 @@ reviewed by Opus against the real files, write them; the files are not in git.
   they are not the stem's, and the sidecar says so (`x_plan.lap_forced`, `lap_forced_note`). 0xD64727's page train
   puts fewer channels in the 24 MHz window: about 460 rendered bursts in 2 s against 1,308 for 0x66C0A6. Limitations
   bluey accepted: an ideal transmitter (h 0.32, BT 0.5), white noise, no receiver chain, two or three LAPs, the
-  generator's SNR (not `bt_bench.snr`'s), a transmitter offset only, one noise draw per SNR, no fading.
+  generator's SNR (not `bt_bench.snr`'s), a transmitter offset only, one noise draw per SNR, no fading. Not ideal in
+  one respect, which the lost-pair note in the sidecars left out (told to bluey 2026-10-28): both stems are the d23
+  cell, so every lost-pair file has the master's grid drifting at +23 ppm (`drift_ppm_signed`). Their `cell` block is
+  also the stem's, so a `--lap` file says `lap_name` 66C0A6 and `cfo_hz` 0 there; the top level and the bursts are right.
+- **The recall-confirm set (2026-10-28) and `--cfo-ramp-hz`.** For bluey's registered recall test of F against P, on
+  data neither side had seen: three new LAPs drawn (not reserved, not in any earlier set), the first three in draw
+  order whose 4 s plan finishes. **`--lap` can hang**: the X stems reject any clock whose page train touches the
+  centre channel anywhere in the file, and for some LAPs no UAP and clock passes over 2 s or more, so `draw_train`
+  loops for ever (0x710E62: 0.5 and 1 s plan at once, 2 s never; 9 of 24 candidates failed at 4 s). Screen a forced
+  LAP with a timed plan of the full duration first. Then the same F stem with `--lap`,
+  its own schedule seed per LAP and its own noise seed per file, all from one recorded master seed, 4 s each. Block A,
+  ideal at 0 ppm: offsets -58 / -30 / 0 / +30 / +58 kHz, SNR 8 to 20 dB, 105 files. Block B, offsets -58 / 0 / +58,
+  SNR 10 / 14 / 18, three impairments in files of their own: +20 ppm and -20 ppm (`--drift-ppm`: the slot grid and the
+  symbols run fast or slow; the carrier does not follow) and a carrier ramp of +10 kHz over the 4 s (-10 kHz for the
+  second LAP), 81 files. `--cfo-ramp-hz R` adds
+  `R * (start_us - 20000) / (duration * 1e6)`, clipped to 0..1, to every burst's `cfo_hz`, constant within a burst;
+  without it a file is byte for byte as before (`test_cfo_ramp`). Each sidecar has a `recall_confirm` block, and its
+  `cell` is rewritten for the file's own LAP, offset and drift. On the drive in `sdr-synth-tmp/recall-confirm/{A,B}`.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.
