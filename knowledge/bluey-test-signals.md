@@ -1219,6 +1219,11 @@ reviewed by Opus against the real files, write them; the files are not in git.
   `R * (start_us - 20000) / (duration * 1e6)`, clipped to 0..1, to every burst's `cfo_hz`, constant within a burst;
   without it a file is byte for byte as before (`test_cfo_ramp`). Each sidecar has a `recall_confirm` block, and its
   `cell` is rewritten for the file's own LAP, offset and drift. On the drive in `sdr-synth-tmp/recall-confirm/{A,B}`.
+  Block N, the false-positive control: 6 noise-only files of the same length, floor and noise generator
+  (`noise_block` with no bursts), noise seeds unused by A and B, in `recall-confirm/N`. **`cfo_hz_meaning` said
+  "the offset is <= 30 kHz" in every file**, the ±58 kHz ones included; a file past 30 kHz (the ramp counted) now
+  states its own bound, and one within it keeps the old words, so the named sets regenerate byte for byte. The
+  delivered A and B sidecars still carry the old sentence; bluey was told to ignore it.
 - **Sample counts.** The files of these two sets carry `n_samples` at the top of
   the sidecar (the file is `8 * n_samples` bytes); the older sets do not, and
   their length is the file size divided by 8.

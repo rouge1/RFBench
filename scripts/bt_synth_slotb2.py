@@ -913,6 +913,12 @@ def finish(spec, evs, ident, info, exch, plan_seed, seed, fs, center, duration, 
                                 'first TX slot to the end of the file\'s %g s, on every burst, and is constant within a '
                                 'burst; the top-level offsets are the values at the start' % (LEAD_S * 1e6, duration * 1e6,
                                                                                            duration))
+    # The meaning's "<= 30 kHz" holds for every named set; a file given a larger offset (bluey's recall-confirm
+    # +-58 kHz) says its own bound, so the named sets' sidecars stay byte for byte as before.
+    top = max([abs(e['cfo_hz']) for e in entries] + [abs(master_cfo)])
+    if top > 30e3:
+        side['cfo_hz_meaning'] = side['cfo_hz_meaning'].replace(
+            'the offset is <= 30 kHz', 'the offset in this file reaches %g kHz' % (top / 1e3))
         side['notes'][1] = side['notes'][1].replace('Not modelled: ', 'Not modelled: a carrier that changes within a burst, ')
     if d1 != 0:
         # a drift copy (P7 d23): the fixed-grid wording above does not hold for it

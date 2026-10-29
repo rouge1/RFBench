@@ -1581,8 +1581,16 @@ def test_cfo_ramp():
     check(json.dumps(base['sidecar'], sort_keys=True) == json.dumps(zero['sidecar'], sort_keys=True)
           and 'cfo_ramp_hz' not in base['sidecar'],
           '%s: --cfo-ramp-hz 0 gives the plan without it, with no cfo_ramp key' % stem)
+    small = g.plan_file(stem, duration=dur, lap=lap)
+    check('the offset in this file reaches 58 kHz' in base['sidecar']['cfo_hz_meaning']
+          and 'the offset is <= 30 kHz' in small['sidecar']['cfo_hz_meaning'],
+          '%s: cfo_hz_meaning gives the bound past 30 kHz, and keeps the old words within it' % stem)
     a = g.plan_file(stem, duration=dur, lap=lap, master_cfo_hz=-58e3, cfo_ramp_hz=ramp)
     side = a['sidecar']
+    walk = g.plan_file(stem, duration=dur, lap=lap, master_cfo_hz=25e3, cfo_ramp_hz=ramp)['sidecar']
+    peak = max(abs(e['cfo_hz']) for e in walk['bursts'])
+    check(peak > 30e3 and 'reaches %g kHz' % (peak / 1e3) in walk['cfo_hz_meaning'],
+          '%s +25 kHz --cfo-ramp-hz %g: cfo_hz_meaning\'s bound counts the ramp (%g kHz)' % (stem, ramp, peak / 1e3))
     b0, b1 = base['sidecar']['bursts'], side['bursts']
     want = [-58e3 + ramp * min(max((e['start_us'] - g.LEAD_S * 1e6) / (dur * 1e6), 0.0), 1.0) for e in b1]
     same = all({k: v for k, v in x.items() if k != 'cfo_hz'} == {k: v for k, v in y.items() if k != 'cfo_hz'}
