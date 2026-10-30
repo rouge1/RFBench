@@ -155,7 +155,9 @@ class RdsEncoder:
         # song changes (NRSC-G300-C section 6.10).
         self._item = None
         self._item_toggle = 0
-        self._message = None              # RadioText typed in by hand
+        # RadioText typed in by hand. What the dialog gave counts as typed,
+        # or set_now_playing would put the song's line in its place unsent.
+        self._message = rds_text(radiotext)[:64] if radiotext.strip() else None
         self.station_name = station_name
         self._seq_index = 0
         self._ps_seg = 0

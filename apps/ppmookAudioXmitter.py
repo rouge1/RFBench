@@ -151,8 +151,10 @@ class ConfigDialog(Qt.QDialog):
 
     def create_pulse_width_control(self):
         self.pulse_combo = Qt.QComboBox()
-        self.pulse_combo.addItems(['10 usec', '20 usec', '40 usec'])
-        self.pulse_combo.setCurrentIndex(1)  # Default 20 usec
+        # The widths are samples at 20 MS/s, so 10, 20 and 40 are 0.5, 1 and
+        # 2 us. They were labelled 10, 20 and 40 usec, twenty times too long.
+        self.pulse_combo.addItems(['0.5 usec', '1 usec', '2 usec'])
+        self.pulse_combo.setCurrentIndex(1)  # Default 1 usec
         self.layout.addWidget(Qt.QLabel("Pulse Width:"))
         self.layout.addWidget(self.pulse_combo)
 
@@ -325,7 +327,7 @@ class ppmookLiveAudioXmitter(gr.top_block, Qt.QWidget):
         # Create the options list
         self._pulseWidth_options = [10, 20, 40]
         # Create the labels list
-        self._pulseWidth_labels = ['10 usec', '20 usec', '40 usec']
+        self._pulseWidth_labels = ['0.5 usec', '1 usec', '2 usec']
         # Create the combo box
         # Create the radio buttons
         self._pulseWidth_group_box = Qt.QGroupBox("Pulse Duration" + ": ")

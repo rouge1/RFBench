@@ -382,6 +382,13 @@ Things worth knowing before changing it:
   `test_rds_radiotext.py`. Waiting for the whole 64-character line instead
   cost 3.4 s per song, and on that laptop, which ran the test flowgraph at
   about 70% of real time, Now Playing never arrived at all.
+- **The dialog's RadioText is a typed message too.** The app builds its
+  encoder with the dialog's RadioText and then starts the song, and
+  `set_now_playing()` rotates only a message `set_radiotext()` had set - so
+  with a song and Now Playing on, the dialog's text never went out at all.
+  Found off air on 2026-10-30, where three rounds' RadioText was missing for
+  a receiver that kept every complete message; the constructor now takes it
+  as the typed message, and `test_rds_radiotext.py` checks it goes out.
 - **Messages longer than RadioText are paged.** `set_paragraph()` splits text on
   word boundaries into 64-character pages, sends each one complete, then toggles
   the A/B flag so receivers clear before the next. Pages advance on segments

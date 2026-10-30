@@ -69,6 +69,11 @@ clip's soundtrack.
   sharp, deviation and all. `scripts/test_audio_files.py` makes its MP3s at
   44.1 kHz for exactly that reason, so a missed resample reads 440 Hz as
   479 and fails.
+- **FM Audio resamples by the file's own rate.** It interpolated by a fixed
+  40 into its 2 MS/s modulator, which is right for 50 kHz audio, so a 48 kHz
+  file played 4.17% fast - measured off air as a 7.2 kHz edge arriving at
+  7.5. The ratio now comes from `AudioFileSource.rate` (125/3 for 48 kHz),
+  and a 1 kHz WAV at 48 or 44.1 kHz comes out at 1000.00 Hz.
 - **One entry per song.** `choices()` lists a name once per folder, keeping
   the extension earliest in the list it is given - so a song kept as both
   `.wav` and `.mp3` is offered once, as the WAV. Otherwise the list shows

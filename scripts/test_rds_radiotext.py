@@ -415,6 +415,15 @@ shown = on_air(enc, listening, 20)
 check("clearing the typed text leaves the song alone",
       ({rt for rt, _ in shown[-40:]}, shown[-1][1]), ({NEXT_SONG}, NEXT_SONG))
 
+# The app builds its encoder with the dialog's RadioText and then starts the
+# song. That RadioText once never went out at all: set_now_playing found no
+# typed message and put the song's line in its place.
+enc = RdsEncoder(pi=0x8617, ps='GNURADIO', pty=8, radiotext=TYPED)
+enc.set_now_playing('', FILE_SONG)
+shown = on_air(enc, RdsProtocol(), 40)
+check("RadioText from the dialog takes turns with the song from the start",
+      {TYPED, FILE_SONG} <= {rt for rt, _ in shown}, True)
+
 print("\na new song's tags never slice the last song's text")
 # Seen on the Windows laptop: Next Track part way through a pass of the old
 # line. The new line's first segments to go out were padding, the same in both,

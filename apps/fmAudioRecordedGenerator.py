@@ -27,6 +27,7 @@ import os
 import signal
 import sys
 import time
+from fractions import Fraction
 from math import pi
 
 # Third party imports 
@@ -489,11 +490,6 @@ class fmAudioRecordedGenerator(gr.top_block, Qt.QWidget):
             self.radio_sink.set_frequency(0, centerFreq*1e6)
             self.radio_sink.set_gain(0, 'VGA', scale_power(rfPwr, self._power_range))
             self.radio_sink.set_gain(0, 'AMP', 0)
-        self.rational_resampler_xxx_0_0 = filter.rational_resampler_fff(
-                interpolation=40,
-                decimation=1,
-                taps=[],
-                fractional_bw=0)
         self.qtgui_time_sink_x_0 = qtgui.time_sink_f(
             25000, #size
             samp_rate, #samp_rate
@@ -663,6 +659,15 @@ class fmAudioRecordedGenerator(gr.top_block, Qt.QWidget):
         else:
             # Create dummy source if no valid audio file
             self.blocks_wavfile_source_0 = blocks.null_source(gr.sizeof_float*1)
+        # The file's own rate up to the radio's. A fixed x40 assumed 50 kHz
+        # audio, and a 48 kHz file played 4.2% fast and high.
+        audio_rate = self.audio_file.rate if self.audio_file else 48000
+        ratio = Fraction(int(samp_rate), int(audio_rate)).limit_denominator(64)
+        self.rational_resampler_xxx_0_0 = filter.rational_resampler_fff(
+                interpolation=ratio.numerator,
+                decimation=ratio.denominator,
+                taps=[],
+                fractional_bw=0)
 
         self.blocks_selector_0 = blocks.selector(gr.sizeof_float*1,inputSelect,0)
         self.blocks_selector_0.set_enabled(True)
