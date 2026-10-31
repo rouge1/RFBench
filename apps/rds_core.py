@@ -422,8 +422,12 @@ class RdsProtocol:
         self.groups += 1
         gtype = (b['B'] >> 12) & 0xF
         ver_b = (b['B'] >> 11) & 1
-        self.tp = (b['B'] >> 10) & 1
-        self.pty = (b['B'] >> 5) & 0x1F
+        # Every group carries them, so taking each as it came let one block B
+        # repaired wrongly show a different PTY: off the cable, 5 read 4 and
+        # 15 read 14 until the next good group.
+        tp_pty = ((b['B'] >> 10) & 1, (b['B'] >> 5) & 0x1F)
+        if self._believed(('tp_pty',), tp_pty, 'B' in corrected):
+            self.tp, self.pty = tp_pty
         self.group_counts[f"{gtype}{'B' if ver_b else 'A'}"] += 1
         if ver_b and 'C' in b:
             self.pi_votes[b['C']] += 1
@@ -444,7 +448,9 @@ class RdsProtocol:
             self._parse_rtplus(b)
 
         if gtype == 0:
-            self.ta = (b['B'] >> 4) & 1
+            ta = (b['B'] >> 4) & 1
+            if self._believed(('ta',), ta, 'B' in corrected):
+                self.ta = ta
             if 'D' in b:
                 addr = b['B'] & 0x3
                 # The same care as RadioText: taking every repair as it came,

@@ -151,6 +151,14 @@ Three things that are easy to get wrong and cost real time here:
   second of every minute (was never shown). What remains is the link itself:
   after Next Track, at 80%, RadioText and Now Playing still took 44-47 s to
   arrive whole.
+- **PTY, TP and TA go through `_believed()` as well.** They sit in every
+  group's block B and were once taken from each group as it came, so one
+  block B repaired wrongly put a different Programme Type on screen until the
+  next good group. Off the VSG60 on a cable on 2026-10-30, a station sending
+  PTY 5 read 4 in the receiver window, and one sending 15 read 14 later the
+  same night. PI was never affected, since it is voted. `scripts/test_rds_pty.py`
+  feeds encoded bursts at 96.6% blocks good: 10-27 groups showed the wrong PTY
+  before the change, none after.
 - **Now Playing is an RT+ item, kept until the song changes.** NRSC-G300-C
   section 6.10 has a receiver keep RT+ title, artist and the rest of content
   types 1-11 across RadioText messages for as long as the item toggle bit
