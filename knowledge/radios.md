@@ -121,6 +121,21 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
     recording, or play for several minutes and stop the run when it is
     done.
 
+- **Its hardware LO is not at the centre frequency you set.** The VSG60
+  parks its analog LO off the requested centre and makes up the difference
+  with a digital shift, so the signal lands where asked but the LO leak, and
+  the I/Q image mirrored about it, do not sit at the centre. Measured on
+  worklaptop1's VSG60A on 2026-10-30 from the leak line, as where it sat
+  relative to the requested centre: −4.2 kHz at 144.29 MHz, −8.3 kHz at 162.675 MHz, −43 kHz at
+  868.35 MHz, −250 kHz at 50.29 MHz, +90 kHz at 1240.29 MHz and +200 kHz at
+  5615.8 MHz. The step is not the same at every frequency and its size is not
+  documented, so take these as one unit's numbers. The image of a carrier at
+  f appears at 2·LO − f, and a weak line sits exactly halfway between the
+  leak and the carrier. It matters to anything that places its signal "away
+  from the leak" - the ISM, AM and NTSC apps, and the offset trick in
+  [ism](ism.md#the-carrier-never-turns-off): allow for a leak up to a few
+  hundred kHz from where it was expected, or look at the spectrum once.
+
 - **A VSG60 and a HackRF stream together on one host - in two processes.**
   Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
   its USB 3 side: the HackRF received 99.1 FM at 1.999 MS/s with the VSG
