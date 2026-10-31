@@ -11,14 +11,23 @@ symbol of every frame that came through clean: 72 of 72 on the 23-byte frames,
 and all of each one-byte frame at 4/5, 4/6, 4/7 and 4/8. See [what the
 captures showed](#what-the-captures-showed).
 
-Not checked against anything real: SF other than 7, bandwidths other than
-125 kHz, low data rate optimisation, implicit header, and SX126x chips.
+They were then **cross-checked against gr-lora_sdr itself**: its transmit
+chain and the numpy encoder give the same symbols in all 672 combinations of
+SF 7-12, the four coding rates, CRC on and off, explicit and implicit header,
+and LDRO on and off. Its receiver decodes the numpy encoder's IQ at SF 7-12
+with every coding rate and both header modes - see [checked against
+gr-lora_sdr](#checked-against-gr-lora_sdr).
+
+Not checked against a real chip: SF other than 7, bandwidths other than
+125 kHz, LDRO, implicit header, SX126x, and whether a chip receiving minds
+zero padding in the last block.
 
 The documents, four code repositories and the captures are in `docs/lora/`,
 which git ignores; `docs/lora/SOURCES.md` lists each with its URL and sha256.
 The numpy encoder and decoder that were checked against the captures are
-there too (`docs/lora/numpy/`: `lora_phy.py`, and `rx_capture.py FILE SF` to
-decode a capture), as is Grok's cited research brief. They are not in the repo
+there too (`docs/lora/numpy/`: `lora_phy.py`, `rx_capture.py FILE SF` to
+decode a capture, and the two gr-lora_sdr cross-checks), as is Grok's cited
+research brief. They are not in the repo
 yet.
 
 The `css` kind in `scripts/signal_mix.py` (the game-night generator) is *not*
@@ -254,6 +263,43 @@ block differs, because the interleaver spreads each codeword across every
 symbol of its block. A receiver never reads the padding, so decoding loses
 nothing. Whether a chip *receiving* cares is not known.
 
+## Checked against gr-lora_sdr
+
+gr-lora_sdr will not install into `gnu`: it needs gnuradio-core older than
+the 3.10.12 there. A conda env of its own, `lora` (GNU Radio 3.10.11,
+gr-lora_sdr dev build of 2026-01-05 from the `tapparelj` channel), has it:
+`conda activate lora`, then `import gnuradio.lora_sdr`. The two checks are
+`docs/lora/numpy/xcheck_tx.py` and `xcheck_rx.py`, run in that env.
+
+- **Transmit, 672 of 672 identical.** Its whitening, header, add_crc,
+  hamming_enc, interleaver and gray_demap blocks, read at the Gray block's
+  output, against the numpy encoder with zero padding. That covers SF 7-12,
+  CR 4/5-4/8, CRC on and off, explicit and implicit header, LDRO on and off,
+  and payloads of 2-54 bytes.
+- **Receive, 189 of 192 decoded.** The numpy encoder and modulator at 4
+  samples per chip, 10 dB SNR, carrier ±3 kHz, LDRO as a chip needs it at
+  125 kHz, into frame_sync through crc_verif. The three misses were SF12
+  frames whose last bytes came out wrong. All three decode once the test
+  signal's clock is offset to match its carrier, or with no offset at all -
+  see the second trap below.
+
+Two traps found doing it:
+
+- **SF11 and SF12 at 4 samples a chip decode nothing** unless the block
+  feeding `frame_sync` has a bigger buffer: `set_min_output_buffer(65536)`.
+  `frame_sync` asks for 2^SF·OS·2 items at once, 16,392 at SF12, which is
+  more than the default 8,191, and the receiver then just sits silent.
+  Setting it on the top block does not reach a block inside the hier
+  `lora_rx` (fm-rec2 found this first, on 2026-10-31).
+- **`frame_sync` derives the clock error from the carrier error**, using the
+  centre frequency it is given, as a chip with one crystal would. A
+  synthetic signal with a carrier offset and no matching clock offset slips
+  late in a long SF12 frame. Give test signals both, scaled by
+  offset/centre, or neither.
+
+In gr-lora_sdr's hier blocks, `lora_tx` takes its payload as a pmt string on
+message port `in`, and `lora_rx` puts payloads out on message port `out`.
+
 ## On the bench
 
 - **Cable only.** 902-928 MHz is Part 15.247: hopping across at least 50
@@ -281,7 +327,7 @@ nothing. Whether a chip *receiving* cares is not known.
 
 | Tool | What it does | State |
 |---|---|---|
-| [gr-lora_sdr](https://github.com/tapparelj/gr-lora_sdr) | TX and RX in GNU Radio 3.10, SF5-12, header, CRC, LDRO | the reference these notes follow; not on conda-forge under `gnuradio-lora_sdr` (searched 2026-10-31) |
+| [gr-lora_sdr](https://github.com/tapparelj/gr-lora_sdr) | TX and RX in GNU Radio 3.10, SF5-12, header, CRC, LDRO | the reference these notes follow; in the `lora` conda env here (the `tapparelj` channel, not conda-forge) |
 | [rpp0/gr-lora](https://github.com/rpp0/gr-lora) | RX, multi-channel | 2018; its captures are the ones used here |
 | [BastilleResearch/gr-lora](https://github.com/BastilleResearch/gr-lora) | RX, Knight's 2016 work | idle |
 | [LoRaPHY](https://github.com/jkadbear/LoRaPHY) | encode and decode in MATLAB | research code |
