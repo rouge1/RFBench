@@ -365,6 +365,19 @@ dPMR channel, whose syncs are not self-complementary in this way, or a burst who
 slot type decodes) before naming a hit voice or data. Repeating every slot points to
 data or control; voice carries the SYNC only in burst A, one burst in six.
 
+The slot type then settled it. The 20 bits either side of the SYNC (5 symbols each,
+dibits +3 = 01, +1 = 00, -1 = 10, -3 = 11), decoded as Golay(20,8) by minimum distance
+with the generator of Annex B (Table B.11), accepted at 2 bit errors or fewer, gave
+colour code + data type (clause 9.3, Table 9.22). On 9 channels the dominant colour code
+held in 95-100 % of bursts, and on the 5 that Sceptre also decoded it agreed with
+Sceptre's colour code every time. Every dominant decode came from the BS **data** SYNC in
+normal polarity (CSBK, Idle, Terminator with LC, Voice LC Header, Data Header); the
+"voice, inverted" reading gave only reserved or nonsense types. So the Golay(20,8)
+generator, the slot-type layout and the data-type table are checked against a signal
+too, and a correct chain keeps polarity. A BS channel that is nearly all CSBK fits a
+Capacity Plus control channel (a guess; CSBK opcodes were not decoded). Not checked:
+BPTC(196,96), CSBK and LC contents, FID, addresses, and voice bursts.
+
 ## 10. What the documents did not give
 
 - Occupied/emission bandwidth number beyond "12.5 kHz carrier" + RRC shape;
