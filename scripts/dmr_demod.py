@@ -158,15 +158,24 @@ def modulate(symbols, fs=FS_SYM):
 
 
 # --- demodulation ----------------------------------------------------------------
-def discriminate(x, fs):
-    """Complex baseband at fs, channel at 0 Hz -> instantaneous frequency in Hz at 48 kS/s."""
+def discriminate(x, fs, squelch=None):
+    """Complex baseband at fs, channel at 0 Hz -> instantaneous frequency in Hz at 48 kS/s.
+
+    squelch: zero the output wherever the channel power, averaged over a symbol, is
+    below this fraction of its peak. Needed for a handheld's bursts (off half the time):
+    on noise alone the discriminator swings by kilohertz, and find_syncs' threshold is
+    relative to the largest correlation in the span. 0.25 works; None leaves it off."""
     if fs != FS_SYM:
         from fractions import Fraction
         r = Fraction(FS_SYM / fs).limit_denominator(10000)
         x = resample_poly(x, r.numerator, r.denominator)
     x = lfilter(firwin(101, 6000, fs=FS_SYM), 1, x)
     d = np.angle(x[1:] * np.conj(x[:-1])) * FS_SYM / (2 * np.pi)
-    return np.convolve(d, np.ones(SPS) / SPS, mode='same')
+    d = np.convolve(d, np.ones(SPS) / SPS, mode='same')
+    if squelch is not None:
+        p = np.convolve(np.abs(x) ** 2, np.ones(SPS) / SPS, mode='same')[1:]
+        d = np.where(p > squelch * np.max(p), d, 0.0)
+    return d
 
 
 def find_syncs(d, name, thr=0.6, min_gap=100):
@@ -312,11 +321,12 @@ def main(argv=None):
     ap.add_argument('--to', dest='t1', type=float, required=True)
     ap.add_argument('--ambe-out')
     ap.add_argument('--compare', help='a Sceptre .ambe file to compare the voice frames with')
+    ap.add_argument('--squelch', type=float, help="e.g. 0.25 for a handheld's bursts; see discriminate()")
     a = ap.parse_args(argv)
     if a.centre is None:
         ap.error('--centre is needed')
     x, fs = channelize_blue(a.cdif, a.centre, a.chan, a.t0, a.t1)
-    d = discriminate(x, fs)
+    d = discriminate(x, fs, a.squelch)
     db = data_bursts(d)
     counts = {}
     for _, cc, dt, _ in db:

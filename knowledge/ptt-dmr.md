@@ -376,7 +376,8 @@ normal polarity (CSBK, Idle, Terminator with LC, Voice LC Header, Data Header); 
 generator, the slot-type layout and the data-type table are checked against a signal
 too, and a correct chain keeps polarity. A BS channel that is nearly all CSBK fits a
 Capacity Plus control channel (a guess; CSBK opcodes were not decoded). Not checked:
-BPTC(196,96), CSBK and LC contents, FID, addresses.
+CSBK contents. (BPTC(196,96), the LC and its RS(12,9) were checked later; see
+[A transmitter](#a-transmitter-dmr_synthpy-2026-11-02).)
 
 Voice bursts were then checked bit for bit against Sceptre's own `.ambe` file of the same
 call (see [ptt.md](ptt.md)). Demodulated with numpy alone (mix to the channel, 1 MS/s,
@@ -397,6 +398,56 @@ capture; it is told from a real one by how closely the 24 SYNC symbols fit four 
 (RMS residual about 0.33 of a level unit for real SYNCs, over 4 for chance ones), and a
 level scale far from 648 Hz a unit. Table B.11's Golay(20,8) code has a minimum
 distance of 8 by count, one more than the (20,8,7) the text names; it still corrects 3.
+
+## A transmitter: `dmr_synth.py` (2026-11-02)
+
+`scripts/dmr_synth.py` writes one PTT press as a cf32 file: Voice LC Header, voice
+superframes, Terminator with LC, from a handheld (MS-sourced SYNCs, or TDMA direct mode
+slot 1 or 2), one 27.5 ms burst every 60 ms with the transmitter ramped off in between.
+Beside it go a JSON sidecar (every burst's sample, the LC, the colour code) and the
+`.ambe` of the voice frames sent. Voice is replayed AMBE+2 frames from a Sceptre `.ambe`,
+or the silence frame: the codec cannot be encoded from the standards. The FEC is in
+`scripts/dmr_fec.py`, written from the Annex B tables, and `scripts/test_dmr_synth.py`
+checks it.
+
+What is checked, and against what:
+
+- **Table E.1.** The BPTC(196,96) matrix and the `x 181 mod 196` interleave give the
+  table's transmit order for all 196 bits. The test reads the table out of the spec text
+  in `docs/ptt/dmr/text/` when it is there.
+- **A real call.** On the BS-sourced call whose voice frames matched Sceptre's `.ambe`
+  (above):
+  - every Voice LC Header and the Terminator decode with no failing BPTC row or column,
+    and pass the RS(12,9) check after unmasking with 969696 and 999999 (Table B.21);
+  - in every superframe, bursts B-E carry the embedded LC with no failing Hamming(16,11)
+    row or column parity and a correct 5-bit checksum;
+  - the EMB's QR(16,7) decodes with no errors, LCSS running 01, 11, 11, 10, then 00 in
+    burst F, and burst F carries the Null embedded message.
+
+  Re-encoding the decoded content reproduced all six headers and terminators and all
+  nine superframes' centre fields bit for bit. So the RS(12,9) generator matrix, the
+  parity byte order (p2, p1, p0 after LC_0..LC_8) and the masks, the embedded-LC layout
+  and read-out (Figure B.3) and the EMB generator (Table B.12) are all right as written.
+- **Round trip.** Whole synthetic calls go through `dmr_demod.py`: clean, direct mode, and
+  at 1 MS/s with an offset, a 300 Hz carrier error and 18 dB SNR in 12.5 kHz. Every voice
+  frame, slot type, LC and EMB comes back.
+
+Two traps found on the way:
+
+- **A header's LC need not be the standard one.** On that Capacity Plus call the Voice LC
+  Headers carried a manufacturer-specific FLCO with a nonzero FID, while the embedded LC
+  and the Terminator carried the standard Grp_V_Ch_Usr (FLCO 0, FID 0). A decoder that
+  reads the IDs only from the header will report the wrong ones.
+- **Squelch a bursty signal before `find_syncs`.** With a handheld off half the time,
+  the FM discriminator on noise alone swings by kilohertz. `find_syncs` sets its
+  threshold relative to the largest correlation in the whole span, so at 18 dB it found
+  only 3 of 5 superframes. Zeroing the discriminator where the channel power is low
+  found all 5. `dmr_demod.discriminate(x, fs, squelch=0.25)` (`--squelch 0.25` on the
+  command line) does this; it is off by default, so a caller with bursts must ask for it.
+
+Not built yet: a BS-sourced (repeater) stream, which needs the CACH (TACT Hamming(7,4)
+and Short LC) and something in the other slot. Not yet decoded by any decoder outside
+this code (no DSD-FME here).
 
 ## 10. What the documents did not give
 
