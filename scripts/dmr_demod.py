@@ -19,6 +19,8 @@ AMBE FEC), and it does not turn voice into audio.
     python scripts/dmr_demod.py REC.cdif --centre FC --chan F --from 6.5 --to 11.5
     python scripts/dmr_demod.py REC.cdif --chan ... --ambe-out call.ambe
     python scripts/dmr_demod.py REC.cdif --chan ... --compare sceptre.ambe
+    python scripts/dmr_demod.py REC.cdif --chan ... --recover
+    python scripts/dmr_demod.py REC.cdif --chan ... --matched
 
 A .cdif is Sceptre's BLUE / X-Midas file (knowledge/ptt.md): 512-byte header, complex
 int16 ('CI') or float32 ('CF') samples. It is read in chunks; run it under a memory cap
@@ -31,10 +33,53 @@ import sys
 import numpy as np
 from scipy.signal import firwin, lfilter, resample_poly
 
+import dmr_fec as F
+
 SYMBOL_RATE = 4800
 SPS = 10
 FS_SYM = SYMBOL_RATE * SPS            # 48 kS/s
 DEV = 648.0                           # Hz per symbol unit: +-1 -> 648, +-3 -> 1944 (h = 0.27)
+
+# One timeslot is 30 ms, so one logical channel's bursts are 60 ms apart:
+# 4800 sym/s * 0.06 s = 288 symbols. A voice superframe is 6 of those, 360 ms.
+BURST_SPACING_SYMS = 288
+SUPERFRAME_BURSTS = 6
+SUPERFRAME_SYMS = BURST_SPACING_SYMS * SUPERFRAME_BURSTS   # 1728
+
+# Bursts B-F of a voice superframe (clause 7.1.3, Table 9.20): LC first,
+# continuation, continuation, last, then a single-fragment Null or RC.
+LCSS_BF = (0b01, 0b11, 0b11, 0b10, 0b00)
+
+# Clause 5.1.2.2: the first burst A is immediately preceded by a voice LC
+# header or a PI header. The burst immediately after F is a data burst
+# (a terminator with LC on an inbound channel). Those two sit on this slot's
+# grid, so they time a superframe whose own voice SYNC was not kept.
+ANCHOR_HEADERS = ('Voice LC Header', 'PI Header')
+
+# Centre field of a voice burst with embedded signalling (Table E.6):
+# EMB(15)..EMB(8), 32 embedded bits, EMB(7)..EMB(0).
+EMB_SPLIT = 8
+
+# Recovery gates. Tuned on synthetic calls; see NOTES_decoder.md.
+# A candidate needs 4 of 5 B-F EMBs within this many bits of a codeword, the
+# neighbour's colour code, and the LCSS sequence above with at most one miss.
+RECOVER_MAX_EMB_ERR = 1
+RECOVER_MIN_EMB = 4
+RECOVER_MAX_LCSS_MISMATCH = 1
+# Decision-directed residual, in symbol units, after refitting the neighbour's
+# scale and offset on bursts B-F. Also applied per voice frame. Measured on
+# synthetic calls (NOTES_decoder.md): a clean superframe sits near 0.23, one
+# frame of the 12 dB superframe this search recovered reached 0.48, and
+# squelched noise refits to about 0.30-0.47. The gate does not separate those.
+# It rejects a fit that never found the four levels. The EMB check rejects noise.
+RECOVER_MAX_LEVEL_RMS = 0.75
+# find_syncs' peak wanders by a sample, so a neighbour predicts burst A to
+# within a few samples. The search keeps the alignment with the open eye.
+RECOVER_TIMING_RADIUS = 4
+# Symbol centres closer than this to either end of the discriminator array are
+# not returned: the 101-tap channel filter and the 8-symbol RRC have no
+# history there, so a cut file would otherwise quantize the edge to some level.
+RECOVER_EDGE = 160
 
 # Table 9.2. Each data SYNC is the symbol-for-symbol negation of the voice SYNC beside it.
 SYNCS = {
@@ -131,6 +176,150 @@ def burst_slot_type(burst_bits):
     return v >> 4, v & 0xF, err
 
 
+def emb_bits(burst_bits):
+    """The 16 EMB bits of a voice burst: the 8 bits before the embedded field and the 8 after it."""
+    centre = burst_bits[108:156]
+    return centre[:EMB_SPLIT] + centre[-EMB_SPLIT:]
+
+
+# Symbol spans of the three 72-bit voice frames inside a 132-symbol burst.
+# Frame 2 is split by the 24-symbol centre (symbols 54..77).
+_FRAME_SYMS = (((0, 36),), ((36, 54), (78, 96)), ((96, 132),))
+_EMB_SYMS = ((54, 58), (74, 78))
+
+
+def _quantize(v):
+    return np.where(v > 2, 3, np.where(v > 0, 1, np.where(v > -2, -1, -3)))
+
+
+def _symbol_index(sync_pos, a, b):
+    """Sample index of symbols [a, b) of the burst whose centre starts at sync_pos."""
+    return (sync_pos - 54 * SPS) + SPS * np.arange(a, b)
+
+
+def _in_array(d, idx, edge=0):
+    return len(idx) > 0 and idx[0] >= edge and idx[-1] < len(d) - edge
+
+
+def _read_spans(d, sync_pos, spans, scale, off, edge=0):
+    """(bits, rms) of those symbol spans, or None when one falls outside the array."""
+    bits, chunks = [], []
+    for a, b in spans:
+        idx = _symbol_index(sync_pos, a, b)
+        if not _in_array(d, idx, edge):
+            return None
+        v = (d[idx] - off) / scale
+        sym = _quantize(v)
+        bits += symbols_to_bits(sym)
+        chunks.append(v - sym)
+    resid = np.concatenate(chunks)
+    return bits, float(np.sqrt(np.mean(resid ** 2)))
+
+
+def read_emb_at(d, sync_pos, scale, off, edge=0):
+    """16 EMB bits at a voice-burst centre, or None if those symbols are outside `d`."""
+    got = _read_spans(d, sync_pos, _EMB_SYMS, scale, off, edge)
+    return None if got is None else got[0]
+
+
+def read_voice_frames_at(d, sync_pos, scale, off, max_rms=None, edge=0):
+    """The three 72-bit frames at `sync_pos`. An entry is None when its symbols are
+    outside the array, or (when max_rms is set) when they do not sit on the four levels."""
+    frames = []
+    for spans in _FRAME_SYMS:
+        got = _read_spans(d, sync_pos, spans, scale, off, edge)
+        if got is None or (max_rms is not None and got[1] > max_rms):
+            frames.append(None)
+        else:
+            frames.append(got[0])
+    return frames
+
+
+def refit_levels(d, pos, scale, off):
+    """(scale, offset, rms) from the in-range symbols of bursts B-F, or None.
+
+    `pos` is the sample where burst A's centre would start. Two decision-directed
+    passes, seeded with the neighbour's scale and offset. rms is in symbol units."""
+    chunks = []
+    for k in range(1, SUPERFRAME_BURSTS):
+        idx = _symbol_index(pos + k * BURST_SPACING_SYMS * SPS, 0, 132)
+        keep = idx[(idx >= RECOVER_EDGE) & (idx < len(d) - RECOVER_EDGE)]
+        if len(keep):
+            chunks.append(d[keep])
+    if not chunks:
+        return None
+    v = np.concatenate(chunks)
+    if len(v) < 64:
+        return None
+    sc, of = float(scale), float(off)
+    sym = None
+    for _ in range(2):
+        if not 300 < sc < 1000:
+            return None
+        sym = _quantize((v - of) / sc).astype(float)
+        (sc, of), *_ = np.linalg.lstsq(np.vstack([sym, np.ones(len(sym))]).T, v, rcond=None)
+        sc, of = float(sc), float(of)
+    if not 300 < sc < 1000:
+        return None
+    sym = _quantize((v - of) / sc).astype(float)
+    resid = (v - of) / sc - sym
+    return sc, of, float(np.sqrt(np.mean(resid ** 2)))
+
+
+def superframe_colour(d, pos, scale, off):
+    """Colour code shared by bursts B-F, or None when fewer than 4 agree."""
+    votes = []
+    for k in range(1, SUPERFRAME_BURSTS):
+        bits = read_emb_at(d, pos + k * BURST_SPACING_SYMS * SPS, scale, off)
+        if bits is None:
+            continue
+        cc, _pi, _lcss, err = F.emb_decode(bits)
+        if err <= RECOVER_MAX_EMB_ERR:
+            votes.append(cc)
+    if len(votes) < RECOVER_MIN_EMB:
+        return None
+    best = max(set(votes), key=votes.count)
+    if votes.count(best) < RECOVER_MIN_EMB:
+        return None
+    return best
+
+
+def superframe_candidate(d, pos, scale, off, cc, radius=RECOVER_TIMING_RADIUS):
+    """Whether the superframe whose burst A would sit near `pos` is really there.
+
+    A found neighbour is a sample or two off the symbol grid, so this tries
+    `pos` and a few samples either side, keeps the alignment whose B-F symbols
+    sit closest to the four levels, and accepts it only when that residual is
+    small and at least 4 of the 5 EMBs decode to `cc` with at most one bit
+    error and the LCSS sequence has at most one mismatch.
+    Returns (ok, aligned position, scale, offset)."""
+    best = None
+    for dt in range(-radius, radius + 1):
+        fit = refit_levels(d, pos + dt, scale, off)
+        if fit is None:
+            continue
+        if best is None or fit[2] < best[3]:
+            best = (pos + dt, fit[0], fit[1], fit[2])
+    if best is None or best[3] > RECOVER_MAX_LEVEL_RMS:
+        return False, pos, scale, off
+    pos, sc, of, _rms = best
+    n_ok = mismatches = 0
+    for k, expect in enumerate(LCSS_BF, start=1):
+        bits = read_emb_at(d, pos + k * BURST_SPACING_SYMS * SPS, sc, of)
+        if bits is None:
+            mismatches += 1
+            continue
+        ecc, _pi, lcss, err = F.emb_decode(bits)
+        if not (err <= RECOVER_MAX_EMB_ERR and ecc == cc):
+            mismatches += 1
+            continue
+        n_ok += 1
+        if lcss != expect:
+            mismatches += 1
+    ok = n_ok >= RECOVER_MIN_EMB and mismatches <= RECOVER_MAX_LCSS_MISMATCH
+    return ok, pos, sc, of
+
+
 # --- modulation (for tests and synthetic files) ------------------------------------
 def rrc(alpha=0.2, sps=SPS, span=8):
     """Square-root raised cosine (clause 10.2.2.2: flat to 1920 Hz, zero above 2880 Hz)."""
@@ -158,13 +347,21 @@ def modulate(symbols, fs=FS_SYM):
 
 
 # --- demodulation ----------------------------------------------------------------
-def discriminate(x, fs, squelch=None):
+def discriminate(x, fs, squelch=None, matched=False):
     """Complex baseband at fs, channel at 0 Hz -> instantaneous frequency in Hz at 48 kS/s.
 
     squelch: zero the output wherever the channel power, averaged over a symbol, is
     below this fraction of its peak. Needed for a handheld's bursts (off half the time):
     on noise alone the discriminator swings by kilohertz, and find_syncs' threshold is
-    relative to the largest correlation in the span. 0.25 works; None leaves it off."""
+    relative to the largest correlation in the span. 0.25 works; None leaves it off.
+
+    matched: the 4FSK frequency pulse is root-raised-cosine (clause 10.2.2.2), so the
+    symbol decision can use that filter instead of the length-10 boxcar. Default False
+    keeps the boxcar, and that output is unchanged. The RRC is 161 taps, odd and
+    symmetric, and convolve(mode='same') centres it, so it adds no group delay on top
+    of the 101-tap low-pass (50 samples at 48 kS/s). The array is still one sample
+    shorter than the 48 kS/s baseband, which is what find_syncs, fit_levels and
+    read_burst take."""
     if fs != FS_SYM:
         from fractions import Fraction
         r = Fraction(FS_SYM / fs).limit_denominator(10000)
@@ -173,7 +370,10 @@ def discriminate(x, fs, squelch=None):
         return np.zeros(max(len(x) - 1, 0))
     x = lfilter(firwin(101, 6000, fs=FS_SYM), 1, x)
     d = np.angle(x[1:] * np.conj(x[:-1])) * FS_SYM / (2 * np.pi)
-    d = np.convolve(d, np.ones(SPS) / SPS, mode='same')
+    if matched:
+        d = np.convolve(d, rrc(), mode='same')
+    else:
+        d = np.convolve(d, np.ones(SPS) / SPS, mode='same')
     if squelch is not None:
         p = np.convolve(np.abs(x) ** 2, np.ones(SPS) / SPS, mode='same')[1:]
         if np.max(p) > 0:
@@ -230,25 +430,139 @@ def read_burst(d, sync_pos, scale, off):
     return None if sy is None else symbols_to_bits(sy)
 
 
-def voice_calls(d, voice='BS_VOICE', thr=0.6):
-    """Voice superframes: list of (sample of burst A's SYNC, [18 frames of 72 bits])."""
+def _complete_superframe(d, pos, scale, off):
+    """18 voice frames starting at burst A, or None if any burst is outside `d`."""
+    frames = []
+    for k in range(SUPERFRAME_BURSTS):
+        b = read_burst(d, pos + k * BURST_SPACING_SYMS * SPS, scale, off)
+        if b is None:
+            return None
+        frames += voice_frames(b)
+    return frames
+
+
+def _near(pos, others, tol):
+    return any(abs(pos - p) <= tol for p in others)
+
+
+def anchor_delta_bursts():
+    """Bursts from a control burst to burst A, on the same slot.
+
+    A voice LC header or PI header is the one burst before the first A, so the
+    delta is +1. The terminator is the one burst after F, and F is five bursts
+    after A, so the delta is -6. Both numbers are the superframe geometry:
+    6 bursts, header immediately before, terminator immediately after.
+    """
+    return 1, -SUPERFRAME_BURSTS
+
+
+def _paired_data_sync(voice):
+    """Data SYNC that belongs with this voice SYNC, or None."""
+    tail = '_VOICE'
+    if not voice.endswith(tail):
+        return None
+    data = voice[:-len(tail)] + '_DATA'
+    return data if data in SYNCS else None
+
+
+def _append_candidate(d, pred, scale, off, cc, have, out):
+    """Accept one predicted burst A. False when it is not a new superframe."""
+    if _near(pred, have, 4 * SPS):
+        return False
+    ok, aligned, sc, of = superframe_candidate(d, pred, scale, off, cc)
+    if not ok or _near(aligned, have, 4 * SPS):
+        return False
+    frames = []
+    burst = BURST_SPACING_SYMS * SPS
+    for k in range(SUPERFRAME_BURSTS):
+        frames += read_voice_frames_at(
+            d, aligned + k * burst, sc, of,
+            max_rms=RECOVER_MAX_LEVEL_RMS, edge=RECOVER_EDGE)
+    if not any(f is not None for f in frames):
+        return False
+    out.append({'pos': int(aligned), 'frames': frames})
+    have.append(int(aligned))
+    return True
+
+
+def _recover_from_control(d, voice, thr, have, out):
+    """Time a missing burst A from a header or a terminator on the same slot.
+
+    The colour code is the one Golay decoded from that control burst. The
+    candidate still has to pass superframe_candidate, so a control burst that
+    is not actually beside a voice superframe does not invent one.
+    """
+    data = _paired_data_sync(voice)
+    if data is None:
+        return
+    sy = sync_symbols(data)
+    spacing = BURST_SPACING_SYMS * SPS
+    step = SUPERFRAME_SYMS * SPS
+    hdr_n, term_n = anchor_delta_bursts()
+    guard = 5 * spacing
+    for pos, cc, dt, _err in data_bursts(d, data, thr=thr):
+        kind = DATA_TYPES[dt]
+        if kind in ANCHOR_HEADERS:
+            delta, stride = hdr_n * spacing, step
+        elif kind == 'Terminator with LC':
+            delta, stride = term_n * spacing, -step
+        else:
+            continue
+        sc, off = fit_levels(d, pos, sy)
+        pred = pos + delta
+        while -guard < pred < len(d) + guard:
+            if _near(pred, have, 4 * SPS):
+                pred += stride
+                continue
+            if not _append_candidate(d, pred, sc, off, cc, have, out):
+                break
+            pred += stride
+
+
+def voice_calls(d, voice='BS_VOICE', thr=0.6, recover=False, return_info=False):
+    """Voice superframes: list of (sample of burst A's centre, 18 frames of 72 bits).
+
+    recover=False (the default) is the SYNC-only search: a superframe is returned
+    only when burst A's voice SYNC is found and all 18 frames lie inside `d`.
+
+    recover=True also tries the sample one superframe (1728 symbols) before and
+    after each found burst A, including positions that fall off the start or end
+    of `d`, and a burst A timed from a voice LC header, a PI header or a
+    terminator on the same slot. A candidate is kept only when bursts B-F pass
+    superframe_candidate against that anchor's colour code. With
+    return_info=False a recovered superframe is kept only when all 18 frames
+    were read, so existing callers still see a list of complete frames. With
+    return_info=True a frame that was not fully inside the recording (or that
+    fails the level fit) is None.
+    """
     sy = sync_symbols(voice)
-    out = []
+    found = []
     for pos, sign in find_syncs(d, voice, thr):
         if sign < 0:
             continue
         scale, off = fit_levels(d, pos, sy)
         if not sync_ok(d, pos, sy, scale, off):
             continue
-        frames = []
-        for k in range(6):
-            b = read_burst(d, pos + k * 288 * SPS, scale, off)
-            if b is None:
-                break
-            frames += voice_frames(b)
-        if len(frames) == 18:
-            out.append((pos, frames))
-    return out
+        frames = _complete_superframe(d, pos, scale, off)
+        if frames is not None:
+            found.append((int(pos), frames, float(scale), float(off)))
+    if not recover:
+        return [(pos, frames) for pos, frames, _sc, _of in found]
+
+    out = [{'pos': pos, 'frames': frames} for pos, frames, _sc, _of in found]
+    have = [pos for pos, _frames, _sc, _of in found]
+    step = SUPERFRAME_SYMS * SPS
+    for pos, _frames, scale, off in found:
+        cc = superframe_colour(d, pos, scale, off)
+        if cc is None:
+            continue
+        for pred in (pos - step, pos + step):
+            _append_candidate(d, pred, scale, off, cc, have, out)
+    _recover_from_control(d, voice, thr, have, out)
+    out.sort(key=lambda s: s['pos'])
+    if return_info:
+        return [(s['pos'], s['frames']) for s in out]
+    return [(s['pos'], s['frames']) for s in out if all(f is not None for f in s['frames'])]
 
 
 def data_bursts(d, data='BS_DATA', thr=0.6, max_err=2):
@@ -325,11 +639,18 @@ def main(argv=None):
     ap.add_argument('--ambe-out')
     ap.add_argument('--compare', help='a Sceptre .ambe file to compare the voice frames with')
     ap.add_argument('--squelch', type=float, help="e.g. 0.25 for a handheld's bursts; see discriminate()")
+    ap.add_argument('--recover', action='store_true',
+                    help='also return a voice superframe whose burst A SYNC was missed, '
+                         'when a neighbour superframe or a header or terminator '
+                         'times it and bursts B-F agree')
+    ap.add_argument('--matched', action='store_true',
+                    help='root-raised-cosine (alpha 0.2, span 8) instead of the '
+                         'length-10 boxcar, on the discriminator output')
     a = ap.parse_args(argv)
     if a.centre is None:
         ap.error('--centre is needed')
     x, fs = channelize_blue(a.cdif, a.centre, a.chan, a.t0, a.t1)
-    d = discriminate(x, fs, a.squelch)
+    d = discriminate(x, fs, a.squelch, matched=a.matched)
     db = data_bursts(d)
     counts = {}
     for _, cc, dt, _ in db:
@@ -337,7 +658,7 @@ def main(argv=None):
     print(f'data/control bursts: {len(db)}')
     for (cc, name), n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f'  CC {cc:2d}  {name:28s} {n}')
-    calls = voice_calls(d)
+    calls = voice_calls(d, recover=a.recover)
     frames = [f for _, fr in calls for f in fr]
     print(f'voice superframes: {len(calls)} ({len(frames)} frames)')
     if a.ambe_out:
