@@ -354,3 +354,44 @@ def main(argv=None):
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+# --- CACH (outbound). Added beside the readers above; voice_calls is unchanged. ------
+def read_cach(d, burst_pos, scale, off):
+    """24 CACH bits, TX(23) first, immediately before a burst.
+
+    `burst_pos` is the sample of the burst's first symbol, not its SYNC
+    (the SYNC is 54 symbols later). The CACH is the 12 symbols before that.
+    None if those symbols fall outside `d`.
+    """
+    sy = read_symbols(d, burst_pos - 12 * SPS, 12, scale, off)
+    return None if sy is None else symbols_to_bits(sy)
+
+
+def decode_cachs(words):
+    """Decode TACT in each 24-bit CACH and reassemble every Short LC.
+
+    A Short LC is four consecutive payloads whose LCSS is first, continuation,
+    continuation, last (01, 11, 11, 10). Words that do not start a group are skipped
+    one at a time, so a stream that begins mid-message still locks.
+
+    -> (tacts, short_lcs)
+       tacts[i] = {at, tc, lcss, errors, payload}
+       short_lcs[j] = {index, info, slco, bad_rows, bad_cols, crc, crc_ok}
+    """
+    import dmr_fec as F
+    tacts = []
+    for w in words:
+        tact_bits, payload = F.cach_split(w)
+        at, tc, lcss, err = F.tact_decode(tact_bits)
+        tacts.append({'at': at, 'tc': tc, 'lcss': lcss, 'errors': err, 'payload': payload})
+    short, i, want = [], 0, list(F.SHORT_LC_LCSS)
+    while i + 4 <= len(tacts):
+        group = tacts[i:i + 4]
+        if [g['lcss'] for g in group] == want:
+            info, chk = F.short_lc_decode([g['payload'] for g in group])
+            short.append(dict(chk, info=info, slco=F.bits_int(info[:4]), index=i))
+            i += 4
+        else:
+            i += 1
+    return tacts, short

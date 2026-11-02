@@ -11,7 +11,10 @@ Built from the tables of Annex B, not from another implementation:
     (Table B.16), a 5-bit checksum (B.3.11), even column parity, read out by columns;
   - the EMB's Quadratic Residue (16,7,6), Table B.12;
   - the Full LC PDU of clause 7.1 and TS 102 361-2 Table 7.1 (Grp_V_Ch_Usr) and 7.2
-    (UU_V_Ch_Usr).
+    (UU_V_Ch_Usr);
+  - the CACH: TACT Hamming(7,4,3) (Tables 9.5 and B.17), the Short LC's CRC-8 and
+    variable BPTC (B.3.7, B.2.3, Hamming(17,12,3) Table B.13) split into four 17-bit
+    fragments, and the 24-bit CACH interleave (Figure B.9).
 
 Bits are lists of 0/1, most significant (the spec's highest index) first, in the order
 they go on the air. Used by scripts/dmr_synth.py; checked by scripts/test_dmr_synth.py.
@@ -295,3 +298,209 @@ def voice_centre(cc, lcss, frag32, pi=0):
     (Table E.6)."""
     e = emb(cc, lcss, pi)
     return e[:8] + list(frag32) + e[8:]
+
+
+# --- CACH: TACT, Short LC, 24-bit interleave (clauses 7.1.4, 9.1.4, B.2.3, B.4.1) ---
+
+# Table B.17, Hamming (7,4,3). Systematic: AT, TC, LCSS, then parity H(2) H(1) H(0).
+# G(x) = x^3 + x + 1 (B.8).
+H743_G = _matrix("""
+1 0 0 0 1 0 1
+0 1 0 0 1 1 1
+0 0 1 0 1 1 0
+0 0 0 1 0 1 1
+""")
+
+# Table B.13, Hamming (17,12,3). Systematic: 12 info bits then H(4)..H(0).
+# g(x) = x^5 + x^2 + 1 (B.6), shortened.
+H17123_G = _matrix("""
+1 0 0 0 0 0 0 0 0 0 0 0 1 1 0 1 1
+0 1 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1
+0 0 1 0 0 0 0 0 0 0 0 0 1 1 1 0 1
+0 0 0 1 0 0 0 0 0 0 0 0 1 1 1 0 0
+0 0 0 0 1 0 0 0 0 0 0 0 0 1 1 1 0
+0 0 0 0 0 1 0 0 0 0 0 0 0 0 1 1 1
+0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 1
+0 0 0 0 0 0 0 1 0 0 0 0 1 1 0 1 0
+0 0 0 0 0 0 0 0 1 0 0 0 0 1 1 0 1
+0 0 0 0 0 0 0 0 0 1 0 0 1 0 1 0 0
+0 0 0 0 0 0 0 0 0 0 1 0 0 1 0 1 0
+0 0 0 0 0 0 0 0 0 0 0 1 0 0 1 0 1
+""")
+
+# B.3.7: G8(x) = x^8 + x^2 + x + 1, init 0, no inversion polynomial.
+CRC8_POLY = 0x107
+
+# Figure B.9 transmit order, TX(23) first. Payload bits are P(16) .. P(0).
+CACH_TX_NAMES = [
+    'AT', 'P(16)', 'P(15)', 'P(14)', 'TC', 'P(13)', 'P(12)', 'P(11)',
+    'LS(1)', 'P(10)', 'P(9)', 'P(8)', 'LS(0)', 'P(7)', 'H(2)', 'P(6)',
+    'P(5)', 'P(4)', 'H(1)', 'P(3)', 'P(2)', 'P(1)', 'H(0)', 'P(0)',
+]
+
+# Four Short LC fragments: first, continuation, continuation, last (Table 9.20).
+# The text never prints this sequence for the CACH; four fragments need it.
+SHORT_LC_LCSS = [LCSS['first'], LCSS['continuation'], LCSS['continuation'], LCSS['last']]
+
+# TS 102 361-2 Table B.3 / 7.9 / 7.10
+SLCO_NULL = 0b0000
+SLCO_ACTIVITY = 0b0001
+ACT_NONE = 0b0000
+ACT_GROUP_VOICE = 0b1000
+ACT_INDIVIDUAL_VOICE = 0b1001
+
+# Table D.2, I(95) first. The Idle message a repeater sends in an unused slot (clause 7.3).
+IDLE_INFO96 = [int(b) for b in bin(int('FF83DF1732094ED1E7CD8A91', 16))[2:].zfill(96)]
+
+
+def crc8(bits):
+    """F8(x) = x^8 M(x) mod G8(x). bits[0] is the highest power of M(x)."""
+    reg = 0
+    for b in list(bits) + [0] * 8:
+        reg = (reg << 1) | (int(b) & 1)
+        if reg & 0x100:
+            reg ^= CRC8_POLY
+    return reg
+
+
+def hash_address(addr):
+    """8-bit hash of a 24-bit address. MSB of the address is x^23 (B.3.7, Hash ID)."""
+    return crc8(int_bits(addr, 24))
+
+
+def tact(at, tc, lcss):
+    """7-bit TACT: AT, TC, LCSS (MSB first), Hamming(7,4,3) parity. Table 9.5."""
+    info = [at & 1, tc & 1, (lcss >> 1) & 1, lcss & 1]
+    return _encode(H743_G, info)
+
+
+_TACT_WORDS = {tuple(_encode(H743_G, int_bits(v, 4))): v for v in range(16)}
+
+
+def tact_decode(bits7):
+    """7 bits -> (AT, TC, LCSS, bit errors), by minimum distance over the 16 codewords."""
+    bits = tuple(int(b) & 1 for b in bits7)
+    best = min(_TACT_WORDS, key=lambda w: sum(a != b for a, b in zip(w, bits)))
+    err = sum(a != b for a, b in zip(best, bits))
+    v = _TACT_WORDS[best]
+    return v >> 3, (v >> 2) & 1, v & 3, err
+
+
+def null_short_lc():
+    """28 bits: SLCO 0000 and 24 reserved zeros (TS 102 361-2 Table 7.9).
+
+    Clause 4.6.1: a repeater with nothing else to put in the CACH sends this.
+    """
+    return [0] * 28
+
+
+def activity_update(ts1, ts2, hash1, hash2):
+    """Act_Updt, 28 bits, MSB first (TS 102 361-2 Table 7.10).
+
+    SLCO 0001, slot 1 activity 4, slot 2 activity 4, slot 1 hash 8, slot 2 hash 8.
+    """
+    return (int_bits(SLCO_ACTIVITY, 4) + int_bits(ts1, 4) + int_bits(ts2, 4)
+            + int_bits(hash1, 8) + int_bits(hash2, 8))
+
+
+def _short_lc_rows(info28):
+    """36-bit Short LC (28 info + CRC-8) -> 4 rows of 17: three Hamming(17,12) and even parity."""
+    info = [int(b) & 1 for b in info28]
+    if len(info) != 28:
+        raise ValueError(f'Short LC information is 28 bits, got {len(info)}')
+    raw = info + int_bits(crc8(info), 8)          # LC(27)..LC(0), CR(7)..CR(0)
+    rows = [_encode(H17123_G, raw[12 * r:12 * r + 12]) for r in range(3)]
+    rows.append([sum(rows[r][c] for r in range(3)) % 2 for c in range(17)])
+    return rows
+
+
+def _rows_to_frags(rows):
+    """Columns top-to-bottom, left-to-right, into four 17-bit fragments (Figure B.6)."""
+    flat = [rows[r][c] for c in range(17) for r in range(4)]
+    return [flat[17 * i:17 * i + 17] for i in range(4)]
+
+
+def _frags_to_rows(frags):
+    flat = [int(b) & 1 for f in frags for b in f]
+    if len(flat) != 68:
+        raise ValueError(f'four CACH fragments are 68 bits, got {len(flat)}')
+    rows = [[0] * 17 for _ in range(4)]
+    k = 0
+    for c in range(17):
+        for r in range(4):
+            rows[r][c] = flat[k]
+            k += 1
+    return rows
+
+
+def short_lc_encode(info28):
+    """28 information bits -> four 17-bit CACH payloads, P(16) first in each."""
+    return [[int(b) for b in frag] for frag in _rows_to_frags(_short_lc_rows(info28))]
+
+
+def short_lc_layout():
+    """Bit names of the four fragments, same order as short_lc_encode, for Figure B.6."""
+    row0 = [f'LC({27 - i})' for i in range(12)] + [f'H1({4 - j})' for j in range(5)]
+    row1 = [f'LC({15 - i})' for i in range(12)] + [f'H2({4 - j})' for j in range(5)]
+    row2 = ([f'LC({3 - i})' for i in range(4)] + [f'CR({7 - j})' for j in range(8)]
+            + [f'H3({4 - j})' for j in range(5)])
+    row3 = [f'PC({16 - i})' for i in range(17)]
+    return _rows_to_frags([row0, row1, row2, row3])
+
+
+def short_lc_decode(frags):
+    """Four 17-bit fragments -> (28 info bits, checks).
+
+    Checks: Hamming rows that are not codewords, columns whose parity is odd,
+    the CRC octet as it sat in the matrix, and whether that octet matches B.3.7.
+    """
+    rows = _frags_to_rows(frags)
+    bad_rows = sum(not _syndrome_ok(H17123_G, rows[r]) for r in range(3))
+    bad_cols = sum(sum(rows[r][c] for r in range(4)) % 2 for c in range(17))
+    raw = [b for r in range(3) for b in rows[r][:12]]
+    info, crc_bits = raw[:28], raw[28:]
+    crc = bits_int(crc_bits)
+    return info, {'bad_rows': bad_rows, 'bad_cols': bad_cols, 'crc': crc,
+                  'crc_ok': crc == crc8(info)}
+
+
+def _cach_sources():
+    """Name -> (which word, index). tact is AT, TC, LS(1), LS(0), H(2), H(1), H(0)."""
+    src = {}
+    for name, idx in (('AT', 0), ('TC', 1), ('LS(1)', 2), ('LS(0)', 3),
+                      ('H(2)', 4), ('H(1)', 5), ('H(0)', 6)):
+        src[name] = ('t', idx)
+    for i in range(17):
+        src[f'P({16 - i})'] = ('p', i)
+    return src
+
+
+_CACH_SRC = _cach_sources()
+
+
+def cach(tact7, payload17):
+    """24 CACH bits, TX(23) first, from a 7-bit TACT and a 17-bit payload (Figure B.9)."""
+    t = [int(b) & 1 for b in tact7]
+    p = [int(b) & 1 for b in payload17]
+    if len(t) != 7 or len(p) != 17:
+        raise ValueError('CACH wants 7 TACT bits and 17 payload bits')
+    out = []
+    for name in CACH_TX_NAMES:
+        which, idx = _CACH_SRC[name]
+        out.append(t[idx] if which == 't' else p[idx])
+    return out
+
+
+def cach_split(bits24):
+    """24 CACH bits, TX(23) first -> (7 TACT bits, 17 payload bits P(16) first)."""
+    bits = [int(b) & 1 for b in bits24]
+    if len(bits) != 24:
+        raise ValueError(f'a CACH is 24 bits, got {len(bits)}')
+    t, p = [0] * 7, [0] * 17
+    for b, name in zip(bits, CACH_TX_NAMES):
+        which, idx = _CACH_SRC[name]
+        if which == 't':
+            t[idx] = b
+        else:
+            p[idx] = b
+    return t, p
