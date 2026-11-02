@@ -19,10 +19,22 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import dmr_demod as D  # noqa: E402
+import dmr_fec as F  # noqa: E402
 import dmr_synth as S  # noqa: E402
 
 SPEC = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text',
                     'ETSI_TS_102_361-1_v2.5.1_air_interface_protocol.txt')
+SPEC_DIR = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text')
+# check_spec compares six facts with the library. A clone with no spec text
+# skips exactly these and still runs the synthetic cases.
+N_SPEC_PINS = 6
+# Same 20 seeds and 5 superframes as case_snr, both rates, on this code:
+# the noisiest recovered superframe was 18 bit errors (1 MS/s; 48 kS/s was 4).
+# 36 is twice that. A wrong voice frame is 72 bits and a random superframe
+# is about half of 18*72, so both still fail. The boxcar frames themselves
+# are not bit-exact at 12 dB (up to 16 bits off the source in that sweep);
+# "stays bit exact" is recover=True reproducing those frames unchanged.
+RECOVERED_BER_BOUND = 36
 failures = []
 
 
@@ -136,16 +148,24 @@ def spec_lcss_bf(txt):
 
 
 def spec_superframe_syms(txt):
-    """1728 symbols and 288-symbol spacing, from 6 bursts / 360 ms and 4 800 sym/s."""
-    if not re.search(r'6 bursts \(360 ms\)', txt):
-        raise ValueError('superframe length not in the text')
-    m = re.search(r'4 800 symbols/s', txt)
-    if not m:
-        raise ValueError('symbol rate not in the text')
-    rate = 4800
-    sf = int(round(rate * 0.360))
-    spacing = sf // 6
-    return sf, spacing
+    """Symbol count and burst spacing, parsed from the superframe sentence and the symbol rate.
+
+    The text prints "6 bursts (360 ms)" and "4 800 symbols/s" (the space is the
+    thousands separator). Nothing else is filled in.
+    """
+    bursts = set(re.findall(r'(\d+)\s+bursts\s+\((\d+)\s+ms\)', txt))
+    if len(bursts) != 1:
+        raise ValueError(f'superframe length not a single figure in the text: {bursts}')
+    n_bursts, ms = (int(x) for x in bursts.pop())
+    rates = set(re.findall(r'(\d)\s+(\d{3})\s+symbols/s', txt))
+    if len(rates) != 1:
+        raise ValueError(f'symbol rate not a single figure in the text: {rates}')
+    hi, lo = rates.pop()
+    rate = int(hi + lo)
+    sf = int(round(rate * ms / 1000.0))
+    if n_bursts <= 0 or sf % n_bursts:
+        raise ValueError(f'{sf} symbols is not a whole number of {n_bursts} bursts')
+    return sf, sf // n_bursts, n_bursts
 
 
 def spec_emb_positions(txt):
@@ -165,38 +185,50 @@ def spec_emb_positions(txt):
     return [names.index(n) for n in want]
 
 
-def spec_anchors(txt):
-    """Header immediately before A, terminator immediately after the superframe.
+def _header_name(words):
+    """'voice LC header' -> 'Voice LC Header'. Tokens that already carry a capital stay."""
+    out = []
+    for w in words.split():
+        out.append(w if any(c.isupper() for c in w) else w.capitalize())
+    return ' '.join(out)
 
-    Clause 5.1.2.2 names the voice LC header and the PI header. The terminator
-    is the data burst after F, so it sits SUPERFRAME_BURSTS bursts after A.
+
+def spec_anchors(txt, n_bursts):
+    """Header names and burst deltas, from the sentences that place them.
+
+    Clause 5.1.2.2 names the two headers in words. It does not print a numeric
+    offset: "immediately" is the one burst before A, and the terminator is the
+    one burst after a superframe of `n_bursts`, so its delta back to A is
+    -n_bursts. Both numbers are that reading of the text, not literals.
     """
-    if not re.search(
-            r'immediately\s+preceded\s+by\s+a\s+voice\s+LC\s+header\s+or\s+a\s+PI\s+header',
-            txt):
-        raise ValueError('clause 5.1.2.2 does not put a voice LC or PI header before burst A')
+    m = re.search(
+        r'immediately\s+preceded\s+by\s+a\s+([A-Za-z][A-Za-z ]*?)\s+or\s+a\s+'
+        r'([A-Za-z][A-Za-z ]*?)\.',
+        txt)
+    if not m:
+        raise ValueError('clause 5.1.2.2 does not name the headers before burst A')
     if not re.search(
             r'burst\s+immediately\s+following\s+the\s+end\s+of\s+a\s+voice\s+superframe',
             txt):
         raise ValueError('the text does not put a data burst immediately after the superframe')
-    # "immediately" is one burst. The superframe is six bursts, already parsed
-    # from "6 bursts (360 ms)", so the terminator is six bursts after A.
-    return ('Voice LC Header', 'PI Header'), (1, -6)
+    one_burst = 1
+    return (_header_name(m.group(1)), _header_name(m.group(2))), (one_burst, -n_bursts)
 
 
 def check_spec():
+    """Return how many spec pins were skipped. Zero when the text was read."""
     if not os.path.exists(SPEC):
-        print('skip spec pins (no spec text)', flush=True)
-        return
+        print(f'SKIPPED {N_SPEC_PINS} spec pins ({SPEC_DIR}/ not present)', flush=True)
+        return N_SPEC_PINS
     txt = open(SPEC).read()
     try:
         seq = spec_lcss_bf(txt)
-        sf, spacing = spec_superframe_syms(txt)
+        sf, spacing, n_bursts = spec_superframe_syms(txt)
         emb_pos = spec_emb_positions(txt)
-        headers, deltas = spec_anchors(txt)
+        headers, deltas = spec_anchors(txt, n_bursts)
     except (ValueError, KeyError) as e:
         fail('spec parse', str(e))
-        return
+        return 0
     bad = []
     if seq != tuple(D.LCSS_BF):
         bad.append(f'LCSS_BF {D.LCSS_BF} != {seq}')
@@ -215,13 +247,14 @@ def check_spec():
         bad.append(f'EMB positions {emb_pos} are not centre[:8]+centre[-8:]')
     if tuple(D.ANCHOR_HEADERS) != headers:
         bad.append(f'ANCHOR_HEADERS {D.ANCHOR_HEADERS} != {headers}')
-    if D.anchor_delta_bursts() != deltas or deltas[1] != -sf // spacing:
+    if D.anchor_delta_bursts() != deltas or deltas[1] != -n_bursts or deltas[0] != 1:
         bad.append(f'anchor deltas {D.anchor_delta_bursts()} != {deltas}')
-    if bad:
+    if len(bad) != 0:
         fail('spec pins', '; '.join(bad))
     else:
-        ok('spec pins: LCSS B-F, 1728/288 symbols, EMB bits at Table E.6, '
-           'header before A, terminator after F')
+        ok(f'spec pins: LCSS B-F, {sf}/{spacing} symbols from {n_bursts} bursts, '
+           'EMB bits at Table E.6, headers and deltas parsed from the text')
+    return 0
 
 
 def _typed(side, data_type):
@@ -373,11 +406,13 @@ def case_snr(nsf, args, seeds, label):
                 extra_ber.append(min(bers))
     worst = max(extra_ber) if extra_ber else 0
     detail = (f'old {old_sf} new {new_sf} extra {len(extra_ber)} '
-              f'max extra bit errors {worst} mismatches {mismatch}')
-    if mismatch or new_sf < old_sf:
+              f'max extra bit errors {worst} (bound {RECOVERED_BER_BOUND}) '
+              f'mismatches {mismatch}')
+    # mismatch counts a boxcar frame that recover=True did not keep bit for bit.
+    if mismatch or new_sf < old_sf or worst > RECOVERED_BER_BOUND:
         fail(label, detail)
     else:
-        ok(f'{label}: {detail}')
+        ok(f'{label}: boxcar frames kept bit-exact; {detail}')
 
 
 def case_noise_and_other_cc(tmp):
@@ -481,8 +516,242 @@ def case_false_counts(tmp):
         ok(f'thresholds: {detail}')
 
 
+def _flip_two_emb_bits(d, sync_pos, sym_index, scale, off):
+    """Move one centre-field symbol by two dibit steps: both of its bits flip.
+
+    QR(16,7) has distance 6, so two flipped EMB bits still decode to the same
+    codeword with err=2. One such symbol is inside the EMB (symbols 54-57 or
+    74-77), not in a voice frame.
+    """
+    idx = int(sync_pos - 54 * D.SPS + sym_index * D.SPS)
+    v = (d[idx] - off) / scale
+    cur = 3 if v > 2 else 1 if v > 0 else -1 if v > -2 else -3
+    new = cur - 4 if cur > 0 else cur + 4
+    d[idx] = new * scale + off
+
+
+def _two_superframes(tmp, seed):
+    """Clean MS call, no header and no terminator, so a neighbour is the only anchor."""
+    y, side, ambe = synth(
+        tmp, 'gate', 2,
+        ['--sync', 'ms', '--slot', '1', '--cc', '3', '--superframes', '2',
+         '--headers', '0', '--terminators', '0', '--fs', '48000',
+         '--lead', '0.2', '--tail', '0.2'],
+        seed=seed)
+    d, voice = demod(y, side)
+    base = D.voice_calls(d, voice, recover=False)
+    if [sf_of(fr, ambe) for _, fr in base] != [0, 1]:
+        return None
+    return d, voice, ambe, base[0][0], base[1][0]
+
+
+def case_emb_error_limit(tmp):
+    """Two EMBs with 2 flipped bits must be rejected.
+
+    One bad EMB would still leave 4 of 5 inside the limit, which both the
+    real gate (1) and the loosened gate (3) accept. Two bad EMBs leave 3,
+    so limit 1 rejects and limit 3 accepts. The LCSS mismatch counter rejects
+    the same case; this still fails the limit-3 mutation because those two
+    EMBs then count as good.
+    """
+    built = _two_superframes(tmp, seed=31)
+    if built is None:
+        fail('emb error limit', 'clean call was not two exact superframes')
+        return
+    d, voice, ambe, p0, p1 = built
+    sc, off = D.fit_levels(d, p0, D.sync_symbols(voice))
+    for k in (1, 2):
+        _flip_two_emb_bits(d, p1 + k * D.BURST_SPACING_SYMS * D.SPS, 54, sc, off)
+    d = blank_sync(d, p1)
+    got = D.voice_calls(d, voice, recover=True)
+    sfs = [sf_of(fr, ambe) for _, fr in got]
+    if sfs == [0]:
+        ok('EMB with 2 flipped bits in two bursts: the superframe is rejected')
+    else:
+        fail('emb error limit', f'recovered superframes {sfs}')
+
+
+def case_min_emb(tmp):
+    """An anchor with only 3 readable EMBs must not time its neighbour.
+
+    superframe_colour asks for RECOVER_MIN_EMB votes and does not use the LCSS
+    mismatch counter, which is why loosening 4 to 2 still recovers the neighbour.
+    """
+    built = _two_superframes(tmp, seed=32)
+    if built is None:
+        fail('min emb', 'clean call was not two exact superframes')
+        return
+    d, voice, ambe, p0, p1 = built
+    sc, off = D.fit_levels(d, p0, D.sync_symbols(voice))
+    for k in (1, 2):
+        _flip_two_emb_bits(d, p0 + k * D.BURST_SPACING_SYMS * D.SPS, 54, sc, off)
+    d = blank_sync(d, p1)
+    got = D.voice_calls(d, voice, recover=True)
+    sfs = [sf_of(fr, ambe) for _, fr in got]
+    if sfs == [0]:
+        ok('anchor with 3 readable EMBs: the neighbour is not recovered')
+    else:
+        fail('min emb', f'recovered superframes {sfs}')
+
+
+def case_edge_guard(tmp):
+    """A frame whose symbols are inside the array but inside the 160-sample guard is None.
+
+    The cut puts burst B's first symbol about 100 samples into the discriminator,
+    fully inside the array (the frame ends near sample 450) and inside RECOVER_EDGE.
+    edge 160 returns None. edge 0 quantizes that transient and returns bits.
+    """
+    y, side, ambe = synth(
+        tmp, 'edge', 2,
+        ['--sync', 'ms', '--slot', '1', '--cc', '3', '--superframes', '2',
+         '--headers', '0', '--terminators', '0', '--fs', '48000',
+         '--lead', '0.3', '--tail', '0.3'],
+        seed=4)
+    d0, voice = demod(y, side)
+    base = D.voice_calls(d0, voice, recover=False)
+    if [sf_of(fr, ambe) for _, fr in base] != [0, 1]:
+        fail('edge guard', 'clean call was not two exact superframes')
+        return
+    p0 = base[0][0]
+    burst_b_sym0 = int(p0 + D.BURST_SPACING_SYMS * D.SPS - 54 * D.SPS)
+    target = 100
+    d = d0[burst_b_sym0 - target:]
+    got = D.voice_calls(d, voice, recover=True, return_info=True)
+    partial = [(p, fr) for p, fr in got if any(f is None for f in fr)]
+    full = [(p, fr) for p, fr in got if all(f is not None for f in fr)]
+    if len(partial) != 1 or len(full) != 1:
+        fail('edge guard', f'partial {len(partial)} full {len(full)}')
+        return
+    p, fr = partial[0]
+    sym0 = int(p + D.BURST_SPACING_SYMS * D.SPS - 54 * D.SPS)
+    last = sym0 + 35 * D.SPS
+    inside = 0 <= sym0 < D.RECOVER_EDGE and last < len(d)
+    tail_ok = fr[4:] == ambe[4:18]
+    refused = fr[:4] == [None, None, None, None]
+    anchor_ok = full[0][1] == ambe[18:36]
+    if inside and refused and tail_ok and anchor_ok:
+        ok(f'edge guard: frame at sample {sym0} (inside the array, inside '
+           f'{D.RECOVER_EDGE}) is None; the rest of the superframe is exact')
+    else:
+        fail('edge guard',
+             f'inside {inside} sym0 {sym0} last {last} len {len(d)} '
+             f'refused {refused} tail {tail_ok} anchor {anchor_ok}')
+
+
+def case_timing_radius(tmp):
+    """A neighbour whose SYNC peak is 2 to 4 samples off the prediction still recovers.
+
+    Deleting a few samples in the gap between the superframes walks the later
+    peak off the 17280-sample step. Radius 4 recentres on the open eye; radius
+    0 stays on the wandered sample and the eye fails the residual.
+    """
+    built = _two_superframes(tmp, seed=33)
+    if built is None:
+        fail('timing radius', 'clean call was not two exact superframes')
+        return
+    d0, voice, ambe, p0, p1 = built
+    step = D.SUPERFRAME_SYMS * D.SPS
+    burst = D.BURST_SPACING_SYMS * D.SPS
+    f_end = p0 + 5 * burst + (132 - 54) * D.SPS
+    gap = (f_end + p1) // 2
+    natural = (p1 - p0) - step
+    shift = natural + 3
+    if not 1 <= shift <= 8 or not f_end < gap < p1:
+        fail('timing radius', f'cannot place the wander (natural {natural} gap {gap})')
+        return
+    d = np.concatenate([d0[:gap], d0[gap + shift:]])
+    found = D.voice_calls(d, voice, recover=False)
+    if len(found) != 2:
+        fail('timing radius', f'after the cut, found {len(found)} superframes')
+        return
+    earlier, later = found[0][0], found[1][0]
+    wander = later - (earlier + step)
+    if not 2 <= abs(wander) <= 4:
+        fail('timing radius', f'wander {wander} samples is outside 2..4')
+        return
+    blanked = blank_sync(d, later)
+    got = D.voice_calls(blanked, voice, recover=True)
+    sfs = [sf_of(fr, ambe) for _, fr in got]
+    if sfs == [0, 1]:
+        ok(f'timing radius: SYNC peak {wander} samples off the 17280-step prediction, '
+           'both superframes recovered bit-exact')
+    else:
+        fail('timing radius', f'wander {wander} recovered {sfs}')
+
+
+def case_residual_gate(tmp):
+    """A fit that never lands on the four levels is rejected by the residual gate.
+
+    Most symbol centres of bursts B-F sit 30 Hz either side of zero, alternating
+    in sign: that is the boundary between the -1 and +1 levels, and no scale
+    puts both signs on a level at once. A one-sided cloud does not work, because
+    the fit slides the offset and the residual drops under 0.75. Gaussian noise
+    does not work either: the fit grows the scale until the normalised residual
+    is under the gate, or the scale leaves the 300-1000 Hz window and the
+    candidate is rejected for that instead. The 40 EMB symbols are the real
+    codeword at 648 Hz, so all 5 EMBs decode with 0 errors. On this draw the
+    residual is about 0.90. The gate at 0.75 rejects the candidate; 99 accepts
+    it. The EMB check would reject a purely random eye either way, so it cannot
+    see this mutation on its own.
+    """
+    y, side, ambe = synth(
+        tmp, 'resid', 1,
+        ['--sync', 'ms', '--slot', '1', '--cc', '5', '--superframes', '1',
+         '--headers', '0', '--terminators', '0', '--fs', '48000',
+         '--lead', '0.2', '--tail', '0.2'],
+        seed=8)
+    d0, voice = demod(y, side)
+    base = D.voice_calls(d0, voice, recover=False)
+    if len(base) != 1 or sf_of(base[0][1], ambe) != 0:
+        fail('residual gate', 'clean superframe missing')
+        return
+    p0 = base[0][0]
+    sc0, off0 = D.fit_levels(d0, p0, D.sync_symbols(voice))
+    emb_syms = list(range(54, 58)) + list(range(74, 78))
+    ideal = {}
+    for k in range(1, 6):
+        pos = p0 + k * D.BURST_SPACING_SYMS * D.SPS
+        for s in emb_syms:
+            idx = int(pos - 54 * D.SPS + s * D.SPS)
+            v = (d0[idx] - off0) / sc0
+            ideal[(k, s)] = 3 if v > 2 else 1 if v > 0 else -1 if v > -2 else -3
+    rng = np.random.default_rng(2)
+    d = np.zeros_like(d0)
+    sign = 1.0
+    for k in range(1, 6):
+        pos = p0 + k * D.BURST_SPACING_SYMS * D.SPS
+        for s in range(132):
+            idx = int(pos - 54 * D.SPS + s * D.SPS)
+            if (k, s) in ideal:
+                d[idx] = ideal[(k, s)] * 648.0
+            elif rng.random() < 0.70:
+                d[idx] = sign * 30.0
+                sign = -sign
+            else:
+                d[idx] = float(rng.choice([-3.0, -1.0, 1.0, 3.0])) * 648.0
+    fit = D.refit_levels(d, p0, 648.0, 0.0)
+    if fit is None:
+        fail('residual gate', 'the off-level fit did not return a scale')
+        return
+    sc, off = fit[0], fit[1]
+    errs = []
+    for k, expect_lcss in enumerate(D.LCSS_BF, start=1):
+        bits = D.read_emb_at(d, p0 + k * D.BURST_SPACING_SYMS * D.SPS, sc, off)
+        cc, _pi, lcss, err = F.emb_decode(bits)
+        errs.append(err)
+        if cc != side['colour_code'] or lcss != expect_lcss or err != 0:
+            fail('residual gate', f'EMB {k} decoded cc {cc} lcss {lcss} err {err}')
+            return
+    accepted = D.superframe_candidate(d, p0, 648.0, 0.0, side['colour_code'])[0]
+    if fit[2] > D.RECOVER_MAX_LEVEL_RMS and not accepted:
+        ok(f'residual gate: rms {fit[2]:.3f} > {D.RECOVER_MAX_LEVEL_RMS}, '
+           f'EMB errors {errs}, candidate rejected')
+    else:
+        fail('residual gate', f'rms {fit[2]:.3f} accepted {accepted} emb {errs}')
+
+
 def main():
-    check_spec()
+    n_skip = check_spec()
     rates = [
         ('48k', ['--fs', '48000']),
         ('1M +25 kHz', ['--fs', '1e6', '--offset', '25000']),
@@ -545,8 +814,19 @@ def main():
                  'MS 12 dB, 20 seeds, 1M +25 kHz')
         case_noise_and_other_cc(tmp)
         case_false_counts(tmp)
+        case_emb_error_limit(tmp)
+        case_min_emb(tmp)
+        case_edge_guard(tmp)
+        case_timing_radius(tmp)
+        case_residual_gate(tmp)
 
-    print('PASS' if not failures else f'FAIL {len(failures)}: {failures}', flush=True)
+    if failures:
+        line = f'FAIL {len(failures)}: {failures}'
+    elif n_skip:
+        line = (f'PASS ({n_skip} spec pins skipped: docs/ptt/dmr/text/ not present)')
+    else:
+        line = 'PASS'
+    print(line, flush=True)
     return 1 if failures else 0
 
 

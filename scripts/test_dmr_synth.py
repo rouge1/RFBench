@@ -33,10 +33,25 @@ import dmr_synth as S  # noqa: E402
 
 SPEC = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text',
                     'ETSI_TS_102_361-1_v2.5.1_air_interface_protocol.txt')
+SPEC_DIR = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text')
+# Table E.1, the five generator matrices, RS(12,9) Table B.18, Idle D.2 to D.3,
+# and the SYNC patterns of Table 9.2.
+N_SPEC_PINS = 9
+# The 1 MS/s 18 dB call. Seeds 0-4, five superframes each. A sweep on this code
+# had 0 voice-frame bit errors in every seed, so the bound is exact across the
+# five rather than one seed at the edge of the noise.
+SNR_SEEDS = range(5)
+SNR_VOICE_BER_BOUND = 0
 failures = []
+counting_spec = False
+n_spec_ran = 0
+n_skip = 0
 
 
 def check(name, got, want):
+    global n_spec_ran
+    if counting_spec:
+        n_spec_ran += 1
     ok = got == want
     print(f"  {'ok  ' if ok else 'FAIL'} {name}"
           + ('' if ok else f": {repr(got)[:200]} (want {repr(want)[:200]})"))
@@ -58,9 +73,12 @@ def spec_table_e1():
 
 print('BPTC(196,96) against Table E.1')
 if os.path.exists(SPEC):
+    counting_spec = True
     check('all 196 bit positions', F.bptc196_layout(), spec_table_e1())
+    counting_spec = False
 else:
-    print('  skip (no spec text)')
+    print(f'  SKIPPED {N_SPEC_PINS} spec pins ({SPEC_DIR}/ not present)')
+    n_skip = N_SPEC_PINS
 
 print('codes')
 rng = np.random.default_rng(7)
@@ -126,6 +144,7 @@ def spec_named_bits(txt, caption, stop):
 
 
 if os.path.exists(SPEC):
+    counting_spec = True
     txt = open(SPEC).read()
     for cap, r, c, mine in (('Table B.11:', 8, 20, D.GOLAY_G), ('Table B.12:', 7, 16, F.QR167_G),
                             ('Table B.14:', 9, 13, F.H1393_G), ('Table B.15:', 11, 15, F.H15113_G),
@@ -144,8 +163,11 @@ if os.path.exists(SPEC):
     names = ['BS_VOICE', 'BS_DATA', 'MS_VOICE', 'MS_DATA', 'RC',
              'TDMA1_VOICE', 'TDMA1_DATA', 'TDMA2_VOICE', 'TDMA2_DATA']
     check('SYNC patterns (Table 9.2)', {n: D.SYNCS[n] for n in names}, dict(zip(names, hexes)))
+    counting_spec = False
+    if n_spec_ran != N_SPEC_PINS:
+        check('spec pin count', n_spec_ran, N_SPEC_PINS)
 else:
-    print('  skip the spec tables (no spec text)')
+    print(f'  SKIPPED the spec tables ({SPEC_DIR}/ not present)')
 
 
 def demod_call(path, side, voice, data):
@@ -196,40 +218,58 @@ with tempfile.TemporaryDirectory() as tmp:
     amb = os.path.join(tmp, 'v.ambe')
     with open(amb, 'wb') as f:                     # varied frames, so order is tested
         f.write(rng.integers(0, 256, 9 * 18 * 2, dtype=np.uint8).tobytes())
+    snr_voice = snr_frames = 0
     for name, args in CASES:
-        print(f'call: {name}')
-        out = os.path.join(tmp, 'c.cf32')
-        S.main([out, '--ambe', amb] + args)
-        side = json.load(open(os.path.join(tmp, 'c.json')))
-        voice, data = side['sync']['voice'], side['sync']['data']
-        d, calls, frames, db, emb_lcs = demod_call(out, side, voice, data)
-        want_frames = S.load_frames(amb, side['superframes'])
-        check('voice superframes', len(calls), side['superframes'])
-        check('every voice frame, in order', frames, want_frames)
-        want_lc = F.full_lc(side['lc']['dst'], side['lc']['src'], side['lc']['call'])
-        hdr = [x for x in db if x[2] == 'Voice LC Header']
-        trm = [x for x in db if x[2] == 'Terminator with LC']
-        check('header bursts', len(hdr), side['headers'])
-        check('terminator bursts', len(trm), side['terminators'])
-        check('every data burst: colour code', {x[1] for x in db}, {side['colour_code']})
-        check('header and terminator: BPTC clean, RS passes, LC right',
-              all(x[3] == want_lc and x[4] and x[5] == 0 for x in hdr + trm), True)
-        check('embedded LC in every superframe',
-              all(lc == want_lc and chk['checksum_ok'] and chk['bad_rows'] == 0
-                  for lc, chk, _, _ in emb_lcs), True)
-        cc = side['colour_code']
-        check('EMB B-F: colour code and LCSS 01 11 11 10 00',
-              all([e[:3] for e in embs] == [(cc, 0, 1), (cc, 0, 3), (cc, 0, 3), (cc, 0, 2), (cc, 0, 0)]
-                  for _, _, embs, _ in emb_lcs), True)
-        check('burst F: Null embedded message', all(f == F.NULL_EMBEDDED for *_, f in emb_lcs), True)
-        k = side['sample_rate'] / D.FS_SYM
-        got_syncs = sorted([round(p * k) for p, *_ in db] + [round(p * k) for p, _ in calls])
-        want_syncs = sorted(b['sync_sample'] for b in side['bursts']
-                            if b['kind'] == 'data' or b.get('burst') == 'A')
-        delay = 50 * k                       # dmr_demod's 101-tap low-pass, at 48 kS/s
-        check("sidecar sync_sample on the SYNC to a 48 kS/s sample, after the demod's delay",
-              len(got_syncs) == len(want_syncs) and
-              max(abs(g - w - delay) for g, w in zip(got_syncs, want_syncs)) <= k, True)
+        seeds = list(SNR_SEEDS) if '--snr' in args else [None]
+        for seed in seeds:
+            label = name if seed is None else f'{name}, seed {seed}'
+            print(f'call: {label}')
+            run_args = args if seed is None else args + ['--seed', str(seed)]
+            out = os.path.join(tmp, 'c.cf32')
+            S.main([out, '--ambe', amb] + run_args)
+            side = json.load(open(os.path.join(tmp, 'c.json')))
+            voice, data = side['sync']['voice'], side['sync']['data']
+            d, calls, frames, db, emb_lcs = demod_call(out, side, voice, data)
+            want_frames = S.load_frames(amb, side['superframes'])
+            check('voice superframes', len(calls), side['superframes'])
+            if len(frames) == len(want_frames) and frames and want_frames:
+                ber = sum(x != y for a, b in zip(frames, want_frames) for x, y in zip(a, b))
+            else:
+                ber = 72 * max(len(frames), len(want_frames), 1)
+            if seed is not None:
+                snr_voice += ber
+                snr_frames += len(want_frames)
+            check('every voice frame, in order', frames, want_frames)
+            want_lc = F.full_lc(side['lc']['dst'], side['lc']['src'], side['lc']['call'])
+            hdr = [x for x in db if x[2] == 'Voice LC Header']
+            trm = [x for x in db if x[2] == 'Terminator with LC']
+            check('header bursts', len(hdr), side['headers'])
+            check('terminator bursts', len(trm), side['terminators'])
+            check('every data burst: colour code', {x[1] for x in db}, {side['colour_code']})
+            check('header and terminator: BPTC clean, RS passes, LC right',
+                  all(x[3] == want_lc and x[4] and x[5] == 0 for x in hdr + trm), True)
+            check('embedded LC in every superframe',
+                  all(lc == want_lc and chk['checksum_ok'] and chk['bad_rows'] == 0
+                      for lc, chk, _, _ in emb_lcs), True)
+            cc = side['colour_code']
+            check('EMB B-F: colour code and LCSS 01 11 11 10 00',
+                  all([e[:3] for e in embs] == [(cc, 0, 1), (cc, 0, 3), (cc, 0, 3), (cc, 0, 2), (cc, 0, 0)]
+                      for _, _, embs, _ in emb_lcs), True)
+            check('burst F: Null embedded message', all(f == F.NULL_EMBEDDED for *_, f in emb_lcs), True)
+            k = side['sample_rate'] / D.FS_SYM
+            got_syncs = sorted([round(p * k) for p, *_ in db] + [round(p * k) for p, _ in calls])
+            want_syncs = sorted(b['sync_sample'] for b in side['bursts']
+                                if b['kind'] == 'data' or b.get('burst') == 'A')
+            delay = 50 * k                       # dmr_demod's 101-tap low-pass, at 48 kS/s
+            check("sidecar sync_sample on the SYNC to a 48 kS/s sample, after the demod's delay",
+                  len(got_syncs) == len(want_syncs) and
+                  max(abs(g - w - delay) for g, w in zip(got_syncs, want_syncs)) <= k
+                  if got_syncs and want_syncs else False, True)
+        if '--snr' in args:
+            print(f'  18 dB over seeds {list(SNR_SEEDS)}: {snr_voice} voice-frame bit errors '
+                  f'in {snr_frames} frames')
+            check('18 dB voice-frame bit errors over 5 seeds',
+                  snr_voice <= SNR_VOICE_BER_BOUND, True)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--real')
@@ -267,5 +307,11 @@ if a.real:
         m_ok += [F.voice_centre(cc, l, f) for l, f in zip([1, 3, 3, 2, 0], fr)] == cent
     check('voice centre fields B-F', (m_ok, m > 0), (m, True))
 
-print('PASS' if not failures else f'FAIL: {len(failures)}: {failures}')
+if failures:
+    line = f'FAIL: {len(failures)}: {failures}'
+elif n_skip:
+    line = f'PASS ({n_skip} spec pins skipped: docs/ptt/dmr/text/ not present)'
+else:
+    line = 'PASS'
+print(line)
 sys.exit(1 if failures else 0)

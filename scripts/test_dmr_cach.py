@@ -40,10 +40,31 @@ SPEC = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text',
                     'ETSI_TS_102_361-1_v2.5.1_air_interface_protocol.txt')
 SPEC2 = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text',
                      'ETSI_TS_102_361-2_v2.4.1_voice_and_general_services.txt')
+SPEC_DIR = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text')
+# check() calls while counting_spec is set: 24 in Part 1, 6 in Part 2.
+# When the text is present the counts are compared with these, so the number
+# printed for a clone without the docs cannot drift from the pins that ran.
+N_SPEC_PINS_PART1 = 24
+N_SPEC_PINS_PART2 = 6
+# 1 MS/s, 18 dB, one superframe, seeds 0-4, both noisy cases below.
+# Voice frames were bit-exact on every one of those seeds (and on a 5-seed
+# pass of the +25 kHz case, 90 frames). Idle bursts are not: the -20 kHz
+# case had 4 bursts off Table D.2 in seeds 0-19 (160 bursts), and at most
+# 2 in any five consecutive seeds. 4 over a five-seed run (40 bursts) is
+# above that and still rejects a run where the Idles are simply wrong.
+SNR_SEEDS = range(5)
+SNR_VOICE_BER_BOUND = 0
+SNR_IDLE_BOUND = 4
 failures = []
+counting_spec = False
+n_spec_ran = 0
+n_skip = 0
 
 
 def check(name, got, want):
+    global n_spec_ran
+    if counting_spec:
+        n_spec_ran += 1
     ok = got == want
     print(f"  {'ok  ' if ok else 'FAIL'} {name}"
           + ('' if ok else f": {repr(got)[:240]} (want {repr(want)[:240]})"))
@@ -179,9 +200,12 @@ print('spec text has no numerical CACH / TACT / Short LC example; '
       'Annex E tables stop at E.12 and none is a CACH')
 
 if not os.path.exists(SPEC):
-    print('  skip (no Part 1 text)')
+    print(f'  SKIPPED {N_SPEC_PINS_PART1} spec pins ({SPEC_DIR}/ part 1 not present)')
+    n_skip += N_SPEC_PINS_PART1
     txt = None
 else:
+    counting_spec = True
+    _part1_before = n_spec_ran
     txt = open(SPEC, encoding='latin1').read()
     annex_e = txt[txt.find('Annex E (normative)', txt.find('Annex E') + 10):]
     caps = re.findall(r'Table E\.\d+:[^\n]*', annex_e)
@@ -297,12 +321,18 @@ else:
     d2 = named_bits('Table D.2:', 'Figure D.1')
     check('IDLE_INFO96 is Table D.2, I(95) first',
           F.IDLE_INFO96, [d2[f'I({i})'] for i in range(95, -1, -1)])
+    counting_spec = False
+    _part1 = n_spec_ran - _part1_before
+    if _part1 != N_SPEC_PINS_PART1:
+        check('Part 1 spec-pin count', _part1, N_SPEC_PINS_PART1)
 
 if not os.path.exists(SPEC2):
-    print('  skip (no Part 2 text)')
-    parsed = None
+    print(f'  SKIPPED {N_SPEC_PINS_PART2} spec pins ({SPEC_DIR}/ part 2 not present)')
+    n_skip += N_SPEC_PINS_PART2
 else:
     print('Null Short LC and Activity Update (Part 2)')
+    counting_spec = True
+    _part2_before = n_spec_ran
     t2 = open(SPEC2, encoding='latin1').read()
     b3 = t2[t2.index('Table B.3: SLCO'):]
     slco_null = spec_binary(b3, 'Null Message')
@@ -326,25 +356,30 @@ else:
           (F.ACT_NONE, F.ACT_GROUP_VOICE, F.ACT_INDIVIDUAL_VOICE))
     m = re.search(r'Short LC Opcode \(SLCO\)\s+4\s+([01]+)2', atab)
     check('Table 7.10 SLCO row is 0001', int(m.group(1), 2) if m else None, 0b0001)
-    if txt is None:
-        print('  skip (call checks need the Part 1 text)')
-        parsed = None
-    else:
-        parsed = {
-            'lcss': [lcss_first, lcss_cont, lcss_cont, lcss_last],
-            'at_idle': at_idle, 'at_busy': at_busy, 'tc1': tc1, 'tc2': tc2,
-            'slco_null': slco_null, 'slco_act': int(m.group(1), 2),
-            'act_none': act_none, 'act_group': act_group, 'act_unit': act_unit,
-            'g8': g8,
-        }
-
-if parsed is not None:
-    raw2 = open(SPEC2, encoding='latin1').read()
-    i79 = raw2.index('Table 7.9:')
-    ntab = raw2[i79:raw2.index('7.1.3.2', i79)]
     # Table 7.9 puts the value in the remark ("Shall be set to 00002"), not beside the length.
-    m = re.search(r'Short LC Opcode \(SLCO\)\s+4\s+Shall be set to ([01]+)2', ntab)
-    check('Table 7.9 SLCO row is 0000', int(m.group(1), 2) if m else None, 0b0000)
+    m79 = re.search(r'Short LC Opcode \(SLCO\)\s+4\s+Shall be set to ([01]+)2', ntab)
+    check('Table 7.9 SLCO row is 0000', int(m79.group(1), 2) if m79 else None, 0b0000)
+    counting_spec = False
+    _part2 = n_spec_ran - _part2_before
+    if _part2 != N_SPEC_PINS_PART2:
+        check('Part 2 spec-pin count', _part2, N_SPEC_PINS_PART2)
+
+
+def library_parsed():
+    """Field values the call round trip expects. These are the library constants.
+
+    The spec pins above compare those constants with the text when the text is
+    in the tree. A clone without docs/ still runs the calls against this.
+    """
+    return {
+        'lcss': list(F.SHORT_LC_LCSS),
+        'at_idle': 0, 'at_busy': 1,
+        'tc1': S.TC_OF_SLOT[1], 'tc2': S.TC_OF_SLOT[2],
+        'slco_null': F.SLCO_NULL, 'slco_act': F.SLCO_ACTIVITY,
+        'act_none': F.ACT_NONE, 'act_group': F.ACT_GROUP_VOICE,
+        'act_unit': F.ACT_INDIVIDUAL_VOICE,
+        'g8': F.CRC8_POLY,
+    }
 
 
 def pack_activity(slco, ts1, ts2, h1, h2):
@@ -428,7 +463,125 @@ CASES = [
 ]
 
 
-def run_case(name, args, amb, p):
+def check_bs_timing(name, path, side):
+    """Burst timing against the waveform, clean 48 kS/s only.
+
+    The demod delay is the 101-tap low-pass: 50 samples at 48 kS/s. On the
+    matched path the integer SYNC peak sits one sample earlier than the boxcar
+    (the fractional peak is about -0.89 of a sample, against -0.40 for the
+    boxcar). Both still land inside one sample of sidecar sync_sample + 50,
+    and the window is not widened past that.
+
+    65.5 symbols is measured on the boxcar. The matched path's extra sample
+    would push a burst that is already one sample early out to 657, past ±1
+    of 655. The slot centre is not read from the sidecar. The carrier turns
+    on, unshifted, at the first CACH symbol; six of those twelve symbols fall
+    in this slot, and the slot centre is 72 symbols after that boundary, so
+    it is 78 symbols after the turn-on. The first symbol centre is that point
+    minus 655 samples. Removing the half-symbol shift in modulate_bs moves
+    the waveform 5 samples earlier and this distance leaves ±1. Adding 7
+    samples to every sidecar position leaves the distance alone and fails the
+    peak-versus-sidecar and start/CACH-versus-waveform checks instead.
+    """
+    if side['sample_rate'] != D.FS_SYM or side['snr_db_12k5'] is not None:
+        return
+    y = np.fromfile(path, np.complex64)
+    y = y * np.exp(-2j * np.pi * side['offset_hz'] * np.arange(len(y)) / side['sample_rate'])
+    mag = np.abs(y)
+    on = np.flatnonzero(np.abs(mag - 0.5) < 1e-4)
+    one_run = len(on) > 0 and not np.any(np.diff(on) > 1)
+    check(name + ': carrier is one flat run at amplitude 0.5', one_run, True)
+    if not one_run:
+        return
+    env0 = int(on[0])
+    flat = float(np.max(np.abs(mag[on] - 0.5)))
+    check(name + ': carrier envelope flat between bursts (within 1e-4 of 0.5, ramps excluded)',
+          flat < 1e-4, True)
+
+    delay = 50
+    sps = D.SPS
+
+    def sync_peaks(d):
+        found = []
+        for sync_name in ('BS_VOICE', 'BS_DATA'):
+            sy = D.sync_symbols(sync_name)
+            for pos, sign in D.find_syncs(d, sync_name, 0.6):
+                if sign < 0:
+                    continue
+                sc, off = D.fit_levels(d, pos, sy)
+                if D.sync_ok(d, pos, sy, sc, off):
+                    found.append((int(pos), sc, off))
+        found.sort()
+        return found
+
+    sync_bursts = [(i, b) for i, b in enumerate(side['bursts'])
+                   if b['kind'] == 'data' or b.get('burst') == 'A']
+    d_box = D.discriminate(y, D.FS_SYM, squelch=0.25, matched=False)
+    d_mat = D.discriminate(y, D.FS_SYM, squelch=0.25, matched=True)
+    box = sync_peaks(d_box)
+    mat = sync_peaks(d_mat)
+
+    def peak_errs(found):
+        if len(found) != len(sync_bursts):
+            return None
+        return [pos - (b['sync_sample'] + delay) for (pos, _, _), (_, b) in zip(found, sync_bursts)]
+
+    box_err = peak_errs(box)
+    mat_err = peak_errs(mat)
+    check(name + ': boxcar SYNC peak within 1 sample of sidecar + the 50-sample delay',
+          box_err is not None and max(abs(e) for e in box_err) <= 1, True)
+    check(name + ': matched SYNC peak within 1 sample of sidecar + the 50-sample delay',
+          mat_err is not None and max(abs(e) for e in mat_err) <= 1, True)
+    if box_err is None:
+        return
+
+    first_at = {}
+    for (pos, _sc, _off), (i, _b) in zip(box, sync_bursts):
+        first_at[i] = (pos - delay) - 54 * sps
+    ok_dist = True
+    ok_side = True
+    for i, b in enumerate(side['bursts']):
+        j = min(first_at, key=lambda k: abs(k - i))
+        first_iq = first_at[j] + (i - j) * 144 * sps
+        dist = env0 + (78 + i * 144) * sps - first_iq
+        if abs(dist - 655) > 1:
+            ok_dist = False
+        if (abs(first_iq - b['start_sample']) > 1
+                or abs(first_iq - 12 * sps - b['cach_sample']) > 1):
+            ok_side = False
+    check(name + ': first symbol centre is 65.5 symbols (655 samples) before the slot centre',
+          ok_dist, True)
+    check(name + ': sidecar start and CACH match the waveform; CACH is the 12 symbols before the burst',
+          ok_side, True)
+
+    # Envelope-grid centres assume the half-symbol shift. The sync grid follows
+    # the peak, so the two agree on a shifted waveform and disagree when the
+    # shift is missing even if the sidecar moved with it.
+    diffs = 0
+    n_sym = 0
+    half = sps // 2
+    for (pos, sc, off), (i, _b) in zip(box, sync_bursts):
+        sy_sync = D.read_symbols(d_box, pos - 54 * sps - 12 * sps, 12, sc, off)
+        centres = env0 + i * 144 * sps + half + delay + sps * np.arange(12)
+        if sy_sync is None or centres[0] < 0 or int(centres[-1]) >= len(d_box):
+            diffs += 12
+            n_sym += 12
+            continue
+        v = (d_box[centres] - off) / sc
+        sy_env = np.where(v > 2, 3, np.where(v > 0, 1, np.where(v > -2, -1, -3)))
+        diffs += int(np.sum(np.asarray(sy_sync) != sy_env))
+        n_sym += 12
+    check(name + ': CACH symbols on the envelope grid match the symbols read from the SYNC',
+          diffs == 0 and n_sym == 12 * len(sync_bursts), True)
+
+
+def run_case(name, args, amb, p, payload_exact=True):
+    """One BS call. Returns voice bit errors, unclean Idles, and the two counts.
+
+    payload_exact False is the 18 dB runs: voice frames are still required
+    bit-exact per seed, and Idle bursts are only counted. The caller applies
+    the Idle bound, because one seed at 18 dB flips an Idle on correct code.
+    """
     print(f'call: {name}')
     out = os.path.join(os.path.dirname(amb), 'c.cf32')
     S.main([out] + args + ['--ambe', amb])
@@ -440,6 +593,12 @@ def run_case(name, args, amb, p):
 
     want_frames = S.load_frames(amb, side['superframes'])
     check(name + ': voice_calls superframes', len(calls), side['superframes'])
+    if len(frames) == len(want_frames):
+        voice_ber = sum(x != y for a, b in zip(frames, want_frames) for x, y in zip(a, b))
+        n_voice = len(frames)
+    else:
+        voice_ber = 72 * max(len(frames), len(want_frames), 1)
+        n_voice = len(want_frames)
     check(name + ': every voice frame, in order, at the 288-symbol same-slot spacing',
           frames, want_frames)
     want_lc = F.full_lc(side['lc']['dst'], side['lc']['src'], side['lc']['call'],
@@ -480,9 +639,13 @@ def run_case(name, args, amb, p):
         lc_ok = lc_ok and lc == want_lc and ok and bad == 0
     check(name + ': header and terminator LC, BPTC clean, RS passes', lc_ok, True)
     idle_bits = [F.bptc196_decode(burst_payload(b)) for b in idles]
-    check(name + ': every Idle burst is Table D.2, BPTC clean',
-          all(info == F.IDLE_INFO96 and bad == 0 for info, bad in idle_bits) and len(idles) == n_slots // 2,
-          True)
+    idle_bad = sum(not (info == F.IDLE_INFO96 and bad == 0) for info, bad in idle_bits)
+    n_idle = len(idles)
+    if len(idles) != n_slots // 2:
+        idle_bad += abs(len(idles) - n_slots // 2)
+    if payload_exact:
+        check(name + ': every Idle burst is Table D.2, BPTC clean',
+              idle_bad == 0 and len(idles) == n_slots // 2, True)
 
     # embedded LC on the call slot, bursts B-F, 288 symbols apart
     emb_ok = True
@@ -501,7 +664,7 @@ def run_case(name, args, amb, p):
     none_missing = all(w is not None for w in words)
     check(name + ': a CACH was read before every burst', none_missing, True)
     if not none_missing:
-        return
+        return voice_ber, idle_bad, n_voice, n_idle
     seq = p['lcss']
     check(name + ': LCSS of the fragments is 01, 11, 11, 10, repeating',
           [t['lcss'] for t in tacts], seq * (n_slots // 4))
@@ -534,24 +697,41 @@ def run_case(name, args, amb, p):
           all(abs((b - a) - step) <= 1 for a, b in zip(starts, starts[1:])), True)
     check(name + ': sidecar CACH is 12 symbols before its burst',
           all(abs((s - c) - 12 * D.SPS * k) <= 1 for s, c in zip(starts, cachs)), True)
-    if side['snr_db_12k5'] is None and side['sample_rate'] == 48000:
-        y = np.fromfile(out, np.complex64)
-        # stay off the key-up and key-down ramps; the carrier in between must not drop
-        a = side['bursts'][0]['cach_sample'] + 30
-        b = side['bursts'][-1]['start_sample'] + int(0.0275 * 48000) - 30
-        mag = np.abs(y[a:b])
-        check(name + ': continuous carrier, envelope flat between the outer ramps',
-              bool(mag.min() > 0.45 and mag.max() < 0.55), True)
+    check_bs_timing(name, out, side)
+    return voice_ber, idle_bad, n_voice, n_idle
 
 
-if parsed is not None:
-    with tempfile.TemporaryDirectory() as tmp:
-        amb = os.path.join(tmp, 'v.ambe')
-        rng = np.random.default_rng(3)
-        with open(amb, 'wb') as f:
-            f.write(rng.integers(0, 256, 9 * 18 * 2, dtype=np.uint8).tobytes())
-        for name, args in CASES:
+with tempfile.TemporaryDirectory() as tmp:
+    amb = os.path.join(tmp, 'v.ambe')
+    rng = np.random.default_rng(3)
+    with open(amb, 'wb') as f:
+        f.write(rng.integers(0, 256, 9 * 18 * 2, dtype=np.uint8).tobytes())
+    parsed = library_parsed()
+    for name, args in CASES:
+        if '--snr' in args:
+            voice = idle_bad = n_voice = n_idle = 0
+            for seed in SNR_SEEDS:
+                v, ib, nv, ni = run_case(
+                    f'{name} seed {seed}', args + ['--seed', str(seed)], amb, parsed,
+                    payload_exact=False)
+                voice += v
+                idle_bad += ib
+                n_voice += nv
+                n_idle += ni
+            print(f'  18 dB over seeds {list(SNR_SEEDS)}: {voice} voice-frame bit errors '
+                  f'in {n_voice} frames, {idle_bad} Idle bursts off Table D.2 of {n_idle}')
+            check(name + ': 18 dB voice-frame bit errors over 5 seeds',
+                  voice <= SNR_VOICE_BER_BOUND, True)
+            check(name + ': 18 dB Idle bursts off Table D.2 over 5 seeds',
+                  idle_bad <= SNR_IDLE_BOUND, True)
+        else:
             run_case(name, args, amb, parsed)
 
-print('PASS' if not failures else f'FAIL: {len(failures)}: {failures}')
+if failures:
+    line = f'FAIL: {len(failures)}: {failures}'
+elif n_skip:
+    line = f'PASS ({n_skip} spec pins skipped: docs/ptt/dmr/text/ not present)'
+else:
+    line = 'PASS'
+print(line)
 sys.exit(1 if failures else 0)

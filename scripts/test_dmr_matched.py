@@ -25,6 +25,17 @@ import dmr_synth as S  # noqa: E402
 
 SPEC = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text',
                     'ETSI_TS_102_361-1_v2.5.1_air_interface_protocol.txt')
+SPEC_DIR = os.path.join(HERE, '..', 'docs', 'ptt', 'dmr', 'text')
+# Clause 10.2.2.2 pins read from the text: F=1 edge, F=0 edge, the symbol
+# period, and the absence of a printed h(t) or a numeric transition magnitude.
+N_SPEC_PINS = 4
+# Seeds 0-9 of an MS call, 2 superframes, 48 kS/s, 18 dB, matched=True,
+# squelch 0.25. On this code those seeds have 0 voice-frame bit errors with
+# the gate before the RRC. Moving the gate to after the convolution produced
+# 6 on the same seeds. Seeds outside this set can drop a whole superframe on
+# both orders, so they are not used. 4 sits above the observed 0 and below 6.
+SQUELCH_SEEDS = range(10)
+SQUELCH_BER_BOUND = 4
 failures = []
 
 
@@ -50,46 +61,147 @@ def front(x, fs):
     return np.angle(x[1:] * np.conj(x[:-1])) * D.FS_SYM / (2 * np.pi)
 
 
-def check_spec():
-    h = D.rrc()
-    nfft = 8192
+def rrc_ref(alpha, sps=10, span=8):
+    """Square-root raised cosine, written here so it is not dmr_demod.rrc.
+
+    The usual time-domain formula (unit-energy per symbol before the sum
+    normalisation). alpha is the excess bandwidth.
+    """
+    t = np.arange(-span * sps, span * sps + 1) / float(sps)
+    h = np.empty(t.shape, float)
+    for i, x in enumerate(t):
+        ax = abs(x)
+        if ax < 1e-12:
+            h[i] = (1.0 - alpha) + 4.0 * alpha / np.pi
+        elif abs(4.0 * alpha * ax - 1.0) < 1e-8:
+            h[i] = alpha / np.sqrt(2.0) * (
+                (1.0 + 2.0 / np.pi) * np.sin(np.pi / (4.0 * alpha))
+                + (1.0 - 2.0 / np.pi) * np.cos(np.pi / (4.0 * alpha)))
+        else:
+            num = (np.sin(np.pi * x * (1.0 - alpha))
+                   + 4.0 * alpha * x * np.cos(np.pi * x * (1.0 + alpha)))
+            den = np.pi * x * (1.0 - (4.0 * alpha * x) ** 2)
+            h[i] = num / den
+    return h / h.sum()
+
+
+def _mag(h):
+    nfft = 65536
     mag = np.abs(np.fft.rfft(h, n=nfft))
     mag = mag / mag[0]
     freq = np.fft.rfftfreq(nfft, 1.0 / D.FS_SYM)
-    passband = mag[freq <= 1920]
-    stop = mag[freq >= 3400]
-    shape_ok = (len(h) == 2 * 8 * D.SPS + 1 and abs(float(h.sum()) - 1) < 1e-9
-                and np.allclose(h, h[::-1])
-                and passband.min() > 0.98 and passband.max() < 1.02
-                and stop.max() < 0.02)
+    return freq, mag
+
+
+def _at(freq, mag, hz):
+    return float(mag[int(np.argmin(np.abs(freq - hz)))])
+
+
+def _ideal_srrc(f_hz, alpha, rate):
+    """Magnitude of the root raised cosine: square root of the raised-cosine H(f)."""
+    f = abs(f_hz)
+    f_pass = (1.0 - alpha) * rate / 2.0
+    f_stop = (1.0 + alpha) * rate / 2.0
+    if f <= f_pass:
+        return 1.0
+    if f >= f_stop:
+        return 0.0
+    rc = 0.5 * (1.0 + np.cos(np.pi / (alpha * rate) * (f - f_pass)))
+    return float(np.sqrt(rc))
+
+
+def _pin_rrc(alpha, f_pass, f_stop, rate):
+    """Compare dmr_demod.rrc() with the independent formula. Return an error string or ''.
+
+    The extracted clause prints F=1 up to the pass edge and F=0 above the stop
+    edge. Its transition cosine did not survive (the argument is pi*f/1920,
+    which is -1 at the pass edge), and it prints no magnitude at 2880 Hz or at
+    any transition-band frequency. 2160 Hz is the middle of the lower half of
+    that transition, (f_pass + rate/2) / 2, where the ideal SRRC magnitude is
+    cos(pi/8). A span-8 filter only approximates it; alpha 0.15 measures about
+    0.961 here and alpha 0.2 about 0.916, so ±0.02 around cos(pi/8) keeps 0.2
+    and drops 0.15.
+    """
+    h = D.rrc()
+    ref = rrc_ref(alpha, sps=D.SPS, span=8)
+    tap_err = float(np.max(np.abs(h - ref)))
+    freq, mag = _mag(h)
+    f_mid = 0.5 * (f_pass + rate / 2.0)
+    got_mid = _at(freq, mag, f_mid)
+    want_mid = float(np.cos(np.pi / 8.0))
+    # The ideal value at the stop edge is 0. The finite filter is not; pin it
+    # to the same independent taps, which moves when alpha does (0.051 at 0.2,
+    # 0.014 at 0.15).
+    freq_r, mag_r = _mag(ref)
+    stop_err = abs(_at(freq, mag, f_stop) - _at(freq_r, mag_r, f_stop))
+    ideal_stop = _ideal_srrc(f_stop, alpha, rate)
+    ideal_mid = _ideal_srrc(f_mid, alpha, rate)
+    bad = []
+    if tap_err > 1e-9:
+        bad.append(f'taps differ from alpha {alpha} by {tap_err:.3e}')
+    if abs(got_mid - want_mid) > 0.02:
+        bad.append(f'|H({f_mid:.0f})| {got_mid:.4f} not within 0.02 of cos(pi/8) {want_mid:.4f}')
+    if abs(ideal_mid - want_mid) > 1e-9:
+        bad.append(f'ideal |H({f_mid:.0f})| {ideal_mid:.4f} is not cos(pi/8)')
+    if stop_err > 1e-6:
+        bad.append(f'|H({f_stop:.0f})| differs from the reference filter by {stop_err:.3e}')
+    if ideal_stop != 0.0:
+        bad.append(f'ideal |H({f_stop:.0f})| is {ideal_stop}, the spec prints 0 above that edge')
+    if not (len(h) == 2 * 8 * D.SPS + 1 and abs(float(h.sum()) - 1) < 1e-9
+            and np.allclose(h, h[::-1])):
+        bad.append('length, sum or symmetry')
+    return '; '.join(bad)
+
+
+def check_spec():
+    """Return how many spec pins were skipped."""
     if not os.path.isfile(SPEC):
-        print('  skip the spec text (not in the tree)')
-        if shape_ok:
-            ok('rrc() length 161, symmetric, passband to 1920 Hz and stop above 3400 Hz')
+        # The text is what names 1920/2880. Without it, still pin the taps to
+        # alpha 0.2, which is the excess bandwidth those edges are: (2880/2400)-1.
+        err = _pin_rrc(0.2, 1920.0, 2880.0, 4800.0)
+        print(f'SKIPPED {N_SPEC_PINS} spec pins ({SPEC_DIR}/ not present)', flush=True)
+        if err:
+            fail('rrc formula', err)
         else:
-            fail('rrc shape', f'pass {passband.min():.3f}/{passband.max():.3f} stop {stop.max():.3f}')
-        return
+            ok('rrc() matches an independent alpha-0.2 SRRC, including |H(2160)| '
+               'near cos(pi/8); spec edges not in the tree')
+        return N_SPEC_PINS
     txt = open(SPEC, encoding='utf-8', errors='replace').read()
-    # The contents line also contains the clause number. The body heading is indented.
     start = txt.index('10.2.2.2           Square root raised cosine filter')
     end = txt.index('10.2.2.3', start)
     clause = txt[start:end]
     end3 = txt.index('10.2.3', end)
     clause3 = txt[end:end3]
-    edges = (re.search(r'=\s*1\s+for\s+f\s*≤\s*1\s*920\s*Hz', clause) is not None
-             and re.search(r'=\s*0\s+for\s+f\s*>\s*2\s*880\s*Hz', clause) is not None
-             and re.search(r'\|f\|\s*<\s*2\s*880\s*Hz', clause) is not None)
-    # Equation (14)'s cosine did not survive extraction: cos(pi f / 1920) is -1 at
-    # 1920 Hz, so it cannot be the transition that continues F=1. No h(t) is printed.
+    m_pass = re.search(r'=\s*1\s+for\s+f\s*≤\s*(\d)\s+(\d{3})\s*Hz', clause)
+    m_stop = re.search(r'=\s*0\s+for\s+f\s*>\s*(\d)\s+(\d{3})\s*Hz', clause)
+    m_rate = re.search(r'\(1/(\d)\s+(\d{3})\s*s\)', clause)
+    # Equation (14)'s cosine did not survive extraction: the argument prints as
+    # pi*f/1920, which is -1 at 1920 Hz, so it is not the transition that
+    # continues F=1. No numeric magnitude is printed at 2880 Hz or in the
+    # transition band, and no h(t) is printed. The magnitude pins below use the
+    # SRRC formula instead of that cosine.
     no_taps = ('h(t)' not in clause and 'h(t)' not in clause3
                and 'impulse response' not in clause.lower())
-    if edges and no_taps and shape_ok:
-        ok('spec 10.2.2.2 edges 1920/2880 Hz; no time-domain taps in 10.2.2.2 or '
-           '10.2.2.3 (the printed cosine argument is not usable); rrc() matches the edges')
+    if not (m_pass and m_stop and m_rate and no_taps):
+        fail('spec rrc', f'pass {m_pass is not None} stop {m_stop is not None} '
+             f'rate {m_rate is not None} no_taps {no_taps}')
+        return 0
+    f_pass = int(m_pass.group(1) + m_pass.group(2))
+    f_stop = int(m_stop.group(1) + m_stop.group(2))
+    rate = int(m_rate.group(1) + m_rate.group(2))
+    alpha = f_stop / (rate / 2.0) - 1.0
+    edges_ok = (abs((1.0 - alpha) * rate / 2.0 - f_pass) < 1e-6
+                and abs((1.0 + alpha) * rate / 2.0 - f_stop) < 1e-6
+                and abs(alpha - 0.2) < 1e-9)
+    err = _pin_rrc(alpha, float(f_pass), float(f_stop), float(rate))
+    if edges_ok and not err:
+        ok(f'spec 10.2.2.2: F=1 to {f_pass} Hz, F=0 above {f_stop} Hz, '
+           f'symbol rate {rate}, alpha {alpha:.1f}; no printed transition magnitude '
+           f'(cosine argument unusable); rrc() matches the formula, '
+           f'|H(2160)| near cos(pi/8), |H({f_stop})| matches the reference filter')
     else:
-        fail('spec rrc', f'edges {edges} no_taps {no_taps} shape {shape_ok} '
-             f'pass {float(passband.min()):.3f}/{float(passband.max()):.3f} '
-             f'stop {float(stop.max()):.3f}')
+        fail('spec rrc', f'edges {edges_ok} alpha {alpha} {err}')
+    return 0
 
 
 def check_identity():
@@ -207,6 +319,43 @@ def check_bs_stream():
            'array length is the baseband minus one sample')
 
 
+def check_squelch_order(tmp):
+    """The squelch gate is applied before the RRC, not after it.
+
+    MS call, matched=True, squelch 0.25, 18 dB, 2 superframes, seeds 0-9.
+    On this code those seeds have 0 voice-frame bit errors with the gate
+    first and 6 with the gate after the convolution. Seeds that drop a whole
+    superframe on both orders are outside this set. The bound 4 is above the
+    observed 0 and below 6, so moving `np.where` back to after the convolution
+    fails here.
+    """
+    total = 0
+    n_frames = 0
+    for seed in SQUELCH_SEEDS:
+        y, side, ambe = synth(
+            tmp, f'sq{seed}', 2,
+            ['--sync', 'ms', '--cc', '3', '--fs', '48000', '--superframes', '2',
+             '--lead', '0.2', '--tail', '0.2', '--snr', '18', '--seed', str(seed)],
+            seed=seed)
+        y, fs = tune(y, side)
+        d = D.discriminate(y, fs, squelch=0.25, matched=True)
+        calls = D.voice_calls(d, side['sync']['voice'])
+        if len(calls) != side['superframes']:
+            fail('squelch order', f'seed {seed}: {len(calls)} superframes')
+            return
+        frames = np.array([f for _, fr in calls for f in fr], np.uint8)
+        if frames.shape != ambe.shape:
+            fail('squelch order', f'seed {seed}: shape {frames.shape} vs {ambe.shape}')
+            return
+        total += int(np.sum(frames != ambe))
+        n_frames += frames.shape[0]
+    if total <= SQUELCH_BER_BOUND:
+        ok(f'squelch before the RRC, MS 18 dB, seeds 0-9: {total} voice-frame bit '
+           f'errors in {n_frames} frames (bound {SQUELCH_BER_BOUND})')
+    else:
+        fail('squelch order', f'{total} voice-frame bit errors, bound {SQUELCH_BER_BOUND}')
+
+
 def check_false_accept():
     step = D.SUPERFRAME_SYMS * D.SPS
     counts = []
@@ -226,13 +375,20 @@ def check_false_accept():
 
 
 def main():
-    check_spec()
+    n_skip = check_spec()
     check_identity()
     check_bs_stream()
     with tempfile.TemporaryDirectory() as tmp:
         check_clean(tmp)
+        check_squelch_order(tmp)
     check_false_accept()
-    print('PASS' if not failures else f'FAIL {len(failures)}: {failures}', flush=True)
+    if failures:
+        line = f'FAIL {len(failures)}: {failures}'
+    elif n_skip:
+        line = f'PASS ({n_skip} spec pins skipped: docs/ptt/dmr/text/ not present)'
+    else:
+        line = 'PASS'
+    print(line, flush=True)
     return 1 if failures else 0
 
 
