@@ -265,6 +265,16 @@ def main(argv=None):
                           ('--service-options', a.service_options, 8)):
         if not 0 <= v < 1 << bits:
             ap.error(f'{name} {v} does not fit in {bits} bits')
+    for name, v in (('--superframes', a.superframes), ('--headers', a.headers),
+                    ('--terminators', a.terminators)):
+        if v < 0:
+            ap.error(f'{name} {v} is negative')
+    if a.fs < 25e3:
+        ap.error(f'--fs {a.fs:g} is below the 25 kS/s a 12.5 kHz channel needs: it would alias')
+    if a.lead < 0 or a.tail < 0:
+        ap.error('--lead and --tail cannot be negative')
+    if a.sync == 'bs' and round(a.lead * D.SYMBOL_RATE) < GUARD_SYMS:
+        ap.error('--sync bs needs --lead of at least 1.25 ms: the first CACH sits before the burst')
     if a.superframes == 0 and not a.ambe:
         a.superframes = 10
     if a.short_lc != 'null' and a.sync != 'bs':

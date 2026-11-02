@@ -60,7 +60,7 @@ ANCHOR_HEADERS = ('Voice LC Header', 'PI Header')
 # EMB(15)..EMB(8), 32 embedded bits, EMB(7)..EMB(0).
 EMB_SPLIT = 8
 
-# Recovery gates. Tuned on synthetic calls; see NOTES_decoder.md.
+# Recovery gates. Tuned on synthetic calls; see knowledge/ptt-dmr.md, 'Reading weak and cut calls'.
 # A candidate needs 4 of 5 B-F EMBs within this many bits of a codeword, the
 # neighbour's colour code, and the LCSS sequence above with at most one miss.
 RECOVER_MAX_EMB_ERR = 1
@@ -68,7 +68,7 @@ RECOVER_MIN_EMB = 4
 RECOVER_MAX_LCSS_MISMATCH = 1
 # Decision-directed residual, in symbol units, after refitting the neighbour's
 # scale and offset on bursts B-F. Also applied per voice frame. Measured on
-# synthetic calls (NOTES_decoder.md): a clean superframe sits near 0.23, one
+# synthetic calls (knowledge/ptt-dmr.md): a clean superframe sits near 0.23, one
 # frame of the 12 dB superframe this search recovered reached 0.48, and
 # squelched noise refits to about 0.30-0.47. The gate does not separate those.
 # It rejects a fit that never found the four levels. The EMB check rejects noise.
@@ -347,6 +347,15 @@ def modulate(symbols, fs=FS_SYM):
 
 
 # --- demodulation ----------------------------------------------------------------
+def _same(x, h):
+    """np.convolve(x, h, 'same') but always len(x) long: numpy returns max(len(x), len(h))
+    samples, so an input shorter than the kernel came back too long. Identical otherwise."""
+    if len(x) == 0:
+        return np.asarray(x, float).copy()
+    k = (len(h) - 1) // 2
+    return np.convolve(x, h, mode='full')[k:k + len(x)]
+
+
 def discriminate(x, fs, squelch=None, matched=False):
     """Complex baseband at fs, channel at 0 Hz -> instantaneous frequency in Hz at 48 kS/s.
 
@@ -358,10 +367,15 @@ def discriminate(x, fs, squelch=None, matched=False):
     matched: the 4FSK frequency pulse is root-raised-cosine (clause 10.2.2.2), so the
     symbol decision can use that filter instead of the length-10 boxcar. Default False
     keeps the boxcar, and that output is unchanged. The RRC is 161 taps, odd and
-    symmetric, and convolve(mode='same') centres it, so it adds no group delay on top
-    of the 101-tap low-pass (50 samples at 48 kS/s). The array is still one sample
-    shorter than the 48 kS/s baseband, which is what find_syncs, fit_levels and
-    read_burst take."""
+    symmetric, so it is centred and adds no delay of its own on top of the 101-tap
+    low-pass (50 samples at 48 kS/s); a SYNC correlation peak still lands up to a
+    sample earlier than with the boxcar (0.89 against 0.40 of a sample off in a
+    review's measurement), inside the one-sample tolerance of the sidecar test. Filtering
+    the transmitter's RRC pulse with the same RRC gives a raised-cosine response with no
+    intersymbol interference at the symbol centres; it is not a textbook matched filter
+    on a frequency-modulated signal. With a squelch, the gate is applied before the RRC.
+    The array is one sample shorter than the 48 kS/s baseband, which is what
+    find_syncs, fit_levels and read_burst take."""
     if fs != FS_SYM:
         from fractions import Fraction
         r = Fraction(FS_SYM / fs).limit_denominator(10000)
@@ -370,14 +384,19 @@ def discriminate(x, fs, squelch=None, matched=False):
         return np.zeros(max(len(x) - 1, 0))
     x = lfilter(firwin(101, 6000, fs=FS_SYM), 1, x)
     d = np.angle(x[1:] * np.conj(x[:-1])) * FS_SYM / (2 * np.pi)
-    if matched:
-        d = np.convolve(d, rrc(), mode='same')
-    else:
-        d = np.convolve(d, np.ones(SPS) / SPS, mode='same')
     if squelch is not None:
-        p = np.convolve(np.abs(x) ** 2, np.ones(SPS) / SPS, mode='same')[1:]
-        if np.max(p) > 0:
-            d = np.where(p > squelch * np.max(p), d, 0.0)
+        p = _same(np.abs(x) ** 2, np.ones(SPS) / SPS)[1:]
+        gate = p > squelch * np.max(p) if np.max(p) > 0 else np.zeros(len(d), bool)
+    if matched:
+        # Squelch BEFORE the 161-tap filter: after it, the first and last symbol of every
+        # burst pick up the noise from the transmitter-off time on either side (a review
+        # measured 53 bit errors against 3 over 30 seeds at 18 dB, 48 of them on those two).
+        if squelch is not None:
+            d = np.where(gate, d, 0.0)
+        return _same(d, rrc())
+    d = _same(d, np.ones(SPS) / SPS)
+    if squelch is not None:
+        d = np.where(gate, d, 0.0)
     return d
 
 
@@ -387,7 +406,9 @@ def find_syncs(d, name, thr=0.6, min_gap=100):
     sy = sync_symbols(name)
     tmpl = np.zeros(24 * SPS)
     tmpl[::SPS] = sy
-    dz = d - np.convolve(d, np.ones(2001) / 2001, mode='same')
+    if len(d) < len(tmpl):               # np.correlate would swap its arguments
+        return []
+    dz = d - _same(d, np.ones(2001) / 2001)
     c = np.correlate(dz, tmpl, mode='valid')
     ref = np.max(np.abs(c)) if len(c) else 0
     hits, i = [], 0
@@ -673,11 +694,8 @@ def main(argv=None):
     return 0
 
 
-if __name__ == '__main__':
-    sys.exit(main())
 
-
-# --- CACH (outbound). Added beside the readers above; voice_calls is unchanged. ------
+# --- CACH (outbound) --------------------------------------------------------------
 def read_cach(d, burst_pos, scale, off):
     """24 CACH bits, TX(23) first, immediately before a burst.
 
@@ -716,3 +734,7 @@ def decode_cachs(words):
         else:
             i += 1
     return tacts, short
+
+
+if __name__ == '__main__':
+    sys.exit(main())

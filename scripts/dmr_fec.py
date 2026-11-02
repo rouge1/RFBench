@@ -17,7 +17,8 @@ Built from the tables of Annex B, not from another implementation:
     fragments, and the 24-bit CACH interleave (Figure B.9).
 
 Bits are lists of 0/1, most significant (the spec's highest index) first, in the order
-they go on the air. Used by scripts/dmr_synth.py; checked by scripts/test_dmr_synth.py.
+they go on the air. Used by scripts/dmr_synth.py; checked by scripts/test_dmr_synth.py and,
+for the CACH code, scripts/test_dmr_cach.py.
 """
 import numpy as np
 
