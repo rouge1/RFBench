@@ -390,6 +390,14 @@ side of the centre field), frame 3 = bits 144-215; dibits +3 = 01, +1 = 00, -1 =
 -3 = 11, first bit sent first; and the same slot every 288 symbols. Sceptre's `.ambe`
 holds the frames in that on-air form, before any deinterleaving or FEC.
 
+The demodulator is `scripts/dmr_demod.py` (tested on synthetic bursts by
+`scripts/test_dmr_demod.py`): `voice_calls`, `data_bursts`, the Golay(20,8) code, burst
+builders and a 4FSK modulator. A chance correlation with a SYNC is common in a busy
+capture; it is told from a real one by how closely the 24 SYNC symbols fit four levels
+(RMS residual about 0.33 of a level unit for real SYNCs, over 4 for chance ones), and a
+level scale far from 648 Hz a unit. Table B.11's Golay(20,8) code has a minimum
+distance of 8 by count, one more than the (20,8,7) the text names; it still corrects 3.
+
 ## 10. What the documents did not give
 
 - Occupied/emission bandwidth number beyond "12.5 kHz carrier" + RRC shape;
