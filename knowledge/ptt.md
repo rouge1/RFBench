@@ -34,9 +34,34 @@ interface; no TIA-603; no MPT 1343, FleetSync, Quik-Call II, LTR or SmartNet man
 
 `Joe_Sceptre/More_Recordings/` holds `vegas_ptt.cdif`, `vegas_ptt_460.cdif`,
 `PTT_Training_Demo.cdif`, `PTT_Training_Demo_v2.cdif`,
-`Prac_Ex_34_35_PTT_training_demo_v2(2).cdif` and `Tetra_Demo.cdif`. They have not
-been opened for these notes; the notes are checked against the documents only, not
-against a signal.
+`Prac_Ex_34_35_PTT_training_demo_v2(2).cdif` and `Tetra_Demo.cdif`. The notes above are
+checked against the documents only, not against a signal; a spectrogram of the
+recordings was asked of the FM receiver project's session on 2026-11-02 and is not
+in yet. Recording contents, centre frequencies and tags stay out of this public
+repository.
+
+### The `.cdif` format (Sceptre's recordings)
+
+Standard BLUE / X-Midas files, little-endian although the tag says `EEEI`
+(read from the headers by this session and by the FM receiver project, which has a
+numpy reader, `sceptre_blue.py`, and its own notes on it):
+
+- 512-byte header, then the samples, then a 2048-byte keyword block (`KEY=value`,
+  among them the sample rate, the RF centre, the gain to convert counts to dBm, and
+  the time of the capture). So file size = 512 + data size + 2048, and the float64 at
+  0x28 (data size) is the file size minus 2560. The data start is the float64 `512.0`
+  at 0x20. Magic `BLUEEEEIEEEI` at 0; the writer string `IO=Sceptre`, `VER=2.0`.
+- The two format letters at byte 52 give the samples: `CI` = complex int16, I then Q;
+  `CF` = complex float32. The float64 at 0x38 is the capture time in seconds since
+  1950-01-01 (the X-Midas epoch), and the float64 pair at 0x100 is the start time and
+  the sample interval (5e-08 s = 20 MS/s for the training demo).
+- Checked on the data: the first 64 MB of `PTT_Training_Demo.cdif` read as int16 I/Q have
+  equal I and Q spread, no DC, and narrow spectral lines over a flat floor at
+  20 MS/s; read as int8 or float32 they are not plausible. A file in `CF` form can be a
+  processed channel whose gain keyword is 0, in which case the counts-to-dBm
+  conversion does not apply.
+- Read them in chunks (a memmap) and cap memory with `systemd-run` `MemoryMax`: the
+  out-of-memory killer has taken sessions that read whole recordings.
 
 ## Checks made
 
