@@ -13,7 +13,15 @@ from the documents.
 | [ptt-dmr.md](ptt-dmr.md) | DMR Tier II and III | 4FSK 4800 sym/s, 2 slots, 12.5 kHz | ETSI TS 102 361-1 to -4 |
 | [ptt-nxdn.md](ptt-nxdn.md) | NXDN 4800 and 9600 baud | 4FSK, 6.25 and 12.5 kHz | NXDN Forum TS 1-A, 1-E, 1-F (copies from a ham mirror, not the Forum) |
 | [ptt-dpmr.md](ptt-dpmr.md) | dPMR and PMR446 | 4FSK, 6.25 kHz FDMA | ETSI TS 102 490, TS 102 658, EN 300 113 |
+| [ptt-other.md](ptt-other.md) | D-STAR, Fusion, M17, MPT 1327, cellular and app PTT (MCPTT, FirstNet, Zello, Iridium), telling systems apart in IQ, Sceptre's labels, the US legal line | GMSK, C4FM, 4FSK, LTE/NR | second-hand: taken from the FM receiver project's note, with JARL and M17 specs read there |
 | [ptt-analog.md](ptt-analog.md) | CTCSS, DCS, selective calling, trunking, FRS/GMRS/MURS/CB, MCPTT | NBFM | ETSI EN 300 086-1, 47 CFR 95, 3GPP TS 22.179 |
+
+The FM receiver project (a sibling repository) keeps its own `knowledge/ptt.md`, a research note
+written on 2026-11-01 for classifying signals; [ptt-other.md](ptt-other.md) carries over what it has
+that these notes do not. Where both cover a system the values agree (DMR syncs, dPMR FS1, NXDN
+6.25 kHz mapping, TETRA training sequences, P25 Phase 2 at 6000 sym/s). These notes add what it
+marks unverified: the P25 frame sync 5575F5FF77FF (from a lab capture in the Blaze paper) and the
+NXDN 12.5 kHz mode (4800 sym/s, +-800 and +-2400 Hz, TS 1-A).
 
 ## Not in the documents
 
