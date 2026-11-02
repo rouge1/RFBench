@@ -25,10 +25,11 @@ zero padding in the last block.
 The documents, four code repositories and the captures are in `docs/lora/`,
 which git ignores; `docs/lora/SOURCES.md` lists each with its URL and sha256.
 The numpy encoder and decoder that were checked against the captures are
-there too (`docs/lora/numpy/`: `lora_phy.py`, `rx_capture.py FILE SF` to
-decode a capture, and the two gr-lora_sdr cross-checks), as is Grok's cited
-research brief. They are not in the repo
-yet.
+`scripts/lora_phy.py` (`encode`, `modulate`, `decode_symbols`; `pad=` takes the
+chip's last-block nibbles), tested by `scripts/test_lora_phy.py`. Still in
+`docs/lora/numpy/` are `rx_capture.py FILE SF`, which decodes a capture, and
+the two gr-lora_sdr cross-checks (they import `lora_phy`, so run them with
+`scripts/` on the path), as is Grok's cited research brief.
 
 The `css` kind in `scripts/signal_mix.py` (the game-night generator) is *not*
 LoRa: it sends a LoRa-like preamble and then raw symbol values, with none of
