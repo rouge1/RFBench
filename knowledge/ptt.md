@@ -60,6 +60,14 @@ numpy reader, `sceptre_blue.py`, and its own notes on it):
   20 MS/s; read as int8 or float32 they are not plausible. A file in `CF` form can be a
   processed channel whose gain keyword is 0, in which case the counts-to-dBm
   conversion does not apply.
+- Sceptre's decoded sessions keep, beside each voice WAV, an `.ambe` file of the voice
+  frames as they came off the air, before the vocoder. For DMR they are packed: 9 bytes
+  (72 bits, FEC included) per AMBE+2 frame, 18 frames (162 bytes) per 360 ms
+  superframe, and every file is a whole number of superframes; the most common frame
+  is the AMBE+2 silence frame `B9 E8 81 52 61 73 00 2A 6B`. For NXDN they are one byte
+  per bit (0 or 1), 72 bits per voice channel (VCH) frame. They are a bit-exact
+  reference for a demodulator: the payload of a DMR voice burst, read on the same
+  channel, slot and time, must equal them.
 - Read them in chunks (a memmap) and cap memory with `systemd-run` `MemoryMax`: the
   out-of-memory killer has taken sessions that read whole recordings.
 

@@ -347,6 +347,24 @@ What to look for (all parameters from Part 1 citations above):
   "encrypted" voice as unrecoverable by others
   [cryptomuseum_dmr.txt, Enhanced encryption] [wikipedia, Weaknesses].
 
+## Checked against a recording (2026-11-02)
+
+On a wide UHF capture of real DMR (Capacity Plus) traffic, demodulated by the FM
+receiver project's session: the BS-sourced 48-bit SYNC of Table 9.2, as written in 3.1,
+hit with 0 of 24 symbol errors on every DMR channel tried; hits were 144 symbols
+(30 ms, one slot) apart; 4800 sym/s held to better than 0.1 %; the inner deviation read
+641-674 Hz for the 648 Hz of h = 0.27 (the filters in that chain soften the levels, so
+that is close, not exact). Sceptre's own decode of the same capture labels those
+channels DMR, so the sync table and the slot timing are checked against a signal.
+
+The trap that came with it: **each data SYNC in Table 9.2 is the symbol-for-symbol
+negation of the voice SYNC beside it** (BS, MS, and both direct-mode pairs). A
+correlator that finds "BS voice" in a chain of unknown polarity has equally found "BS
+data" in the other polarity. Fix the chain's polarity on a known signal (an NXDN or
+dPMR channel, whose syncs are not self-complementary in this way, or a burst whose
+slot type decodes) before naming a hit voice or data. Repeating every slot points to
+data or control; voice carries the SYNC only in burst A, one burst in six.
+
 ## 10. What the documents did not give
 
 - Occupied/emission bandwidth number beyond "12.5 kHz carrier" + RRC shape;

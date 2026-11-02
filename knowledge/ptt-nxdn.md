@@ -370,6 +370,18 @@ capture guide):
   network); NEXEDGE trunking is in a separate reference not
   fetched [kenwood_nxr5700_5800_function_ref_ver521.txt, scope pages].
 
+## Checked against a recording (2026-11-02)
+
+On a channel that Sceptre's own decode labels NXDN96, in a wide UHF capture
+demodulated by the FM receiver project's session: the 10-symbol frame sync word CDF59
+(-3 +1 -3 +3 -3 -3 +3 +3 -1 +3) hit with 0 symbol errors in normal polarity, at
+4800 sym/s, and all 87 hit-to-hit spacings were exactly 192 symbols, i.e. the 384-bit,
+80 ms frame. So the FSW, the 12.5 kHz mode's symbol rate and the frame length are
+checked against a signal. The four levels were equally spaced, but the unit read
+704 Hz against the nominal 800 Hz with a chain whose filters soften the outer levels:
+the +-800 / +-2400 Hz deviation is **not** confirmed. The 6.25 kHz mode (NXDN48) was
+not tried.
+
 ## 10. What the documents did not give
 
 - Occupied-bandwidth / emission-mask numbers, Tx power, and
