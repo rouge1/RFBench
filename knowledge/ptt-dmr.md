@@ -376,7 +376,19 @@ normal polarity (CSBK, Idle, Terminator with LC, Voice LC Header, Data Header); 
 generator, the slot-type layout and the data-type table are checked against a signal
 too, and a correct chain keeps polarity. A BS channel that is nearly all CSBK fits a
 Capacity Plus control channel (a guess; CSBK opcodes were not decoded). Not checked:
-BPTC(196,96), CSBK and LC contents, FID, addresses, and voice bursts.
+BPTC(196,96), CSBK and LC contents, FID, addresses.
+
+Voice bursts were then checked bit for bit against Sceptre's own `.ambe` file of the same
+call (see [ptt.md](ptt.md)). Demodulated with numpy alone (mix to the channel, 1 MS/s,
+48 kS/s, 6 kHz low-pass, FM discriminator, one-symbol boxcar, 10 samples a symbol), each
+voice SYNC found by correlation, the four levels scaled from the 24 known SYNC symbols
+by least squares, and bursts B-F taken 288, 576, ... symbols after burst A: every one of
+the call's 162 AMBE+2 frames (9 superframes) came out identical to Sceptre's, in order,
+with no bit errors. So the voice burst layout is checked: 108 payload bits, 48 SYNC or
+EMB bits, 108 payload bits; frame 1 = payload bits 0-71, frame 2 = bits 72-143 (36 each
+side of the centre field), frame 3 = bits 144-215; dibits +3 = 01, +1 = 00, -1 = 10,
+-3 = 11, first bit sent first; and the same slot every 288 symbols. Sceptre's `.ambe`
+holds the frames in that on-air form, before any deinterleaving or FEC.
 
 ## 10. What the documents did not give
 
