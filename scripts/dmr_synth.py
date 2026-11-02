@@ -44,10 +44,13 @@ SLOT_SYMS = 144                                     # 30 ms
 BURST_SYMS = 132                                    # 27.5 ms
 GUARD_SYMS = (SLOT_SYMS - BURST_SYMS) // 2          # 1.25 ms each side
 RAMP_S = 0.5e-3                                     # PA ramp, inside the guard
+HALF = D.SPS // 2                                   # half a symbol at 48 kS/s
 
 SYNC_SETS = {'ms': ('MS_VOICE', 'MS_DATA'),
              'direct1': ('TDMA1_VOICE', 'TDMA1_DATA'),
              'direct2': ('TDMA2_VOICE', 'TDMA2_DATA')}
+SOURCE = {'ms': 'MS-sourced', 'direct1': 'TDMA direct mode slot 1',
+          'direct2': 'TDMA direct mode slot 2'}
 DT = {name: i for i, name in enumerate(D.DATA_TYPES)}
 
 
@@ -58,6 +61,8 @@ def load_frames(path, superframes):
         if len(data) % 9:
             raise ValueError(f'{path}: {len(data)} bytes is not a whole number of 9-byte frames')
         frames = D.ambe_to_frames(data).tolist()
+        if not frames:
+            raise ValueError(f'{path}: no voice frames')
     else:
         frames = D.ambe_to_frames(SILENCE).tolist()
     n = 18 * superframes if superframes else 18 * max(1, len(frames) // 18)
@@ -94,7 +99,7 @@ def build_call(lc, cc, frames, sync='ms', headers=1, terminators=1):
 
 
 def modulate_bursts(bursts, slot=1, lead_s=0.2, tail_s=0.2):
-    """-> (complex baseband at 48 kS/s, envelope, first-symbol sample of every burst).
+    """-> (complex baseband at 48 kS/s, envelope, first symbol centre sample of every burst).
     Bursts go in alternate 30 ms slots; slot 1 is the first, slot 2 is 30 ms later."""
     lead = int(round(lead_s * D.SYMBOL_RATE))
     lead += (slot - 1) * SLOT_SYMS
@@ -106,8 +111,12 @@ def modulate_bursts(bursts, slot=1, lead_s=0.2, tail_s=0.2):
         s0 = lead + 2 * SLOT_SYMS * i + GUARD_SYMS
         syms[s0:s0 + BURST_SYMS] = D.bits_to_symbols(bits)
         on[s0:s0 + BURST_SYMS] = 1
-        starts.append(s0 * D.SPS)
+        starts.append(s0 * D.SPS + HALF)
+    # D.modulate puts each symbol's impulse at the start of its period; clause
+    # 10.2.3.1.2 puts the first symbol's centre 65.5 symbol times before the slot
+    # centre, half a symbol into the 27.5 ms window, so the waveform moves HALF later.
     x = D.modulate(syms)
+    x = np.concatenate([np.full(HALF, x[0]), x[:-HALF]])
     env = np.repeat(on, D.SPS).astype(float)
     r = int(round(RAMP_S * D.FS_SYM))
     win = np.hanning(2 * r + 1)
@@ -183,7 +192,7 @@ def main(argv=None):
         'format': 'cf32 (complex64, interleaved I/Q float32, little-endian)',
         'sample_rate': a.fs, 'samples': len(y), 'duration_s': len(y) / a.fs,
         'offset_hz': a.offset, 'cfo_hz': a.cfo, 'snr_db_12k5': a.snr, 'seed': a.seed,
-        'standard': 'ETSI TS 102 361-1/-2 DMR, MS-sourced voice call, one slot',
+        'standard': f'ETSI TS 102 361-1/-2 DMR, {SOURCE[a.sync]} voice call, one slot',
         'symbol_rate': D.SYMBOL_RATE, 'deviation_hz_per_unit': D.DEV,
         'filter': 'root raised cosine, alpha 0.2', 'dibits': {'01': 3, '00': 1, '10': -1, '11': -3},
         'sync': {'voice': v_sync, 'voice_hex': D.SYNCS[v_sync],

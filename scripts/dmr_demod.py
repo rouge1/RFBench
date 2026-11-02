@@ -169,12 +169,15 @@ def discriminate(x, fs, squelch=None):
         from fractions import Fraction
         r = Fraction(FS_SYM / fs).limit_denominator(10000)
         x = resample_poly(x, r.numerator, r.denominator)
+    if len(x) <= SPS:                    # shorter than a symbol: nothing to read
+        return np.zeros(max(len(x) - 1, 0))
     x = lfilter(firwin(101, 6000, fs=FS_SYM), 1, x)
     d = np.angle(x[1:] * np.conj(x[:-1])) * FS_SYM / (2 * np.pi)
     d = np.convolve(d, np.ones(SPS) / SPS, mode='same')
     if squelch is not None:
         p = np.convolve(np.abs(x) ** 2, np.ones(SPS) / SPS, mode='same')[1:]
-        d = np.where(p > squelch * np.max(p), d, 0.0)
+        if np.max(p) > 0:
+            d = np.where(p > squelch * np.max(p), d, 0.0)
     return d
 
 

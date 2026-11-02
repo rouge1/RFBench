@@ -31,7 +31,7 @@ cw = D._CODEWORDS
 check('Golay is systematic', all(cw[v][:8].tolist() == [(v >> (7 - i)) & 1 for i in range(8)]
                                  for v in range(256)), True)
 dmin = min(int(np.count_nonzero(cw[a] != cw[b])) for a in range(256) for b in range(a + 1, 256))
-check('Golay(20,8) minimum distance at least 7 (Table B.11 gives 8)', dmin >= 7, True)
+check('Golay(20,8) minimum distance 8, counted from Table B.11 (the text says 7)', dmin, 8)
 rng = np.random.default_rng(3)
 bad = 0
 for _ in range(500):

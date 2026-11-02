@@ -91,6 +91,62 @@ d_min = min(sum(a != b for a, b in zip(F._EMB_WORDS[u], F._EMB_WORDS[v]))
 check('QR(16,7) minimum distance 6', d_min, 6)
 check('Null embedded message is all zeros (Table D.1)', F.NULL_EMBEDDED, [0] * 32)
 
+# The round trips above build and accept a word with the same function, so a constant
+# wrong in both would pass them (a Grok review showed swapped masks, swapped Hamming
+# parity columns and a mod-32 checksum all still passing). These pin the constants.
+print('constants pinned to the spec')
+check('CRC masks (Table B.21)', F.CRC_MASK,
+      {'Voice LC Header': 0x969696, 'Terminator with LC': 0x999999})
+check('checksum is the octet sum mod 31 (B.26): nine 0xFF octets give 1',
+      F.checksum5([1] * 72), 9 * 255 % 31)
+check('Full LC octets, group 1001 -> 9 (Table 7.1: FLCO 0, dst, then src)',
+      F.lc_octets(F.full_lc(9, 1001, 'group')), [0, 0, 0, 0, 0, 9, 0, 3, 233])
+check('Full LC octets, unit 7 -> 42, service options 0x80 (Table 7.2: FLCO 3)',
+      F.lc_octets(F.full_lc(42, 7, 'unit', service_options=0x80)),
+      [3, 0, 0x80, 0, 0, 42, 0, 0, 7])
+
+
+def spec_matrix(txt, caption, nrows, ncols, hexa=False):
+    i = txt.index(caption, txt.index('Annex B'))
+    rows = []
+    for ln in txt[i:].splitlines()[1:40]:
+        t = ln.split()
+        if len(t) == ncols and all(re.fullmatch('[0-9A-F]{2}' if hexa else '[01]', x) for x in t):
+            rows.append([int(x, 16) if hexa else int(x) for x in t])
+        elif rows:
+            break
+    assert len(rows) == nrows, (caption, len(rows))
+    return rows
+
+
+def spec_named_bits(txt, caption, stop):
+    i = txt.index(caption, txt.index('Annex D'))
+    seg = txt[i:txt.index(stop, i)]
+    return {m[1]: int(m[2]) for m in re.finditer(r'\b([A-Z](?:_[A-Z]+\d+)?\(\d+\))\s+([01])\b', seg)}
+
+
+if os.path.exists(SPEC):
+    txt = open(SPEC).read()
+    for cap, r, c, mine in (('Table B.11:', 8, 20, D.GOLAY_G), ('Table B.12:', 7, 16, F.QR167_G),
+                            ('Table B.14:', 9, 13, F.H1393_G), ('Table B.15:', 11, 15, F.H15113_G),
+                            ('Table B.16:', 11, 16, F.H16114_G)):
+        check(f'generator matrix {cap[:-1]}', spec_matrix(txt, cap, r, c), np.asarray(mine).tolist())
+    check('RS(12,9) parity columns of Table B.18',
+          [row[9:] for row in spec_matrix(txt, 'Table B.18:', 9, 12, hexa=True)], F.RS_PARITY)
+    d2 = spec_named_bits(txt, 'Table D.2:', 'Figure D.1')
+    d3 = spec_named_bits(txt, 'Table D.3:', 'Annex E')
+    tx = F.bptc196_encode([d2[f'I({i})'] for i in range(95, -1, -1)])
+    check('BPTC of the Idle message (Table D.2) gives Table D.3, bit by bit',
+          {n: b for n, b in zip(F.bptc196_layout(), tx)}, d3)
+    i = txt.index('Table 9.2: SYNC patterns', txt.index('9.1.1'))
+    hexes = [''.join(ln.split()[ln.split().index('Hex') + 1:])
+             for ln in txt[i:i + 4000].splitlines() if 'Hex' in ln.split()[:2]]
+    names = ['BS_VOICE', 'BS_DATA', 'MS_VOICE', 'MS_DATA', 'RC',
+             'TDMA1_VOICE', 'TDMA1_DATA', 'TDMA2_VOICE', 'TDMA2_DATA']
+    check('SYNC patterns (Table 9.2)', {n: D.SYNCS[n] for n in names}, dict(zip(names, hexes)))
+else:
+    print('  skip the spec tables (no spec text)')
+
 
 def demod_call(path, side, voice, data):
     y = np.fromfile(path, np.complex64)
@@ -171,9 +227,9 @@ with tempfile.TemporaryDirectory() as tmp:
         want_syncs = sorted(b['sync_sample'] for b in side['bursts']
                             if b['kind'] == 'data' or b.get('burst') == 'A')
         delay = 50 * k                       # dmr_demod's 101-tap low-pass, at 48 kS/s
-        check("sidecar sync_sample within 1 symbol of the SYNC, after the demod's delay",
+        check("sidecar sync_sample on the SYNC to a 48 kS/s sample, after the demod's delay",
               len(got_syncs) == len(want_syncs) and
-              max(abs(g - w - delay) for g, w in zip(got_syncs, want_syncs)) <= k * D.SPS, True)
+              max(abs(g - w - delay) for g, w in zip(got_syncs, want_syncs)) <= k, True)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--real')

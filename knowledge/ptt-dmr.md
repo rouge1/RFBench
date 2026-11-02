@@ -449,6 +449,38 @@ Not built yet: a BS-sourced (repeater) stream, which needs the CACH (TACT Hammin
 and Short LC) and something in the other slot. Not yet decoded by any decoder outside
 this code (no DSD-FME here).
 
+**Grok's review (2026-11-02, of `eea4771`).** Headless under `sdr-review`, 63 turns,
+$1.71, about 50 minutes, with no recordings readable (see
+[grok-worker-and-reviewer](grok-worker-and-reviewer.md#the-dmr-transmitter-review-2026-11-02)).
+Grok wrote its own encoders from the spec tables, and they agreed with `dmr_fec.py` on
+everything: RS(12,9) (Tables B.18 and B.19), the masks, every generator matrix, the Idle
+message (Figure D.1 and Table D.3), the embedded LC, the EMB, the Full LC, the SYNCs, the
+dibits, the deviation (a +3 +3 -3 -3 pattern peaks at 2767 Hz against 2749 Hz +-10 %), the
+SNR and the CFO sign. It also reproduced the squelch's 3 then 5 of 5 superframes. Its
+findings, each checked here:
+
+- **Real and fixed:**
+  - Symbol centres were half a symbol early. Clause 10.2.3.1.2 puts the first centre
+    65.5 symbol times before the slot centre, and the code put it at 66. The waveform
+    and the sidecar's samples now move 5 samples later at 48 kS/s.
+  - An empty `.ambe` crashed with `ZeroDivisionError`; it now raises `ValueError`.
+  - The sidecar called every call MS-sourced; it now names the sync set it used.
+  - `discriminate` crashed on input shorter than a symbol, with or without squelch.
+  - The tests passed broken encoders: swapped masks, swapped Hamming parity columns, a
+    mod-32 checksum and a wrong FLCO, because each round trip builds and accepts a word
+    with the same function. `test_dmr_synth.py` now pins the masks, the checksum, two
+    Full LC vectors, Tables B.11-B.16 and B.18, the Idle message (D.2 to D.3) and
+    Table 9.2's SYNCs against the spec text. All four mutations now fail the test.
+    The sync-timing check is tightened from one symbol to one 48 kS/s sample.
+    `test_dmr_demod.py` now asks for Golay distance 8, not 7 or more.
+- **Left alone:** `load_frames(None, 0)` gives one superframe while the command line's
+  default is 10. A file of fewer than 18 frames is repeated to fill a superframe.
+- **Not a defect:** the rest of its checker's FAIL lines, which it explained itself.
+
+Still self-confirming: the whole-call round trips use this code's own modulator and
+demodulator, so a mistake made in both comes back clean. The spec pins cover the
+tables, but only an outside decoder would cover the rest.
+
 ## 10. What the documents did not give
 
 - Occupied/emission bandwidth number beyond "12.5 kHz carrier" + RRC shape;

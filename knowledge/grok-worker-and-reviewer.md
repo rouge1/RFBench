@@ -242,6 +242,18 @@ commit after it, with tests (57 checks):
 - **Its method worth repeating:** for every rule, a log that breaks it
   and passes, and one that keeps it and fails.
 
+## The DMR transmitter review, 2026-11-02
+
+Grok reviewed `dmr_fec.py`, `dmr_synth.py` and their tests at `eea4771` (63 turns,
+$1.71, about 50 minutes) on a `git archive` copy, with the git-ignored spec text copied
+beside it. `sdr-review`'s `deny` list gained the recording folders first: the 4TB
+drive, `/data/sceptre` and `/data/media`. What a reviewer reads goes to its model, and
+real recordings must not. So the `--real` check was not run. It found five defects, all
+real, listed in [ptt-dmr](ptt-dmr.md#a-transmitter-dmr_synthpy-2026-11-02). The most
+useful was the method: mutate the loaded module (swapped masks, swapped parity columns,
+mod 32 for mod 31) and show that the published tests still pass. It spent its first 35
+minutes reading the spec before writing any code.
+
 ## After a review
 
 Verify each finding, fix, and record both what was true and what was not,
