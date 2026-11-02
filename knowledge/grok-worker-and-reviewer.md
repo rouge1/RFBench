@@ -88,8 +88,10 @@ their own.
 `read-only` can read the whole home directory, so a prompt is the only
 thing keeping it from credentials. Use a custom profile with a `deny` list
 instead: it is enforced by the kernel through `bwrap`, which works here,
-and beats a request in a prompt. Two are kept in this repository's
-untracked `.grok/sandbox.toml`:
+and beats a request in a prompt. Two are kept in the user-level
+`~/.grok/sandbox.toml`, one profile per project (since 2026-11-02; before that
+they sat in this repository's untracked `.grok/sandbox.toml`, copied into each
+worktree):
 
 ```toml
 [profiles.sdr-review]          # reads everything it is not denied, writes /tmp only
@@ -101,8 +103,14 @@ deny = ["/home/<user>/.ssh", "/tmp/<claude scratchpad's parent>"]
 extends = "strict"
 restrict_network = true
 read_only = ["/home/<user>/miniconda3/envs/gnu", "<this repo>/.git"]   # tests; git resolves a worktree
-deny = ["/home/<user>/.ssh", "/tmp/<claude scratchpad's parent>"]
+deny = ["/home/<user>/.ssh", "/tmp/<claude scratchpad's parent>", "<recording folders>"]
 ```
+
+The `deny` list names every folder of real recordings: what a Grok run reads goes
+to its model, so recordings are given to it only as de-identified clips copied into
+its worktree, and only with the user's say-so. `swarm.py run` warns when a profile
+is not defined in `~/.grok/sandbox.toml`; a profile kept only in the repository
+still works but is looked up from the worker's folder, so it must be copied in.
 
 `strict` is an allowlist, which is safer than listing secrets, but it makes
 `/tmp` readable and writable, and the Claude Code scratchpad lives there:
@@ -135,15 +143,15 @@ both are kept out of git, because the settings hold absolute paths.
   makes `/data/python/SDR-wt/<phase>-<task>-<model>`; note that it adds the
   model to the name. A worker is only ever started in one of these, and
   never in the main checkout.
-- **The profile has to be in the worktree.** Grok looks for a project
-  sandbox profile from the folder it is started in, so a profile kept in
-  the main checkout is not found: the first run failed in two seconds with
-  `profile 'sdr-worker' not found` and a second, misleading error about
-  the deny list. After `swarm.py wt` and before **every** run, copy
-  `.grok/sandbox.toml` into the worktree's `.grok/`. Re-copying overwrites
-  anything a worker changed. A worker could edit its own copy; if one ever
-  does, move the profiles into `~/.grok/sandbox.toml`, which a sandboxed
-  worker cannot write.
+- **The profiles are user-level, not in the worktree.** Grok looks for a
+  project profile from the folder it is started in, so a profile kept in the
+  main checkout was not found by a worker in a worktree (the first run failed
+  in two seconds with `profile 'sdr-worker' not found` and a misleading second
+  error about the deny list); the fix then was to copy `.grok/sandbox.toml`
+  into the worktree before every run. Moving the profiles into
+  `~/.grok/sandbox.toml` removes the copy, and a worker cannot write that file,
+  so it cannot widen its own profile. A smoke run from a worktree with no
+  `.grok` folder was refused on `~/.ssh`, the recording folders and `~/.grok`.
 - **A smoke test comes first.** One trivial task, then a resumed session,
   then a write and a read in the home folder, outside `/tmp`: the task ran
   in 6 s for $0.034, the resumed session answered from its context for
@@ -253,6 +261,41 @@ real, listed in [ptt-dmr](ptt-dmr.md#a-transmitter-dmr_synthpy-2026-11-02). The 
 useful was the method: mutate the loaded module (swapped masks, swapped parity columns,
 mod 32 for mod 31) and show that the published tests still pass. It spent its first 35
 minutes reading the spec before writing any code.
+
+## The DMR work as a swarm, 2026-11-02
+
+Grok as worker, Claude (Opus) as reviewer, the user merging. Five Grok workers
+(`grok-4.7-build-fast`, one worktree each, `swarm.py wt` then `swarm.py run`, from the
+repository root so the permission rule matches), about $22 in all: the decoder's recovery and
+matched filter ($8.90 in three rounds), the repeater stream and CACH ($3.63 in two), an
+analysis of the remaining bit errors ($2.19), the notes ($1.44) and the test gaps an
+independent review found ($5.48). What worked and what bit:
+
+- **Prompts that name the files each worker may edit** kept three parallel branches from
+  conflicting; the code branches merged with no conflict. Tell a worker it cannot commit
+  (its profile makes the main `.git` read-only): the orchestrator commits, with explicit
+  `git add` so scratch folders never go in.
+- **The shared prompt file is not in the worktree** (`.swarm/` is untracked, and the worker
+  reads only its worktree), so a prompt that says "read the common rules" fails: paste them in.
+- **Spec text is git-ignored** (`docs/ptt/dmr/text/`): copy it into each worktree, or the tests
+  skip their pins and print PASS. The review found exactly that and the tests now count the skips.
+- **Resuming a worker** (`swarm.py run --session <id>`) keeps what it learned: the decoder worker
+  took real clips in a second and third round with no re-briefing.
+- **Real recordings reach Grok only as de-identified clips the user approved** (48 kS/s
+  complex baseband and the logger's frames as truth, no frequency or timestamp, copied into the
+  worktree and never committed). Their decoded content still holds the IDs and voice, so the
+  prompt forbids copying a decoded value into any file; that is a request, not a limit, so the
+  diff was scanned before every commit. The profiles' `deny` lists keep every recording folder
+  closed otherwise.
+- **A worker's own counts need re-measuring**: the real-recording runs were done by the
+  orchestrator from the merged tree, never taken from a worker's reply; one worker's frame
+  count differed from the coverage count by a frame (alignment).
+- **A worker is good at hypothesis checks and weak at recalling tables**: asked to recall the
+  AMBE+2 frame's error correction from public decoders, it tested two layouts against 666 logged
+  frames, found neither fit and stopped, which was the right result.
+- **The reviewer found what the workers' own tests could not**: a squelch applied after a filter
+  (a wrong conclusion in the notes), tests that pass a broken encoder, and a spec-pin test that
+  silently ran nothing without the spec text.
 
 ## After a review
 

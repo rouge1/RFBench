@@ -490,6 +490,48 @@ Still self-confirming: the whole-call round trips use this code's own modulator 
 demodulator, so a mistake made in both comes back clean. The spec pins cover the
 tables, but only an outside decoder would cover the rest.
 
+**Opus's review of the recover, matched and CACH work (2026-11-02, of `fc38e91`).** An
+independent model, on a `git archive` copy with the spec text and no recordings. Its own
+TACT, CRC-8, Short LC (Figure B.6), CACH (Figure B.9) and Activity Update, written from the
+polynomials and figure names, agreed with `dmr_fec.py` on 5000 random inputs; it could not
+make `recover` accept a wrong superframe (two slots of voice with one colour code, slot 2
+shifted by 0, 1, 3 and 7 bursts, every burst A blanked, extra headers and terminators, 12 dB
+noise); the BS stream's geometry measured right (first symbol centre 65.5 symbols from the
+slot centre, the CACH straddling the slot boundary, a flat carrier). Its findings, each
+checked here:
+
+- **Real and fixed:**
+  - `discriminate(matched=True, squelch=...)` gated after the 161-tap RRC, so noise from the
+    transmitter-off time reached the first and last symbol of every burst. That, not the RRC,
+    was the 9 to 17 bit errors at 18 dB. The gate now comes first (30 seeds, MS 48 kS/s, 18 dB:
+    53 bit errors to 3; 14 dB 180 to 41); the sweep above was redone.
+  - `matched=True` on 11 to 161 samples returned 161 samples (and raised with a squelch), and
+    `find_syncs`, so `voice_calls`, crashed on 0 and 2 to 2000 samples: `np.convolve(..., 'same')`
+    returns max(len) samples. A `_same()` helper keeps the length.
+  - `read_cach` and `decode_cachs` sat after `sys.exit(main())`, citations pointed at a file
+    that is not in the repository, a docstring named the wrong test, and the RRC was said to add
+    no delay (its SYNC peak lands up to 0.89 of a sample earlier than the boxcar's).
+  - `dmr_synth` accepted negative `--superframes`, `--headers`, `--terminators`, `--lead` and
+    `--tail`, an `--fs` that aliases, and gave a traceback for a bs `--lead` under 1.25 ms.
+  - Test gaps, each shown by a mutation that passed: with no spec text `test_dmr_cach.py` ran
+    zero checks and printed PASS (now it counts the skipped pins on its last line); the BS
+    timing was never compared with the waveform (removing the half-symbol shift, or moving
+    every sidecar position 7 samples, passed); five of the six recover gates and the RRC's
+    alpha (0.2 to 0.15) were unpinned; one 18 dB check rested on one seed. All are pinned now
+    and each mutation fails a test, and a regression test fails if the squelch moves back
+    after the RRC.
+  - Notes: the burst-letter counts of the wrong symbols (they are A 3, B 2, C 2, D 1, E 1,
+    F 3, and the frames 5, 4 and 3; both sum to 12) and the inner to outer ratio (2.9).
+- **Checked here, which the review could not:** the MS, direct1 and direct2 output (cf32 and
+  sidecar) and the default demodulator's output are byte-identical to the commit before this
+  work, on four synthetic calls (clean, both direct slots, 1 MS/s with offset, CFO and 18 dB).
+  The 26-call real test gives the same 3131 of 3150 on the fixed code (it used no squelch).
+- **Left as it is:** `matched=True` is not a textbook matched filter (RRC on a frequency
+  discriminator output gives a raised-cosine response with no ISI at the symbol centres; the
+  docstring now says so). A half-sample 160-tap RRC would trim a few bits more at 14 and 12 dB;
+  not built. The recover residual gate cannot be separated from a gate of 99 by Gaussian noise
+  on the symbol centres alone, so it is pinned by a crafted fit, not a statistical one.
+
 ## Reading weak and cut calls: `recover` and `matched`
 
 Both default off. `voice_calls(..., recover=False)` returns a superframe only when
@@ -506,19 +548,26 @@ burst A's voice SYNC is found and all 18 frames lie inside the array.
   passes, so a header can fill more than the one neighbour step. A CSBK shares
   the 288-symbol grid and is not an anchor.
 
-The candidate still has to pass the EMB and LCSS rule below. `discriminate`,
-`find_syncs` and `fit_levels` are unchanged.
+The candidate still has to pass the EMB and LCSS rule below. `fit_levels` is
+unchanged; `discriminate` gained `matched` (its default output is unchanged), and
+`discriminate` and `find_syncs` no longer crash on very short input (0 to 2000
+samples), where `np.convolve(..., 'same')` had returned more samples than it was given.
 
 `discriminate(..., matched=False)` is the length-10 boxcar, and omitting the
 keyword is that same array. `matched=True` (`--matched`) replaces the boxcar
 with `rrc()` after the same 101-tap low-pass: alpha 0.2, span 8, 161 taps,
-clause 10.2.2.2. The filter is odd and symmetric, so `convolve(..., mode='same')`
-adds no group delay. The sidecar delay stays the 101-tap's 50 samples, with a
-tolerance of one sample at 48 kS/s. `voice_calls`, `data_bursts` and `read_burst`
-read whichever array came back. On a clean call, MS and direct mode, at 48 kS/s
+clause 10.2.2.2. The filter is odd and symmetric, so it adds no delay of its own
+on top of the 101-tap low-pass (50 samples at 48 kS/s). A SYNC correlation peak
+still lands up to 0.89 of a sample before sidecar position + 50, against 0.40
+for the boxcar (a review's measurement): inside the one-sample tolerance of the
+sidecar test, but using most of it. Filtering the transmitter's RRC pulse with the
+same RRC gives a raised-cosine response with no intersymbol interference at the
+symbol centres; on a frequency-modulated signal it is not a textbook matched
+filter. With a squelch the gate is applied BEFORE the RRC (see below).
+`voice_calls`, `data_bursts` and `read_burst` read whichever array came back. On a clean call, MS and direct mode, at 48 kS/s
 and at 1 MS/s with an offset and a 300 Hz error, both filters put every SYNC
 within that one sample (`scripts/test_dmr_matched.py`). The FFT of `rrc()`,
-normalised, runs from 0.991 to 1.005 through 1920 Hz and stays under 0.008
+normalised, runs from 0.991 to 1.005 through 1920 Hz and stays under 0.0081
 from 3400 Hz up. Equation (14)'s cosine did not survive extraction
 (`cos(pi f / 1920)` is -1 at 1920 Hz), and clause 10.2.2.3 prints no h(t), so
 the taps are pinned to those edges, not to a printed impulse response.
@@ -607,30 +656,40 @@ Synthetic, from `scripts/test_dmr_recover.py`:
   than writing a hole.
 
 The matched filter on synthetic calls, 20 seeds, 2 superframes, 720 voice
-frames, squelch 0.25, recover off (a missed superframe stays missed). Clean
-calls stay 36/36 for both filters. At 18 dB every RRC bit error is a single
-bit. At 12 dB the RRC cuts the bit-error count to well under half on every
-row, and it keeps two direct-mode superframes the boxcar missed.
+frames, squelch 0.25, recover off (a missed superframe stays missed). Exact is the
+number of the 720 frames that are bit exact; bit errors are those in the frames
+that were returned (the 18 frames of a missed superframe count in neither). Clean
+calls stay 36/36 for both filters.
 
 | call | SNR | boxcar exact | boxcar bit errors | RRC exact | RRC bit errors |
 |---|---|---|---|---|---|
-| MS, 48 kS/s | 18 dB | 720 | 0 | 711 | 9 |
-| MS, 48 kS/s | 14 dB | 678 | 46 | 676 | 51 |
-| MS, 48 kS/s | 12 dB | 541 | 233 | 638 | 100 |
-| MS, 1 MS/s, offset, 300 Hz | 18 dB | 720 | 0 | 706 | 14 |
-| MS, 1 MS/s, offset, 300 Hz | 14 dB | 669 | 56 | 659 | 67 |
-| MS, 1 MS/s, offset, 300 Hz | 12 dB | 491 | 320 | 612 | 136 |
-| direct, 48 kS/s | 18 dB | 719 | 1 | 704 | 16 |
-| direct, 48 kS/s | 14 dB | 657 | 67 | 689 | 32 |
-| direct, 48 kS/s | 12 dB | 484 (2 superframes missed) | 270 | 637 | 99 |
-| direct, 1 MS/s, offset, 300 Hz | 18 dB | 720 | 0 | 703 | 17 |
-| direct, 1 MS/s, offset, 300 Hz | 14 dB | 663 | 64 | 674 | 47 |
-| direct, 1 MS/s, offset, 300 Hz | 12 dB | 526 | 262 | 631 | 107 |
+| MS, 48 kS/s | 18 dB | 719 | 1 | 720 | 0 |
+| MS, 48 kS/s | 14 dB | 672 | 51 | 718 | 2 |
+| MS, 48 kS/s | 12 dB | 490 (2 superframe(s) missed) | 256 | 688 | 35 |
+| MS, 1 MS/s, offset, 300 Hz | 18 dB | 719 | 1 | 720 | 0 |
+| MS, 1 MS/s, offset, 300 Hz | 14 dB | 655 (1 superframe(s) missed) | 50 | 719 | 1 |
+| MS, 1 MS/s, offset, 300 Hz | 12 dB | 518 (2 superframe(s) missed) | 207 | 698 | 28 |
+| direct, 48 kS/s | 18 dB | 718 | 2 | 720 | 0 |
+| direct, 48 kS/s | 14 dB | 675 | 52 | 720 | 0 |
+| direct, 48 kS/s | 12 dB | 502 (1 superframe(s) missed) | 267 | 693 | 28 |
+| direct, 1 MS/s, offset, 300 Hz | 18 dB | 719 | 1 | 720 | 0 |
+| direct, 1 MS/s, offset, 300 Hz | 14 dB | 656 (1 superframe(s) missed) | 47 | 720 | 0 |
+| direct, 1 MS/s, offset, 300 Hz | 12 dB | 511 (2 superframe(s) missed) | 220 | 694 | 29 |
 
-At 14 dB, direct mode improves and the MS rows are a few bits the other way.
-At 18 dB the RRC adds 9 to 17 single-bit errors in the 720 frames. At 12 dB
-every row falls to well under half. This sweep is the measured synthetic run.
-It is not asserted inside `test_dmr_matched.py`.
+With the RRC the bit errors are 0 to 2 at 18 and 14 dB and about 30 at 12 dB,
+against 1, about 50 and 210 to 270 for the boxcar, and it keeps superframes the
+boxcar missed at 12 dB. This sweep is the measured synthetic run, made after the
+review fix below. It is not asserted inside `test_dmr_matched.py`.
+
+The squelch has to come before the RRC. The first version gated the output after
+the 161-tap filter, so the noise of the transmitter-off time on either side leaked
+into the first and last symbol of every burst. That looked like the RRC costing
+9 to 17 bit errors in 720 frames at 18 dB. An independent review found the cause
+(MS, 48 kS/s, 18 dB, 60 seeds: 53 bit errors, 48 of them on symbols 0 and 131,
+against 0 for the boxcar), and gating the discriminator output first brought it to
+3 over 30 seeds. Gating again after the filter is worse at 12 dB (8254 against
+2129 bit errors over 30 seeds, a missing frame counted as 72). The boxcar path is
+unchanged.
 
 On a real recording (about two minutes, many channels): 26 voice calls, 3150
 voice frames, 7 on one slot and 19 on the other, 23 repeater-sourced and 3
@@ -859,9 +918,9 @@ frames differ by 1 bit. One differs by 2 bits, and those are two adjacent
 symbols, one bit each. Every wrong symbol is a step of exactly one level.
 No dibit is wrong in both bits. They are not clustered: of the 12, one is
 within 2 symbols of the centre field and one is within 2 symbols of a burst
-edge; burst letters run A 3, B 2, C 1, D 1, E 1, F 3; the three frames
-inside the burst carry 4, 4 and 3 of them. Over the 5184 compared symbols,
-inner levels (+/-1) failed about 2.8 times as often as outer levels (+/-3):
+edge; burst letters run A 3, B 2, C 2, D 1, E 1, F 3; the three frames
+inside the burst carry 5, 4 and 3 of them. Over the 5184 compared symbols,
+inner levels (+/-1) failed about 2.9 times as often as outer levels (+/-3):
 9 of 2656 inner, 3 of 2528 outer. Nine of the 12 margins are under 0.224,
 the 1st percentile of the correct symbols on that call; the median error
 margin is 0.082. One adjacent pair is the length-10 boxcar exchanging the
@@ -890,8 +949,8 @@ The RRC is the one that removes every one of those 12 symbols, and it is
 the filter the modulator already uses. The 101-tap stays: dropping it is a
 loss on the weaker audio. The SYNC level fit and the integer sync sample
 are not the defect. On synthetic calls the same swap cuts the bit errors to
-well under half at 12 dB and adds 9 to 17 single-bit errors in 720 frames
-at 18 dB (the table in
+from 207 to 267 down to 28 to 35 bit errors in 720 frames at 12 dB and to 0 to 2 at
+14 and 18 dB, with the squelch applied before the filter (the table in
 [Reading weak and cut calls](#reading-weak-and-cut-calls-recover-and-matched)).
 
 Voice-frame FEC was not built. Two guessed layouts for the 72-bit AMBE+2
