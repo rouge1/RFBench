@@ -398,12 +398,16 @@ capture; it is told from a real one by how closely the 24 SYNC symbols fit four 
 (RMS residual about 0.33 of a level unit for real SYNCs, over 4 for chance ones), and a
 level scale far from 648 Hz a unit. Table B.11's Golay(20,8) code has a minimum
 distance of 8 by count, one more than the (20,8,7) the text names; it still corrects 3.
+A superframe whose burst A was missed, and the root-raised-cosine symbol filter, are
+in [Reading weak and cut calls](#reading-weak-and-cut-calls-recover-and-matched).
 
 ## A transmitter: `dmr_synth.py` (2026-11-02)
 
 `scripts/dmr_synth.py` writes one PTT press as a cf32 file: Voice LC Header, voice
 superframes, Terminator with LC, from a handheld (MS-sourced SYNCs, or TDMA direct mode
 slot 1 or 2), one 27.5 ms burst every 60 ms with the transmitter ramped off in between.
+`--sync bs` writes a repeater instead; that path is
+[The repeater stream and the CACH](#the-repeater-stream-and-the-cach).
 Beside it go a JSON sidecar (every burst's sample, the LC, the colour code) and the
 `.ambe` of the voice frames sent. Voice is replayed AMBE+2 frames from a Sceptre `.ambe`,
 or the silence frame: the codec cannot be encoded from the standards. The FEC is in
@@ -443,11 +447,16 @@ Two traps found on the way:
   threshold relative to the largest correlation in the whole span, so at 18 dB it found
   only 3 of 5 superframes. Zeroing the discriminator where the channel power is low
   found all 5. `dmr_demod.discriminate(x, fs, squelch=0.25)` (`--squelch 0.25` on the
-  command line) does this; it is off by default, so a caller with bursts must ask for it.
+  command line) does this; it is off by default. Ask for it on a synthetic file whose
+  transmitter is off half the time. On a real recording leave it off: it collapsed the
+  handheld calls. See
+  [Reading weak and cut calls](#reading-weak-and-cut-calls-recover-and-matched).
 
-Not built yet: a BS-sourced (repeater) stream, which needs the CACH (TACT Hamming(7,4)
-and Short LC) and something in the other slot. Not yet decoded by any decoder outside
-this code (no DSD-FME here).
+The BS-sourced (repeater) stream is built (`--sync bs`): the CACH, TACT Hamming(7,4),
+Short LC, and Idle in the other slot. See
+[The repeater stream and the CACH](#the-repeater-stream-and-the-cach).
+Not yet decoded by any decoder outside this code (no DSD-FME here). The voice frames
+still have no FEC here.
 
 **Grok's review (2026-11-02, of `eea4771`).** Headless under `sdr-review`, 63 turns,
 $1.71, about 50 minutes, with no recordings readable (see
@@ -481,6 +490,420 @@ Still self-confirming: the whole-call round trips use this code's own modulator 
 demodulator, so a mistake made in both comes back clean. The spec pins cover the
 tables, but only an outside decoder would cover the rest.
 
+## Reading weak and cut calls: `recover` and `matched`
+
+Both default off. `voice_calls(..., recover=False)` returns a superframe only when
+burst A's voice SYNC is found and all 18 frames lie inside the array.
+`recover=True` (`--recover`) also tries:
+
+- the sample one superframe before and after each SYNC that was kept: 1728
+  symbols, 17280 samples at 10 samples a symbol. A recovered position is not a
+  new anchor, so this fills a hole from each end by one superframe only;
+- a burst A timed from a voice LC header or a PI header one burst later, or
+  from a terminator six bursts earlier (`anchor_delta_bursts` is +1 and -6,
+  clause 5.1.2.2). The colour code is the one Golay decoded on that control
+  burst. The walk continues one superframe at a time while each candidate
+  passes, so a header can fill more than the one neighbour step. A CSBK shares
+  the 288-symbol grid and is not an anchor.
+
+The candidate still has to pass the EMB and LCSS rule below. `discriminate`,
+`find_syncs` and `fit_levels` are unchanged.
+
+`discriminate(..., matched=False)` is the length-10 boxcar, and omitting the
+keyword is that same array. `matched=True` (`--matched`) replaces the boxcar
+with `rrc()` after the same 101-tap low-pass: alpha 0.2, span 8, 161 taps,
+clause 10.2.2.2. The filter is odd and symmetric, so `convolve(..., mode='same')`
+adds no group delay. The sidecar delay stays the 101-tap's 50 samples, with a
+tolerance of one sample at 48 kS/s. `voice_calls`, `data_bursts` and `read_burst`
+read whichever array came back. On a clean call, MS and direct mode, at 48 kS/s
+and at 1 MS/s with an offset and a 300 Hz error, both filters put every SYNC
+within that one sample (`scripts/test_dmr_matched.py`). The FFT of `rrc()`,
+normalised, runs from 0.991 to 1.005 through 1920 Hz and stays under 0.008
+from 3400 Hz up. Equation (14)'s cosine did not survive extraction
+(`cos(pi f / 1920)` is -1 at 1920 Hz), and clause 10.2.2.3 prints no h(t), so
+the taps are pinned to those edges, not to a printed impulse response.
+
+### How recover accepts a superframe
+
+`superframe_candidate` tries the predicted sample and 4 samples either side
+(`RECOVER_TIMING_RADIUS`). On the clean 200-superframe call, two found SYNCs
+sat 34559 samples apart, which is `2*17280 - 1`, so the peak wanders by a
+sample. The search keeps the alignment whose B-F symbols sit closest to the
+four levels after a two-pass decision-directed refit, seeded from the anchor.
+The refit must land in `300 < scale < 1000` (positive; nominal is 648 Hz a
+unit). Then, at that alignment, each of bursts B-F:
+
+- the 16 EMB bits are `centre[:8] + centre[-8:]` of the 48-bit centre
+  (Table E.6);
+- `emb_decode` is within 1 bit (`RECOVER_MAX_EMB_ERR`) and the colour code
+  equals the anchor's;
+- LCSS follows B-F = 01, 11, 11, 10, 00 (Table 9.20, clause 7.1.3: first,
+  continuation, continuation, last, single fragment).
+
+A missing burst, a failed decode, a wrong colour code, or a wrong LCSS each
+counts as one mismatch. Accept when at least 4 of the 5 EMBs decode
+(`RECOVER_MIN_EMB`) and there is at most one mismatch
+(`RECOVER_MAX_LCSS_MISMATCH`). One missing burst uses that one miss. The
+residual of the refit must be at most 0.75 symbol units
+(`RECOVER_MAX_LEVEL_RMS`). Symbol centres closer than 160 samples to either
+end of the discriminator are not returned (`RECOVER_EDGE`): the 101-tap
+filter and the 8-symbol RRC have no history there.
+
+Residuals on synthetic MS calls, squelch 0.25, which is why 0.75 is loose:
+
+- Clean, 6 superframes: global residual min/median/max 0.214 / 0.228 / 0.232.
+  Per-frame max 0.295.
+- The one 12 dB superframe recover adds at 48 kS/s has a frame at 0.483. A
+  gate of 0.45 would drop that superframe.
+- Squelched noise, the same 200 positions as the false-accept count: 196 of
+  200 refit inside the scale window, residual min/median/max
+  0.298 / 0.377 / 0.473. All 196 are under 0.75, and 99.5% are under 0.45.
+
+Noise is rejected by the EMB and LCSS checks, not by the residual gate.
+
+False accept. `scripts/test_dmr_recover.py` prints this for one clean
+200-superframe MS call and 200 squelched-noise stretches:
+
+```
+false-accept 0/200 noise, false-reject 0/200 real, wrong-cc accept 0/200, off-grid accept 0/200, sync missed [23] and recover=True returned all 200
+```
+
+Every one of the 200 came back bit-exact. The same position with the colour
+code flipped was rejected, and so was the position one burst (288 symbols)
+off that slot. `find_syncs` missed superframe 23; recover put it back.
+`find_syncs` was left as it is. With the matched filter that same call misses
+superframes 23 and 26, and recover still returns all 200, bit-exact. The same
+200 noise positions give 0/200 with the boxcar and 0/200 with the RRC, and
+`voice_calls(..., recover=True)` returns nothing on that noise either way.
+
+`return_info=False`, which is what `--recover` uses, keeps a recovered
+superframe only when all 18 frames were read. `return_info=True` puts `None`
+where a frame was outside the array, inside the 160-sample edge, or over the
+residual gate. A candidate with fewer than 4 decodable B-F EMBs is not a
+superframe. There is no voice-frame FEC on this path.
+
+### What it changes
+
+Synthetic, from `scripts/test_dmr_recover.py`:
+
+- Blanking burst A's SYNC on the discriminator, 6 superframes, MS and direct
+  mode, at 48 kS/s and at 1 MS/s with an offset: the old decoder keeps 5, and
+  recover returns all 6, bit-exact against the `.ambe`.
+- One superframe and no neighbour. Blanking A, with the header and the
+  terminator still in the file, used to return nothing and is now bit-exact.
+  Header alone (terminator cut off) is the same. Cutting the file at the
+  start of burst B, so the header and A are gone, is recovered from the
+  terminator: frames 4 through 17, and the default output drops the partial.
+- 12 dB, 20 seeds, 5 superframes. At 48 kS/s: 99 superframes, then 100; the
+  extra one has 4 bit errors. At 1 MS/s with an offset: 97, then 100; the
+  three extras have at most 18 bit errors. Where the old decoder returned a
+  frame, the new one matches it (0 mismatches). Recover never returned fewer.
+  Those extras are channel errors in frames the old path did not return.
+- A clean call with a noise lead and tail does not grow an invented
+  superframe. Complex gaussian noise, squelched and unsquelched, returns 0.
+- Cuts of one 5-superframe call, at both rates: frames that are present are
+  bit-exact. A cut through the middle of burst D leaves fewer than 4 EMBs,
+  so that superframe is dropped. The command line omits a partial rather
+  than writing a hole.
+
+The matched filter on synthetic calls, 20 seeds, 2 superframes, 720 voice
+frames, squelch 0.25, recover off (a missed superframe stays missed). Clean
+calls stay 36/36 for both filters. At 18 dB every RRC bit error is a single
+bit. At 12 dB the RRC cuts the bit-error count to well under half on every
+row, and it keeps two direct-mode superframes the boxcar missed.
+
+| call | SNR | boxcar exact | boxcar bit errors | RRC exact | RRC bit errors |
+|---|---|---|---|---|---|
+| MS, 48 kS/s | 18 dB | 720 | 0 | 711 | 9 |
+| MS, 48 kS/s | 14 dB | 678 | 46 | 676 | 51 |
+| MS, 48 kS/s | 12 dB | 541 | 233 | 638 | 100 |
+| MS, 1 MS/s, offset, 300 Hz | 18 dB | 720 | 0 | 706 | 14 |
+| MS, 1 MS/s, offset, 300 Hz | 14 dB | 669 | 56 | 659 | 67 |
+| MS, 1 MS/s, offset, 300 Hz | 12 dB | 491 | 320 | 612 | 136 |
+| direct, 48 kS/s | 18 dB | 719 | 1 | 704 | 16 |
+| direct, 48 kS/s | 14 dB | 657 | 67 | 689 | 32 |
+| direct, 48 kS/s | 12 dB | 484 (2 superframes missed) | 270 | 637 | 99 |
+| direct, 1 MS/s, offset, 300 Hz | 18 dB | 720 | 0 | 703 | 17 |
+| direct, 1 MS/s, offset, 300 Hz | 14 dB | 663 | 64 | 674 | 47 |
+| direct, 1 MS/s, offset, 300 Hz | 12 dB | 526 | 262 | 631 | 107 |
+
+At 14 dB, direct mode improves and the MS rows are a few bits the other way.
+At 18 dB the RRC adds 9 to 17 single-bit errors in the 720 frames. At 12 dB
+every row falls to well under half. This sweep is the measured synthetic run.
+It is not asserted inside `test_dmr_matched.py`.
+
+On a real recording (about two minutes, many channels): 26 voice calls, 3150
+voice frames, 7 on one slot and 19 on the other, 23 repeater-sourced and 3
+handheld. Each logged frame was looked for among the decoded frames. Exact
+frames of 3150:
+
+| | exact frames | calls with every frame exact |
+|---|---|---|
+| decoder as it was | 3014 (95.7%) | 20 of 26 |
+| `recover=True` | 3101 (98.4%) | 21 of 26 |
+| `recover=True` and `matched=True` | 3131 (99.4%) | 25 of 26 |
+
+Nothing got worse at any step. The one call still short is a weak handheld:
+89 of 108 exact, 107 of 108 within 2 bits. Six clips from that recording,
+exact frames as old / recover / both: a call at the file start 0/18, 17/18,
+18/18; the weak handheld 40/108, 74/108, 89/108; a call missing a whole
+superframe 54/72, 72/72, 72/72; scattered bit errors 134/144, 134/144,
+144/144; a clean repeater call 270/270; a clean handheld call 72/72. The
+three handheld calls are the first real check of the MS SYNCs.
+
+What to run on a real signal: `--recover --matched`, and do not pass
+`--squelch`. The command line's `voice_calls` searches the BS voice SYNC
+only. A handheld call is `voice_calls(d, voice='MS_VOICE', recover=True)`
+after `discriminate(..., matched=True)`.
+
+### Traps
+
+- **`sync_ok` still gates a found burst A.** The gate is a residual under
+  0.6 on the 24 SYNC symbols, and a scale between 300 and 1000 Hz a unit.
+  On the call that begins within the first 0.1 s of its file, `find_syncs`
+  found burst A and `sync_ok` rejected it: residual 0.676. There is no
+  second superframe, so the neighbour step has nothing to use. Recover
+  timed it from the terminator and returned 17 of 18 frames, one frame off
+  by 1 bit. The matched filter brings that opening SYNC under the gate
+  (residual 0.333) and all 18 frames are exact. Do not lower the gate. On
+  the weak handheld the extra peaks `find_syncs` already sees have SYNC
+  residuals from about 2.7 to 5.9, which is what the gate is there to drop,
+  and the frames that are still wrong differ by 1 to 5 bits. A lower
+  threshold does not make those bits match.
+- **The logger's timestamp sits about 0.55 s after the call's first
+  superframe.** A read that starts 0.5 s before that timestamp misses a
+  superframe of every call (85.4% that way). Read at least 2 s early.
+- **Squelch 0.25 is the wrong setting on a real handheld.** It is what the
+  synthetic bursty files need. On the real clips it collapsed the decode:
+  the weak handheld fell to 1 of 108 and 14 of 108 with the boxcar, or 3 of
+  108 and 19 of 108 with the matched filter, and a clean handheld went to
+  0 of 72 either way. Leave it off.
+
+### Still not recovered
+
+- The weak handheld's remaining 19 frames. The superframes are already
+  returned. The wrong symbols are one level off, inside the burst. 107 of
+  the 108 frames are within 2 bits. No voice FEC was added; the Golay
+  layouts that were tried are not in these frames (see
+  [What the voice-frame bit errors were](#what-the-voice-frame-bit-errors-were)).
+- A control burst that is not a header or a terminator. A call whose only
+  surviving SYNC is a CSBK, with no header, no terminator and no voice
+  neighbour, is not timed.
+- A hole of two or more superframes between found SYNCs, when no header or
+  terminator is there to walk across it. The neighbour step fills one
+  superframe at each end and stops.
+- A superframe that is only partly in the file, or that has fewer than 4
+  decodable B-F EMBs. `--recover` omits it. Burst A by itself, or a tail
+  that dies in burst C, is dropped. A lone superframe whose A, header and
+  terminator are all gone has nothing to time it from.
+
+## The repeater stream and the CACH
+
+`--sync ms`, `direct1` and `direct2` are unchanged: one slot, the transmitter
+off in the other. `--sync bs` is the repeater. `--short-lc` applies only
+there; the default is `null`.
+
+A repeater outbound channel (clause 4.6.1) is a continuous carrier: two 30 ms
+slots, transmitted without gaps while the BS is on. Clause 10.2.3.1.2 keeps
+the 132-symbol burst centred in the slot (the first symbol centre is 65.5
+symbol times before the slot centre). The CACH is the 12 symbols / 2.5 ms
+immediately before that burst, so it straddles the slot boundary, 6 symbols
+in the previous slot and 6 in this one (Figure 4.5)
+[Part1, Fig 4.5, p.22]. The burst ends where the next CACH starts. The
+envelope is 1 from the first CACH symbol through the last burst symbol. The
+0.5 ms ramp is only the key-up and the key-down. Lead must be at least 6
+symbols (1.25 ms) or the first CACH has nowhere to sit. Same-slot bursts stay
+288 symbols / 60 ms apart, so `voice_calls` did not change.
+`read_cach(d, burst_pos, scale, off)` reads the 12 symbols before the burst's
+first symbol; the SYNC is 54 symbols after that.
+
+The stream starts with slot 1, then slot 2, for as many call bursts as the
+MS path would have emitted. The call occupies `--slot` and uses `BS_VOICE` /
+`BS_DATA`, with the same header, embedded LC and terminator as the MS
+builder. The other slot is an Idle burst: data type Idle, `BS_DATA`, the
+96 information bits of Table D.2 packed `FF83DF1732094ED1E7CD8A91`, then the
+existing BPTC(196,96). On a clean 48 kS/s file the IQ magnitude between the
+outer ramps stays above 0.45 and below 0.55, which is the 0.5 scale `render`
+applies, and it does not drop between slots.
+
+### TACT and Short LC
+
+TACT is 7 bits, Table 9.5 order AT, TC, LCSS, then Hamming(7,4,3) parity
+(B.3.5, Table B.17, G(x) = x^3 + x + 1) [Part1, Table 9.5, p.92]
+[Part1, B.3.5, p.139-141]. TC follows Table 9.24: 0 means the following
+burst is channel 1, 1 means channel 2, so the bits alternate 0, 1 from the
+first slot [Part1, Table 9.24, p.102-103]. AT describes the inbound slot
+whose number is TC. This generator sets AT busy on the call's slot and idle
+on the other. The Table 9.5 remark that sets AT to 1, and the sentence that
+an MS in continuous transmission sets AT busy and alternates TC, are the
+Tier I MS rule. They are a different transmitter.
+
+A Short LC is 28 information bits plus the CRC-8 (Table 9.8, B.3.7).
+G8(x) = x^8 + x^2 + x + 1, initial remainder 0, no inversion
+[Part1, B.3.7, p.143]. Three Hamming(17,12,3) rows (Table B.13,
+g(x) = x^5 + x^2 + 1) and one even column-parity row, then columns
+top-to-bottom, left-to-right, into four 17-bit fragments (Figure B.6).
+Each fragment is interleaved with its TACT by Figure B.9 (B.4.1). One
+fragment per CACH, so one Short LC every 4 x 30 ms = 120 ms (clause 7.1.4)
+[Part1, B.2.3, p.130-132]. LCSS on those four fragments is 01, 11, 11, 10
+(Table 9.20). Clause 7.1.4 and Figure 7.7 say the message takes four CACH
+bursts. They do not print that LCSS sequence. Table 9.20's note says there
+is no single-fragment LC for CACH signalling, which leaves the three
+multi-fragment values, in that order, for a four-burst message.
+`decode_cachs` returns one TACT per word and a Short LC wherever four LCSS
+values are 01, 11, 11, 10. It steps one word at a time, so a stream that
+starts mid-message still locks.
+
+Null, `--short-lc null`: the repeater has nothing else to put in the CACH.
+Clause 4.6.1 says to send Null message Short LCs as defined in part 2.
+Part 2 Table 7.9: SLCO 0000, 24 reserved bits 0. Part 2 Table B.3 is the
+opcode list (0000 Null, 0001 Activity Update). Part 1 Table 9.27 only says
+the coding is in part 2. The all-zero 28 bits have CRC 0, and the BPTC of a
+zero message is 68 zeros, so each payload fragment is 17 zeros. The LCSS
+cycle in the TACT still runs. The unused slot's Idle message is a different
+fill (clause 7.3, Tables D.2 and D.3).
+
+Activity Update, `--short-lc activity`: part 2 Table 7.10, MSB first, which
+is the B.3.7 octet mapping. SLCO 0001, slot 1 activity, slot 2 activity,
+hash of slot 1, hash of slot 2. The call's slot gets group voice 1000 or
+individual voice 1001 from `--call`, and the hash of the destination. The
+other slot gets activity 0000 and hash 0. The hash is the same CRC-8 of the
+24-bit address, MSB = x^23. There is no bit diagram and no numerical hash
+in the text. The field order rests on the table row order plus that octet
+mapping.
+
+The sidecar, on the `bs` branch only, adds `cach_sample`, `slot`, `tact`
+and `short_lc_fragment` on each burst, and `cach_length_s` 0.0025,
+`burst_period_s` 0.03, `same_slot_period_s` 0.06, and `short_lc`.
+
+### What the spec text does not give
+
+These parts rest on the tables, the polynomials and the bit-name figures.
+The text has no numerical vector to pin them to. `scripts/test_dmr_cach.py`
+says so at the top of its output, and it reads the pins out of
+`docs/ptt/dmr/text/` when that text is there.
+
+- No worked example of a TACT codeword, a CRC-8 value, a Short LC fragment,
+  or a 24-bit CACH word. Annex D's worked bits are the Idle message
+  (Tables D.2 and D.3) and the Null embedded message.
+- Annex E is tables E.1 through E.12. The annex body does not contain the
+  string CACH. The CACH bit order is Figure B.9 (TACT plus payload, names)
+  and Figure B.6 (fragment names). Both figures are names, not 0/1 vectors.
+- Clause 7.1.4 does not define the Null bit pattern. It says a Short LC is
+  28 bits plus a CRC, FEC as in B.2.3, delivered in four CACH bursts, one
+  message per 120 ms. Table 9.27 has no opcode values. The Null pattern is
+  part 2 Table 7.9, and the opcode list is part 2 Table B.3.
+- The LCSS sequence 01, 11, 11, 10 is not printed on the CACH. It is
+  Table 9.20 applied to the four bursts of clause 7.1.4.
+- Activity Update has no bit diagram and no example hash. The usual CRC-8
+  check value of the ASCII string "123456789" is not in the spec, and the
+  test does not pin it.
+- Hamming(7,4) and Hamming(17,12) are pinned to the printed matrices and to
+  G(x) / g(x). There is still no numerical TACT or Short LC word in the text.
+
+With neither part's text in the tree, `test_dmr_cach.py` skips the pins and
+the call round-trips and still prints PASS. The round trip itself, driven
+from the same cases, does pass: both slots, the Null Short LC, an Activity
+Update on a group call and on a unit call, 48 kS/s clean, and 1 MS/s with
+an offset, a carrier error and 18 dB SNR. Voice frames, header and
+terminator LC, embedded LC, every TACT, the reassembled Short LC and its
+CRC, and the Idle bursts come back.
+
+### The six mutations
+
+Each one was a copy of the library. The worktree file was not the copy.
+`scripts/test_dmr_cach.py` was run against that copy, and every run exited 1.
+Several of them still round-trip, which is the failure the last review
+called out: the same table builds the word and accepts it. The spec pin is
+what fails. The shared tables are visible in the code: `tact` and
+`tact_decode` use `H743_G`, `cach` and `cach_split` use `CACH_TX_NAMES`,
+`decode_cachs` groups with `SHORT_LC_LCSS`, and `crc8` uses `CRC8_POLY`.
+
+| mutation | what failed | what still passed |
+|---|---|---|
+| TACT parity. H(0) of the first row of `H743_G` flipped (`1 0 0 0 1 0 1` to `1 0 0 0 1 0 0`) | generator matrix Table B.17, and the TACT parity of all 16 infos | "every TACT is a Hamming(7,4) codeword", because encode and decode share the matrix. One 1 MS/s Idle BPTC check also moved: the mutated CACH sits in the demod filter's memory just before the burst, and at 18 dB that one Idle word changed. The two spec pins failed on their own |
+| Hamming(17,12) column. Last parity bit of row 0 of `H17123_G` flipped | generator matrix Table B.13, and the Short LC BPTC check (library encode against a matrix parsed from Table B.13) | no call-level check |
+| CRC-8. `CRC8_POLY` `0x107` to `0x105` | the CRC-8 check against G8(x) parsed from B.3.7, the Figure B.6 BPTC check, and the Activity Update CRC octet on the air | `crc_ok` on those words, because the decoder uses the same poly. A Null message CRCs to 0 for any poly, so the Null cases did not catch it |
+| CACH interleave. `AT` and `P(16)` swapped in `CACH_TX_NAMES` | Figure B.9 transmit order, and `cach()` placing TACT and payload where Figure B.9 names them | every call-level check, because `cach` and `cach_split` share the list |
+| LCSS. `SHORT_LC_LCSS` first entry changed from 01 to 10 | every call, LCSS 01, 11, 11, 10 against Table 9.20 (got 10, 11, 11, 10) | reassembly, because `decode_cachs` groups with the same list |
+| TC. `TC_OF_SLOT` swapped to channel 2 then channel 1 | every call, TC alternating 0, 1 from the first slot (got 1, 0, 1, 0; Table 9.24 wants 0, 1, 0, 1) | the recorded failure is that TC line |
+
+### Against four real repeater clips
+
+Four repeater clips from a real recording, read with the matched filter.
+721 CACH words on a 30 ms grid. The 24-bit word re-encoded from its decoded
+TACT and payload matched on 710 of the 710 words whose TACT had no error.
+170 Short LC cycles: all 170 pass the Hamming rows, the column parity and
+the CRC-8, and all 170 re-encode bit for bit from the decoded 28
+information bits. 136 are non-zero and 34 are the Null Short LC.
+TC alternates with the slot grid. AT is a status bit that changes in runs
+on busy slots. LCSS follows 01, 11, 11, 10. Without the matched filter, 2
+cycles of the noisiest clip failed by one payload bit each.
+
+Still unverified on those clips: the Activity Update field order against a
+known address, which opcode the non-zero messages are, and voice bytes
+against an outside decoder. The spec still prints no numerical CACH word.
+
+## What the voice-frame bit errors were
+
+The frames that were one or two bits off, on a real recording, before the
+matched filter. The demodulator at its defaults: the 101-tap low-pass, the
+discriminator, the length-10 boxcar, a hard slice at +/-2 and 0, levels
+fitted once on the 24 SYNC symbols and reused for all six bursts. Dibits
+are Gray, so a step of one level is one wrong bit. No decoded address or
+voice byte is in this account.
+
+On the call whose coverage count is 134 of 144 exact, aligning whole
+superframes counted 133 exact: 11 frames, 12 wrong symbols. Ten of those
+frames differ by 1 bit. One differs by 2 bits, and those are two adjacent
+symbols, one bit each. Every wrong symbol is a step of exactly one level.
+No dibit is wrong in both bits. They are not clustered: of the 12, one is
+within 2 symbols of the centre field and one is within 2 symbols of a burst
+edge; burst letters run A 3, B 2, C 1, D 1, E 1, F 3; the three frames
+inside the burst carry 4, 4 and 3 of them. Over the 5184 compared symbols,
+inner levels (+/-1) failed about 2.8 times as often as outer levels (+/-3):
+9 of 2656 inner, 3 of 2528 outer. Nine of the 12 margins are under 0.224,
+the 1st percentile of the correct symbols on that call; the median error
+margin is 0.082. One adjacent pair is the length-10 boxcar exchanging the
+two levels (margins 1.726 and 0.580). The root-raised-cosine samples at
+those two instants slice back to the truth.
+
+The SYNC fit on that call absorbed a scale below the nominal 648 Hz a unit
+(537 to 571, median 557). The errors are not a per-burst gain error.
+
+The weak handheld is the same picture, noisier, plus superframes that never
+clear `sync_ok`. On the three superframes that do, every wrong symbol is
+again one level. Inner symbols fail about 1.9 times as often as outer ones.
+
+What was tried on the same recording, without looking at the truth frames
+while choosing the sample:
+
+| change | symbols fixed, of the 12 | cost elsewhere |
+|---|---|---|
+| correlation-peak timing, one offset per superframe | 0 | none. The peak is already on the integer sample (median -0.004 sample) |
+| per-burst decision-directed timing, +/-1.5 samples | 3, and 1 new wrong symbol | 1 exact frame lost on that call, and 1 on the weak handheld |
+| per-burst decision-directed scale and offset | 2 | nothing on the clean calls. On the weak handheld, 7 symbols fixed and 10 new ones, 2 exact frames lost |
+| RRC alpha 0.2, span 8, 161 taps, in place of the boxcar, 101-tap kept | 12 | no exact frame lost on the clean calls. On the weak handheld, 33 of 37 wrong symbols fixed and 3 previously exact frames lost |
+| the 101-tap low-pass removed, boxcar kept | 4 | 118 previously exact frames lost on that call |
+
+The RRC is the one that removes every one of those 12 symbols, and it is
+the filter the modulator already uses. The 101-tap stays: dropping it is a
+loss on the weaker audio. The SYNC level fit and the integer sync sample
+are not the defect. On synthetic calls the same swap cuts the bit errors to
+well under half at 12 dB and adds 9 to 17 single-bit errors in 720 frames
+at 18 dB (the table in
+[Reading weak and cut calls](#reading-weak-and-cut-calls-recover-and-matched)).
+
+Voice-frame FEC was not built. Two guessed layouts for the 72-bit AMBE+2
+frame, an extended Golay(24,12) and a Golay(23,12) with a constant
+syndrome, over the deinterleaves that were tried (identity, reversal, byte
+reversal, stride 3, and every multiplicative step coprime to 72), matched
+none of 666 logged frames: no 24-bit window is a codeword on every frame,
+and no 23-bit window has one syndrome on every frame. It is still not known
+whether the logger writes corrected frames or raw ones. A correction toward
+a codeword would move toward the file only for a code the file obeys, and
+that code was not found.
+
 ## 10. What the documents did not give
 
 - Occupied/emission bandwidth number beyond "12.5 kHz carrier" + RRC shape;
@@ -504,9 +927,11 @@ tables, but only an outside decoder would cover the rest.
   demod at 48-96 kHz complex, symbol timing recovery at 4800 sym/s, SYNC
   correlation per Table 9.2, then DSD-FME or equivalent for LC/CSBK display
   and AMBE+2 synthesis.
-- Expect outbound DMR to look like a continuous 4FSK carrier with 30 ms
-  slot cadence; inbound like 27.5 ms bursts with short guards; idle BS sends
-  Idle bursts + CACH rather than going quiet.
+- Outbound DMR is a continuous 4FSK carrier with a 30 ms slot cadence and a
+  CACH in the gap. That stream is built, and the CACH was checked on real
+  repeater clips, in
+  [The repeater stream and the CACH](#the-repeater-stream-and-the-cach).
+  Inbound is 27.5 ms bursts with short guards.
 - Amateur talkgroup/ID databases (e.g. RadioID/BrandMeister) are handy label
   sources but are outside the fetched texts; do not treat them as protocol
   truth.
