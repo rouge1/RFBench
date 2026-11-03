@@ -297,6 +297,14 @@ independent review found ($5.48). What worked and what bit:
   (a wrong conclusion in the notes), tests that pass a broken encoder, and a spec-pin test that
   silently ran nothing without the spec text.
 
+**Grok's balance can run out mid-project** (`402 Payment Required: Grok Build usage balance
+exhausted`, an `error` outcome with no files changed, after the earlier rounds had spent about
+$22). Only the user can top it up. A Claude Sonnet subagent took the same prompt in the same
+worktree: it is not kernel-sandboxed, so the prompt names the one directory it may touch, forbids
+the recording folders, `/home`, the scratchpad and git commands that move HEAD, and sends its
+scratch to a folder under `/tmp`. For a synthetic-only task that was enough, and its reports were
+checked the same way (every test re-run, one mutation re-run by hand).
+
 ## After a review
 
 Verify each finding, fix, and record both what was true and what was not,

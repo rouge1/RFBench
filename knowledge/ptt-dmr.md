@@ -545,8 +545,8 @@ burst A's voice SYNC is found and all 18 frames lie inside the array.
   from a terminator six bursts earlier (`anchor_delta_bursts` is +1 and -6,
   clause 5.1.2.2). The colour code is the one Golay decoded on that control
   burst. The walk continues one superframe at a time while each candidate
-  passes, so a header can fill more than the one neighbour step. A CSBK shares
-  the 288-symbol grid and is not an anchor.
+  passes, so a header can fill more than the one neighbour step. Any other found
+  SYNC is an anchor of last resort: see "Recovery from any SYNC" below.
 
 The candidate still has to pass the EMB and LCSS rule below. `fit_levels` is
 unchanged; `discriminate` gained `matched` (its default output is unchanged), and
@@ -738,6 +738,72 @@ after `discriminate(..., matched=True)`.
   108 and 19 of 108 with the matched filter, and a clean handheld went to
   0 of 72 either way. Leave it off.
 
+### Recovery from any SYNC
+
+`recover=True` ends with a grid step (`_recover_from_grid`). Every burst of one slot
+is a multiple of 288 symbols from every other burst of that slot, and on a repeater's
+outbound carrier the other slot's bursts are 144 symbols away, so ANY found SYNC
+fixes the burst grid: a CSBK, an Idle, a data header, an MBC burst, or a voice A whose
+neighbours are not superframes. What a data burst does not give is the phase, which
+of the grid positions a superframe starts on. Each position within 11 bursts of an
+anchor (two superframes, every phase twice; 144 symbols off as well for `BS_VOICE`)
+is tried and kept only if the existing `superframe_candidate` rule accepts it, with
+the anchor's colour code and no threshold changed: only the true phase has the LCSS
+sequence 01 11 11 10 00 in B-F. A hit is then walked a superframe at a time in both
+directions. Two predictions closer than `RECOVER_TIMING_RADIUS` are one position.
+
+Checked on synthetic streams only, and the real recording has no call it would
+recover (its one imperfect call is bit errors, not a missing position), so its value
+on real signals is unmeasured; on the 26-call real test it changes nothing (3131 of
+3150 with and without it). Recovered bit-exact where the older steps returned
+nothing: a repeater stream with `--headers 0 --terminators 0` and burst A blanked,
+the other slot's Idle bursts as the only anchors (both slots, both rates, clean and
+18 dB); two superframes with both A SYNCs blanked; a CSBK as the only anchor in MS and
+direct streams, before A or after F. Refused, with no false accept: a wrong phase
+(shifted 1 to 5 bursts), 300 noise stretches after a real CSBK (5170 candidates, none
+accepted), a different call on the same slot, the other slot carrying voice with the
+same colour code at shifted LCSS phases (exactly the two real superframes came back,
+each on its true slot, no duplicates). Cost: 0.9 s against 0.17 s for 15 s of
+repeater stream with 40 superframes and 240 Idle anchors.
+
+Limit: nothing in the discriminator array separates the two slots of a repeater's
+stream except position, so a superframe of either slot that passes is returned, as
+`voice_calls` already does when A's SYNC is found for either; the CACH slot bit (TC)
+says which slot a burst belongs to. `--recover` writes both slots into one `.ambe`.
+The 144-symbol offset is not tried for `MS_VOICE`, although a repeater's inbound
+channel has the same layout: a missed recovery, not a wrong one.
+
+**Opus's review of the grid step (2026-11-03).** Same method as before: a `git archive` copy
+with the spec text and no recordings. It found no false accept: both slots carrying voice
+with one colour code, the other slot shifted 0 to 5 bursts, A blanked in one or both, clean,
+14 and 11 dB (72 runs: exactly the real superframes, each on its true slot, no duplicates);
+every A blanked on a repeater stream at 12, 10, 8 and 6 dB (45 of 45, 45 of 45, 11 of 45
+and 0 of 45 recovered, none a wrong one, 1 to 15 bit errors per superframe at 12 dB); 288
+comparison runs where `recover=False` matched the commit before exactly and `recover=True`
+never dropped or changed a superframe the older steps found; no SYNC read as an EMB (none
+comes within 1 bit of a QR(16,7) codeword); inputs of 0 to 3000 samples. Findings:
+
+- **Real and fixed:** the dedupe skipped any prediction within 40 samples of one already tried,
+  while `superframe_candidate` searches only +-4, so a same-colour-code CSBK copy 5 to 40
+  samples off the grid suppressed the recovery the real CSBK makes (0 superframes returned
+  instead of 1). The tolerance is `RECOVER_TIMING_RADIUS` now. `data_bursts` ran twice per
+  call; it runs once (a 58 s stream was 1.4 s before the grid step, 3.5 s after it).
+- **Test gaps, each shown by a mutation that passed:** the walk (removed, or forward only) was never
+  needed because the window reached every superframe; the same-slot case on a repeater stream;
+  the file-edge guard; the dedupe. Cases added for each, and each mutation fails a test now. Two
+  mutations still pass, correctly: `RECOVER_MIN_EMB` 4 to 2 (the mismatch limit already forces 4
+  of 5) and a wider window (harmless); `_inside_have` only saves candidate calls.
+- **Left as it is:** the slot limit above, and the 144-symbol offset for `MS_VOICE`.
+
+**A half-sample matched filter did not help.** The RRC's SYNC peak lands up to 0.89 of
+a sample before sidecar + 50 (the boxcar's, 0.40), and an even-length 160-tap RRC
+centred half a sample earlier puts it where the boxcar does. Built, and measured: equal
+to `matched=True` at 18 and 14 dB on synthetic calls, worse at 12 dB (direct mode and
+the repeater stream at 1 MS/s, 66 and 79 bit errors over 40 seeds against 42 and 55,
+about 4.5 to 5 standard errors in direct mode), and worse on the real recording (3124
+of 3150 against 3131: the weak handheld 84 against 89 of 108). It was removed. The
+peak offset is cosmetic for the bit decision.
+
 ### Still not recovered
 
 - The weak handheld's remaining 19 frames. The superframes are already
@@ -745,12 +811,9 @@ after `discriminate(..., matched=True)`.
   the 108 frames are within 2 bits. No voice FEC was added; the Golay
   layouts that were tried are not in these frames (see
   [What the voice-frame bit errors were](#what-the-voice-frame-bit-errors-were)).
-- A control burst that is not a header or a terminator. A call whose only
-  surviving SYNC is a CSBK, with no header, no terminator and no voice
-  neighbour, is not timed.
-- A hole of two or more superframes between found SYNCs, when no header or
-  terminator is there to walk across it. The neighbour step fills one
-  superframe at each end and stops.
+- A call whose only surviving SYNC is further than 11 bursts away from every
+  burst A, when nothing walks across: the grid step reaches 11 bursts either side
+  of an anchor and then walks a superframe at a time from each hit.
 - A superframe that is only partly in the file, or that has fewer than 4
   decodable B-F EMBs. `--recover` omits it. Burst A by itself, or a tail
   that dies in burst C, is dropped. A lone superframe whose A, header and

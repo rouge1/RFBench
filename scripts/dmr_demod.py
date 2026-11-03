@@ -45,6 +45,9 @@ DEV = 648.0                           # Hz per symbol unit: +-1 -> 648, +-3 -> 1
 BURST_SPACING_SYMS = 288
 SUPERFRAME_BURSTS = 6
 SUPERFRAME_SYMS = BURST_SPACING_SYMS * SUPERFRAME_BURSTS   # 1728
+# A timeslot is 30 ms (4800 * 0.030 = 144 symbols); a burst is every second slot.
+# On a repeater's outbound carrier the other slot's bursts sit this far from this slot's.
+SLOT_SYMS = 144
 
 # Bursts B-F of a voice superframe (clause 7.1.3, Table 9.20): LC first,
 # continuation, continuation, last, then a single-fragment Null or RC.
@@ -80,6 +83,14 @@ RECOVER_TIMING_RADIUS = 4
 # not returned: the 101-tap channel filter and the 8-symbol RRC have no
 # history there, so a cut file would otherwise quantize the edge to some level.
 RECOVER_EDGE = 160
+
+# Recovery from any SYNC of the stream (recover=True). Every burst of one slot is a
+# multiple of BURST_SPACING_SYMS from every other burst of that slot, so any found
+# data or voice SYNC fixes the grid, but not where on it a superframe starts: the
+# EMB and LCSS rule above chooses that. A candidate is tried at up to this many
+# bursts either side of the anchor (two superframes, every one of the six phases
+# twice); further than that is reached by the one-superframe walk from a hit.
+RECOVER_GRID_WINDOW = 2 * SUPERFRAME_BURSTS - 1
 
 # Table 9.2. Each data SYNC is the symbol-for-symbol negation of the voice SYNC beside it.
 SYNCS = {
@@ -506,12 +517,13 @@ def _append_candidate(d, pred, scale, off, cc, have, out):
     return True
 
 
-def _recover_from_control(d, voice, thr, have, out):
+def _recover_from_control(d, voice, thr, have, out, dbursts):
     """Time a missing burst A from a header or a terminator on the same slot.
 
     The colour code is the one Golay decoded from that control burst. The
     candidate still has to pass superframe_candidate, so a control burst that
     is not actually beside a voice superframe does not invent one.
+    `dbursts` is data_bursts() of the paired data SYNC, computed once by voice_calls.
     """
     data = _paired_data_sync(voice)
     if data is None:
@@ -521,7 +533,7 @@ def _recover_from_control(d, voice, thr, have, out):
     step = SUPERFRAME_SYMS * SPS
     hdr_n, term_n = anchor_delta_bursts()
     guard = 5 * spacing
-    for pos, cc, dt, _err in data_bursts(d, data, thr=thr):
+    for pos, cc, dt, _err in dbursts:
         kind = DATA_TYPES[dt]
         if kind in ANCHOR_HEADERS:
             delta, stride = hdr_n * spacing, step
@@ -540,6 +552,81 @@ def _recover_from_control(d, voice, thr, have, out):
             pred += stride
 
 
+def _inside_have(pred, have, tol):
+    """Whether `pred` is on the burst grid of a found superframe, inside its six bursts
+    (or the five before it), and so cannot be the start of another one: a superframe
+    that starts there would overlap the found one on the same slot."""
+    spacing = BURST_SPACING_SYMS * SPS
+    for h in have:
+        k = round((pred - h) / spacing)
+        if abs(k) < SUPERFRAME_BURSTS and abs(pred - h - k * spacing) <= tol:
+            return True
+    return False
+
+
+def _recover_from_grid(d, voice, thr, have, out, found, dbursts):
+    """Time a missing burst A from ANY found SYNC of the stream, CSBK and Idle included.
+
+    A found voice A, or a data burst of any type, is a burst of its own slot, so
+    burst A of a superframe in that slot is a whole number of bursts from it; on a
+    repeater's stream (BS_VOICE) the other slot's bursts are SLOT_SYMS away, so the
+    same is tried from that offset too. Which of the grid positions a superframe
+    starts on is not known: each position within RECOVER_GRID_WINDOW bursts is
+    tried, and one is kept only if it passes superframe_candidate with the
+    anchor's colour code - the same rule and thresholds as every other anchor, so
+    only the phase whose B-F carry the LCSS 01 11 11 10 00 is accepted. Once one is,
+    the walk continues a superframe at a time in both directions.
+
+    Nothing here tells the two slots of a repeater's stream apart: a superframe of
+    either slot that passes is real, and is returned, as voice_calls already returns
+    the superframes of both whenever their A SYNC is found."""
+    anchors = []
+    for pos, _frames, scale, off in found:
+        cc = superframe_colour(d, pos, scale, off)
+        if cc is not None:
+            anchors.append((pos, cc, scale, off))
+    data = _paired_data_sync(voice)
+    if data is not None:
+        sy = sync_symbols(data)
+        for pos, cc, _dt, _err in dbursts:
+            scale, off = fit_levels(d, pos, sy)
+            anchors.append((pos, cc, scale, off))
+    spacing = BURST_SPACING_SYMS * SPS
+    step = SUPERFRAME_SYMS * SPS
+    guard = 5 * spacing
+    tol = 4 * SPS
+    # Two predictions closer than superframe_candidate's own search radius are one
+    # position. A wider dedupe lets whichever anchor comes first decide a position with
+    # its own timing and levels, and suppresses a real anchor 5 to 40 samples away.
+    dtol = RECOVER_TIMING_RADIUS
+    slot_offsets = (0, SLOT_SYMS * SPS) if voice == 'BS_VOICE' else (0,)
+    tried = {}
+    for pos, cc, scale, off in anchors:
+        for slot_off in slot_offsets:
+            for j in range(-RECOVER_GRID_WINDOW, RECOVER_GRID_WINDOW + 1):
+                pred = pos + slot_off + j * spacing
+                if not -guard < pred < len(d) + guard:
+                    continue
+                key = pred // (2 * dtol)
+                if any(abs(pred - q) <= dtol for kk in (key - 1, key, key + 1)
+                       for q in tried.get((cc, kk), ())):
+                    continue
+                tried.setdefault((cc, key), []).append(pred)
+                if _inside_have(pred, have, tol):
+                    continue
+                if not _append_candidate(d, pred, scale, off, cc, have, out):
+                    continue
+                for stride in (step, -step):
+                    nxt = out[-1]['pos'] + stride
+                    while -guard < nxt < len(d) + guard:
+                        if _near(nxt, have, tol):
+                            nxt += stride
+                            continue
+                        if not _append_candidate(d, nxt, scale, off, cc, have, out):
+                            break
+                        nxt += stride
+
+
 def voice_calls(d, voice='BS_VOICE', thr=0.6, recover=False, return_info=False):
     """Voice superframes: list of (sample of burst A's centre, 18 frames of 72 bits).
 
@@ -549,7 +636,11 @@ def voice_calls(d, voice='BS_VOICE', thr=0.6, recover=False, return_info=False):
     recover=True also tries the sample one superframe (1728 symbols) before and
     after each found burst A, including positions that fall off the start or end
     of `d`, and a burst A timed from a voice LC header, a PI header or a
-    terminator on the same slot. A candidate is kept only when bursts B-F pass
+    terminator on the same slot, and then a burst A timed from any other found
+    SYNC of the stream (a CSBK, an Idle or a data header, or a voice A whose
+    neighbours are not superframes), by trying the burst grid it fixes - and, for
+    BS_VOICE, the other slot's grid 144 symbols away - see _recover_from_grid.
+    A candidate is kept only when bursts B-F pass
     superframe_candidate against that anchor's colour code. With
     return_info=False a recovered superframe is kept only when all 18 frames
     were read, so existing callers still see a list of complete frames. With
@@ -579,7 +670,10 @@ def voice_calls(d, voice='BS_VOICE', thr=0.6, recover=False, return_info=False):
             continue
         for pred in (pos - step, pos + step):
             _append_candidate(d, pred, scale, off, cc, have, out)
-    _recover_from_control(d, voice, thr, have, out)
+    data = _paired_data_sync(voice)
+    dbursts = data_bursts(d, data, thr=thr) if data is not None else []
+    _recover_from_control(d, voice, thr, have, out, dbursts)
+    _recover_from_grid(d, voice, thr, have, out, found, dbursts)
     out.sort(key=lambda s: s['pos'])
     if return_info:
         return [(s['pos'], s['frames']) for s in out]
@@ -663,7 +757,8 @@ def main(argv=None):
     ap.add_argument('--recover', action='store_true',
                     help='also return a voice superframe whose burst A SYNC was missed, '
                          'when a neighbour superframe or a header or terminator '
-                         'times it and bursts B-F agree')
+                         'times it, or any other SYNC of the stream (a CSBK, say) fixes '
+                         'the burst grid, and bursts B-F agree')
     ap.add_argument('--matched', action='store_true',
                     help='root-raised-cosine (alpha 0.2, span 8) instead of the '
                          'length-10 boxcar, on the discriminator output')
