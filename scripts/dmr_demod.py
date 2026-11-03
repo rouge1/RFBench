@@ -19,8 +19,13 @@ AMBE FEC), and it does not turn voice into audio.
     python scripts/dmr_demod.py REC.cdif --centre FC --chan F --from 6.5 --to 11.5
     python scripts/dmr_demod.py REC.cdif --chan ... --ambe-out call.ambe
     python scripts/dmr_demod.py REC.cdif --chan ... --compare sceptre.ambe
-    python scripts/dmr_demod.py REC.cdif --chan ... --recover
-    python scripts/dmr_demod.py REC.cdif --chan ... --matched
+    python scripts/dmr_demod.py REC.cdif --chan ... --no-recover --no-matched   # the plain decoder
+    python scripts/dmr_demod.py REC.cdif --chan ... --sync ms   # handheld; default auto
+
+On the command line the matched filter and the recovery of missed superframes are ON
+(--no-matched and --no-recover turn them off). As a library, discriminate() defaults to
+matched=True and voice_calls() to recover=False: a recovered superframe is not FEC checked
+and can carry channel bit errors, so the caller asks for it.
 
 A .cdif is Sceptre's BLUE / X-Midas file (knowledge/ptt.md): 512-byte header, complex
 int16 ('CI') or float32 ('CF') samples. It is read in chunks; run it under a memory cap
@@ -367,7 +372,7 @@ def _same(x, h):
     return np.convolve(x, h, mode='full')[k:k + len(x)]
 
 
-def discriminate(x, fs, squelch=None, matched=False):
+def discriminate(x, fs, squelch=None, matched=True):
     """Complex baseband at fs, channel at 0 Hz -> instantaneous frequency in Hz at 48 kS/s.
 
     squelch: zero the output wherever the channel power, averaged over a symbol, is
@@ -376,8 +381,10 @@ def discriminate(x, fs, squelch=None, matched=False):
     relative to the largest correlation in the span. 0.25 works; None leaves it off.
 
     matched: the 4FSK frequency pulse is root-raised-cosine (clause 10.2.2.2), so the
-    symbol decision can use that filter instead of the length-10 boxcar. Default False
-    keeps the boxcar, and that output is unchanged. The RRC is 161 taps, odd and
+    symbol decision uses that filter, the default since 2026-11-03, instead of the
+    length-10 boxcar (matched=False gives the old array exactly). On the real 26-call
+    test it never made a call worse; on synthetic calls it has fewer bit errors at 18,
+    14 and 12 dB. The RRC is 161 taps, odd and
     symmetric, so it is centred and adds no delay of its own on top of the 101-tap
     low-pass (50 samples at 48 kS/s); a SYNC correlation peak still lands up to a
     sample earlier than with the boxcar (0.89 against 0.40 of a sample off in a
@@ -743,7 +750,33 @@ def channelize_blue(path, centre_hz, chan_hz, t0, t1, chunk=4_000_000):
     return np.concatenate(out), fs / D
 
 
-def main(argv=None):
+SYNC_FAMILIES = {'bs': 'BS_VOICE', 'ms': 'MS_VOICE',
+                 'direct1': 'TDMA1_VOICE', 'direct2': 'TDMA2_VOICE'}
+
+
+def detect_sync(d, thr=0.6):
+    """Which SYNC family a discriminator array carries -> (voice SYNC name, SYNCs found).
+
+    Each family (repeater, handheld, TDMA direct slot 1, slot 2) is counted by the voice
+    and data SYNCs of it that fit their four levels (`sync_ok`); the family with the most
+    wins, and a tie or an empty stream gives the repeater's. A file with several families
+    in it (a repeater and a handheld on one channel) reads as the commonest."""
+    best, best_n = SYNC_FAMILIES['bs'], 0
+    for voice in SYNC_FAMILIES.values():
+        n = 0
+        for name in (voice, _paired_data_sync(voice)):
+            sy = sync_symbols(name)
+            for pos, sign in find_syncs(d, name, thr):
+                if sign < 0:
+                    continue
+                scale, off = fit_levels(d, pos, sy)
+                n += bool(sync_ok(d, pos, sy, scale, off))
+        if n > best_n:
+            best, best_n = voice, n
+    return best, best_n
+
+
+def make_parser():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('cdif')
     ap.add_argument('--chan', type=float, required=True, help='channel centre, Hz')
@@ -754,27 +787,49 @@ def main(argv=None):
     ap.add_argument('--ambe-out')
     ap.add_argument('--compare', help='a Sceptre .ambe file to compare the voice frames with')
     ap.add_argument('--squelch', type=float, help="e.g. 0.25 for a handheld's bursts; see discriminate()")
-    ap.add_argument('--recover', action='store_true',
-                    help='also return a voice superframe whose burst A SYNC was missed, '
-                         'when a neighbour superframe or a header or terminator '
+    ap.add_argument('--recover', action=argparse.BooleanOptionalAction, default=True,
+                    help='(default on) also return a voice superframe whose burst A SYNC '
+                         'was missed, when a neighbour superframe or a header or terminator '
                          'times it, or any other SYNC of the stream (a CSBK, say) fixes '
-                         'the burst grid, and bursts B-F agree')
-    ap.add_argument('--matched', action='store_true',
-                    help='root-raised-cosine (alpha 0.2, span 8) instead of the '
-                         'length-10 boxcar, on the discriminator output')
+                         'the burst grid, and bursts B-F agree; such a superframe is not '
+                         'FEC checked and can carry bit errors; --no-recover turns it off')
+    ap.add_argument('--matched', action=argparse.BooleanOptionalAction, default=True,
+                    help='(default on) root-raised-cosine (alpha 0.2, span 8) instead of '
+                         'the length-10 boxcar, on the discriminator output; '
+                         '--no-matched gives the boxcar')
+    ap.add_argument('--sync', choices=['auto'] + list(SYNC_FAMILIES), default='auto',
+                    help='the SYNC family: bs (repeater), ms (handheld), direct1 or direct2 '
+                         '(TDMA direct mode slot); auto (default) takes the family with the '
+                         'most SYNCs in the span')
+    return ap
+
+
+def read_stream(d, sync='auto', recover=True):
+    """The command line's decode of one discriminator array.
+    -> (voice SYNC name, data/control bursts, voice superframes)."""
+    if sync == 'auto':
+        voice, _n = detect_sync(d)
+    else:
+        voice = SYNC_FAMILIES[sync]
+    data = _paired_data_sync(voice)
+    return voice, data_bursts(d, data), voice_calls(d, voice, recover=recover)
+
+
+def main(argv=None):
+    ap = make_parser()
     a = ap.parse_args(argv)
     if a.centre is None:
         ap.error('--centre is needed')
     x, fs = channelize_blue(a.cdif, a.centre, a.chan, a.t0, a.t1)
     d = discriminate(x, fs, a.squelch, matched=a.matched)
-    db = data_bursts(d)
+    voice, db, calls = read_stream(d, a.sync, a.recover)
+    print(f'SYNC family: {voice[:-len("_VOICE")]}' + (' (detected)' if a.sync == 'auto' else ''))
     counts = {}
     for _, cc, dt, _ in db:
         counts[(cc, DATA_TYPES[dt])] = counts.get((cc, DATA_TYPES[dt]), 0) + 1
     print(f'data/control bursts: {len(db)}')
     for (cc, name), n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f'  CC {cc:2d}  {name:28s} {n}')
-    calls = voice_calls(d, recover=a.recover)
     frames = [f for _, fr in calls for f in fr]
     print(f'voice superframes: {len(calls)} ({len(frames)} frames)')
     if a.ambe_out:

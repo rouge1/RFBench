@@ -534,7 +534,15 @@ checked here:
 
 ## Reading weak and cut calls: `recover` and `matched`
 
-Both default off. `voice_calls(..., recover=False)` returns a superframe only when
+Defaults, since 2026-11-03. On the command line both are ON (`--no-recover` and
+`--no-matched` give the plain decoder). As a library, `discriminate(matched=True)` is the
+default and `voice_calls(recover=False)` stays the default: a recovered superframe is not
+FEC checked and can carry channel bit errors (1 to 15 per superframe at 12 dB, 15 to 53 at
+10 dB), so the caller asks for it. The evidence was one two-minute recording, enough for
+`matched` (never worse on 26 calls; fewer bit errors on synthetic calls at every SNR tried)
+and thinner for `recover` (the neighbour and header steps gained 87 exact frames; the grid
+step has no real-world evidence), which is why it is on only where a person is reading a
+recording. `voice_calls(..., recover=False)` returns a superframe only when
 burst A's voice SYNC is found and all 18 frames lie inside the array.
 `recover=True` (`--recover`) also tries:
 
@@ -549,12 +557,13 @@ burst A's voice SYNC is found and all 18 frames lie inside the array.
   SYNC is an anchor of last resort: see "Recovery from any SYNC" below.
 
 The candidate still has to pass the EMB and LCSS rule below. `fit_levels` is
-unchanged; `discriminate` gained `matched` (its default output is unchanged), and
+unchanged; `discriminate` gained `matched` (default True since 2026-11-03), and
 `discriminate` and `find_syncs` no longer crash on very short input (0 to 2000
 samples), where `np.convolve(..., 'same')` had returned more samples than it was given.
 
-`discriminate(..., matched=False)` is the length-10 boxcar, and omitting the
-keyword is that same array. `matched=True` (`--matched`) replaces the boxcar
+`discriminate(..., matched=False)` (`--no-matched`) is the length-10 boxcar, the
+default until 2026-11-03; omitting the keyword now gives `matched=True`, which
+replaces the boxcar
 with `rrc()` after the same 101-tap low-pass: alpha 0.2, span 8, 161 taps,
 clause 10.2.2.2. The filter is odd and symmetric, so it adds no delay of its own
 on top of the 101-tap low-pass (50 samples at 48 kS/s). A SYNC correlation peak
@@ -625,7 +634,7 @@ superframes 23 and 26, and recover still returns all 200, bit-exact. The same
 200 noise positions give 0/200 with the boxcar and 0/200 with the RRC, and
 `voice_calls(..., recover=True)` returns nothing on that noise either way.
 
-`return_info=False`, which is what `--recover` uses, keeps a recovered
+`return_info=False`, which is what the command line uses, keeps a recovered
 superframe only when all 18 frames were read. `return_info=True` puts `None`
 where a frame was outside the array, inside the 160-sample edge, or over the
 residual gate. A candidate with fewer than 4 decodable B-F EMBs is not a
@@ -710,10 +719,19 @@ superframe 54/72, 72/72, 72/72; scattered bit errors 134/144, 134/144,
 144/144; a clean repeater call 270/270; a clean handheld call 72/72. The
 three handheld calls are the first real check of the MS SYNCs.
 
-What to run on a real signal: `--recover --matched`, and do not pass
-`--squelch`. The command line's `voice_calls` searches the BS voice SYNC
-only. A handheld call is `voice_calls(d, voice='MS_VOICE', recover=True)`
-after `discriminate(..., matched=True)`.
+What to run on a real signal: the command line as it is (`--recover` and `--matched` are
+on), and do not pass `--squelch`. The SYNC family is detected (`--sync auto`, the default):
+`detect_sync` counts, for the repeater, handheld and TDMA direct-mode slot 1 and 2 families, the
+voice and data SYNCs that fit their four levels, and takes the family with the most (a tie or
+noise gives the repeater's); `--sync bs|ms|direct1|direct2` forces one. On the 26 real calls it
+picked the family that decodes best on all 26 (3 handheld calls with 14, 14 and 7 SYNCs, 23
+repeater calls with 66 to 190). Before 2026-11-03 the command line searched the repeater SYNC only
+and found nothing on a handheld call. Command line, real calls: the weak handheld, 6 superframes and
+88 of 108 logged frames exact; a clean handheld, all 72 logged frames. A rough check on a repeater
+call with scattered bit errors: 12 superframes with 165 exact frames against 11 and 153 with
+`--no-recover --no-matched` (those counts include a second call in the window). A file with two
+families in it (a repeater and a handheld on one channel) reads as the commoner; force the other.
+In the library a handheld call is `voice_calls(d, voice='MS_VOICE', recover=True)`.
 
 ### Traps
 

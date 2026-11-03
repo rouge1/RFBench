@@ -214,15 +214,78 @@ def check_identity():
     want_box = np.convolve(raw, np.ones(D.SPS) / D.SPS, mode='same')
     want_rrc = np.convolve(raw, D.rrc(), mode='same')
     short = D.discriminate(x[:5], D.FS_SYM, matched=True)
-    same = (np.array_equal(plain, off) and np.array_equal(off, want_box)
+    # since 2026-11-03 omitting the keyword means matched=True; the boxcar is matched=False
+    same = (np.array_equal(plain, on) and np.array_equal(off, want_box)
             and np.array_equal(on, want_rrc) and not np.array_equal(on, off)
             and short.shape == (4,) and np.all(short == 0))
     if same:
-        ok('matched=False is the boxcar (identical to omitting it); matched=True is rrc(); '
+        ok('omitting matched is matched=True, which is rrc(); matched=False is the boxcar; '
            'a short input stays length-4 zeros')
     else:
-        fail('identity', f'plain {np.array_equal(plain, off)} box {np.array_equal(off, want_box)} '
+        fail('identity', f'plain==rrc {np.array_equal(plain, on)} box {np.array_equal(off, want_box)} '
              f'rrc {np.array_equal(on, want_rrc)} differs {not np.array_equal(on, off)}')
+
+
+def check_sync_detect(tmp):
+    """The command line reads a handheld, a TDMA direct-mode and a repeater stream alike:
+    detect_sync() picks the SYNC family, read_stream() decodes with it, `--sync` forces
+    it, and a stream of noise falls back to the repeater's."""
+    cases = [('ms', 'MS_VOICE', ['--sync', 'ms', '--cc', '3']),
+             ('direct1', 'TDMA1_VOICE', ['--sync', 'direct1', '--cc', '5']),
+             ('direct2', 'TDMA2_VOICE', ['--sync', 'direct2', '--slot', '2', '--cc', '9']),
+             ('bs', 'BS_VOICE', ['--sync', 'bs', '--cc', '2', '--slot', '1'])]
+    bad = []
+    for name, want, args in cases:
+        for rate in (['--fs', '48000'], ['--fs', '1e6', '--offset', '25e3', '--cfo', '300']):
+            y, side, ambe = synth(tmp, 'sd_' + name, 2, args + rate + ['--superframes', '2',
+                                                                  '--lead', '0.3', '--tail', '0.3'], 4)
+            yt, fs = tune(y, side)
+            d = D.discriminate(yt, fs)
+            got, n = D.detect_sync(d)
+            voice, db, calls = D.read_stream(d, 'auto')
+            forced = D.read_stream(d, name)[0]
+            frames = [list(f) for _, fr in calls for f in fr]
+            exact = frames == [list(f) for f in ambe.tolist()]
+            if got != want or n < 1 or voice != want or forced != want or not db or not exact:
+                bad.append(f'{name} {rate[1]}: detected {got} ({n}), read {voice}, forced {forced}, '
+                           f'{len(db)} data bursts, frames exact {exact}')
+    rng = np.random.default_rng(3)
+    noise = (rng.normal(size=60000) + 1j * rng.normal(size=60000)).astype(np.complex64)
+    got, n = D.detect_sync(D.discriminate(noise, D.FS_SYM))
+    if (got, n) != ('BS_VOICE', 0):
+        bad.append(f'noise: detected {got} ({n})')
+    if D.detect_sync(np.zeros(0))[0] != 'BS_VOICE':
+        bad.append('empty array')
+    p = D.make_parser()
+    a = p.parse_args(['x.cdif', '--chan', '1', '--to', '2'])
+    b = p.parse_args(['x.cdif', '--chan', '1', '--to', '2', '--sync', 'direct2'])
+    if a.sync != 'auto' or b.sync != 'direct2':
+        bad.append(f'--sync parsing {a.sync} {b.sync}')
+    if bad:
+        fail('sync detect', '; '.join(bad))
+    else:
+        ok('detect_sync and read_stream: handheld, direct slot 1 and 2 and repeater streams, at 48 kS/s '
+           'and at 1 MS/s with offset and CFO, read in their own family with every frame exact; '
+           '--sync forces one; noise and an empty array fall back to the repeater')
+
+
+def check_cli_defaults():
+    """On the command line the matched filter and the recovery are on; the library's
+    voice_calls() still defaults to recover=False (a recovered superframe is not FEC
+    checked, so a caller asks for it)."""
+    import inspect
+    base = ['x.cdif', '--chan', '1', '--to', '2']
+    p = D.make_parser()
+    a, off = p.parse_args(base), p.parse_args(base + ['--no-recover', '--no-matched'])
+    on_again = p.parse_args(base + ['--recover', '--matched'])
+    lib = inspect.signature(D.voice_calls).parameters['recover'].default
+    if (a.recover is True and a.matched is True and off.recover is False and off.matched is False
+            and on_again.recover is True and on_again.matched is True and lib is False):
+        ok('command line: --recover and --matched default on, --no-recover and --no-matched turn '
+           'them off; voice_calls(recover=) still defaults to False')
+    else:
+        fail('cli defaults', f'default {a.recover, a.matched} off {off.recover, off.matched} '
+             f'library recover {lib}')
 
 
 def synth(tmp, name, nsf, args, seed):
@@ -377,8 +440,10 @@ def check_false_accept():
 def main():
     n_skip = check_spec()
     check_identity()
+    check_cli_defaults()
     check_bs_stream()
     with tempfile.TemporaryDirectory() as tmp:
+        check_sync_detect(tmp)
         check_clean(tmp)
         check_squelch_order(tmp)
     check_false_accept()
