@@ -21,6 +21,45 @@ correct. A real device whose BD_ADDR has UAP 0x00 is also legal; the DCI only ma
 inquiry LAPs. None of the 64 reserved LAPs can be part of a user BD_ADDR, so a device LAP in a test file
 must stay outside 0x9E8B00..0x9E8B3F (the reason `bt_synth_slotb` uses 0x635FCA and not the GIAC).
 
+### Constant bits also vote UAP 0x00, on any LAP
+
+The second way a 0x00 turns up has nothing to do with the DCI. The HEC and the CRC are linear shift
+registers started from the UAP, so zero data checked from a zero start gives a zero check. Run through
+`apps/bt_br_frame.py` (`hec`, `crc16`) on 2026-11-05:
+
+| Bits fed to the check | UAPs that pass |
+|---|---|
+| 10-bit header all 0, HEC all 0 | **0x00** only, none of the other 255 |
+| 10-bit header all 1, HEC all 1 | **0xC5** only |
+| 80-bit payload all 0, CRC all 0 | **0x00** only |
+
+So a path that hands the UAP search constant bits - a zero-filled or padded buffer, bits that skipped
+de-whitening, a slicer held at one value by a carrier or the LO spur at the capture centre - would vote
+0x00 (or 0xC5) every time and converge with no packet behind it. The guard is to drop any burst whose
+header bits are all 0 or all 1 before it votes. In bluey's decoder those bursts are IDs, which its ID
+routing already keeps out of the vote.
+
+### Every UAP has 63 exact twins, one per clock mask
+
+A 0x00 can also be a real packet's header read under the wrong clock, and this is the one bluey actually
+found. Whitening is linear in CLK[6:1] and the HEC is linear in the UAP, so for each of the 63 non-zero
+masks m there is one UAP that passes the HEC of **every** header when the clock is read as CLK XOR m.
+Checked with `bt_br_frame` on 2026-11-05: for UAP 0xDD, all 63 masks have such a twin, valid on every one of 200
+random headers and clocks; 0x00 is the twin at mask 0x21 (a clock off by ±33 or ±31 slots) and again at
+0x1E. One header with an unknown CLK6 therefore cannot tell 64 (clock, UAP) pairs apart. Only the clock's
+progression from packet to packet can, because the twin's clock moves by XOR, not by addition. So can a
+check that the header makes sense: its TYPE against the burst's length.
+
+bluey, 2026-11-05: on e0gt and headset_pair (20 MS/s, centre 2441 MHz), one channel of LAP 0x654903 (ch 47
+on one, ch 43 on the other, not the centre) went to UAP 0x00 with ID routing on. It never locked and decoded
+nothing. The real UAP is 0xDD: every perfect-FEC headered packet of that LAP passes the HEC under both
+(273/273 and 1057/1058), with 0x00 at clk6 +31/+33. With the IDs routed out that channel had about 5
+packets, and libbtbb's per-channel convergence picked the twin. Under 0x00 the header says TYPE 10/11
+(multi-slot) inside a 126-symbol burst, so bluey's length check refutes it, and its stage C, which picks
+the UAP whose per-LAP clock predicts the packets, stays on 0xDD. Neither constant bits nor an empty vote
+table was the cause. A minimum count of distinct votes would not have caught it either, since the twin's
+votes are real, distinct headers. A per-packet type/length check does catch it.
+
 ## The HEC/CRC initialisation in each substate - 6.4.6 "HEC" and 7.1 "Error checking"
 
 6.4.6, the HEC: in the Central Page Response substate the **Peripheral's UAP** is used; "For FHS packets and
