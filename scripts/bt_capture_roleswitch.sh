@@ -183,9 +183,11 @@ marker() {   # $1 = name
 # The AFH map in force, read from daPie's controller (HCI Read_AFH_Channel_Map 0x05|0x0006, handle
 # LE16). The host classification is only an input: the 2026-11-08 run showed the map in force
 # differed from it (one channel dropped, and later changes). One remote command, daPie's clock.
+# hcitool prints only the first event, which can be an unrelated Number_of_Completed_Packets
+# (0x13); retry until the Command Complete (0x0e) is the one shown.
 readmap() {   # $1 = name
   local out
-  out=$(rs "a=\$(date +%s.%N); h=\$(sudo hcitool con | sed -n 's/.*handle \\([0-9]*\\).*/\\1/p' | head -1); if [ -z \"\$h\" ]; then echo \"\$a no_connection\"; else printf -v lo '%02x' \$((h & 255)); printf -v hi '%02x' \$((h >> 8)); echo \"\$a handle=\$h \$(sudo hcitool -i hci0 cmd 0x05 0x0006 \$lo \$hi | tr '\\n' ' ')\"; fi")
+  out=$(rs "a=\$(date +%s.%N); h=\$(sudo hcitool con | sed -n 's/.*handle \\([0-9]*\\).*/\\1/p' | head -1); if [ -z \"\$h\" ]; then echo \"\$a no_connection\"; else printf -v lo '%02x' \$((h & 255)); printf -v hi '%02x' \$((h >> 8)); r=; for i in 1 2 3 4; do r=\$(sudo hcitool -i hci0 cmd 0x05 0x0006 \$lo \$hi | tr '\\n' ' '); case \"\$r\" in *'Event: 0x0e'*) break;; esac; sleep 0.2; done; echo \"\$a handle=\$h tries=\$i \$r\"; fi")
   printf '%s afhmap_%s %s\n' "${out%% *}" "$1" "${out#* }" >> "$TL"
   echo "    afhmap $1: ${out#* }" | cut -c1-200
 }
