@@ -30,6 +30,7 @@ them by name.
 | `sdr-archive/rf-games-20261030-night2/` | 345 | 63 `.cf32`, 84.3 GB | ours: RF games night 2 with fm-rec2, cable only |
 | `data/iq/ota_*` | 7 | 7 `.cf32` | ours: copies of the stage 2 and 3 captures, in bluey's tree |
 | `data/synth-batch2/mixed_v2/` | 4 | 2 `.cf32`, 4.0 GB | ours: a copy of `sdr-synth-tmp/mixed/` |
+| `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 6 | 1 `.cf32`, 23.4 GB | ours: the 2026-11-08 daPie and ESP32 role-switch recording, see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
 | everything else | | | not ours, see [the end](#on-the-drive-but-not-ours) |
 
 The synthetic files from before 2026-10-05 (stages 1 and 3, `synth_*`
@@ -857,6 +858,32 @@ The README names seven subfolders and says nothing about what any of them is. It
 | `uap-skip-id` | 1418 | 148 | 3.24 |
 
 The seven folders hold 5962 files, and `SHA256SUMS.txt` has 5962 lines to match. With `README.txt` and `SHA256SUMS.txt` at the top, the folder holds 5964 files in all.
+
+## A real link recorded, 2026-11-08: a mid-link role switch
+
+### `data/` - `dapie_esp32_roleswitch_20261108_031747`
+
+One take, six files, copied from the PC after the run and checked by sha256.
+A Raspberry Pi (`daPie`, BlueZ) pinged an ESP32 running a Classic
+BluetoothSerial sketch with `l2ping`, then ran `hcitool sr <esp32> slave`, so
+the Pi went from central to peripheral and the ESP32 became master. The BB60D
+recorded the whole of it. Made by `scripts/bt_capture_roleswitch.sh` (branch
+`bt-roleswitch-capture`, commit `0b7558e` when written).
+
+| File | Size | What |
+|---|---|---|
+| `iq/bb60d_dapie_esp32_roleswitch_20261108_031747.cf32` | 23.36 GB | 2441 MHz, 40 MS/s, 73 s, RF gain 0; 0 Sample Overrun warnings and 0 ADC overflow lines |
+| `btsnoop/btmon_dapie_dapie_esp32_roleswitch_20261108_031747.btsnoop` | 1.7 MB | the Pi's HCI side: AFH command, Connect Complete, the Role Change to Peripheral, Disconnect |
+| `sidecar/dapie_esp32_roleswitch_20261108_031747.meta` | 666 B | devices, BD_ADDRs, AFH map, scenario |
+| `sidecar/....timeline` | 675 B | `iq_start_wall`, `iq_rate_hz`, marker and switch times on the Pi's clock, in the format `freeze_truth.py` reads |
+| `sidecar/....recorder.log` | 5 KB | the recorder's own log |
+| `sidecar/....l2ping.log` | 292 KB | 0 % loss |
+
+- **Devices:** Pi D8:3A:DD:65:49:35 (LAP 654935, UAP DD); ESP32 04:B2:47:06:0A:C2 (LAP 060AC2, UAP 47). Unpaired, no encryption.
+- **Timeline, from `.timeline`:** warm-up 6 s; two 2.00 s l2ping pauses (SIGSTOP/SIGCONT) before the switch; the switch about 36 s in; one more pause after it; the link was ended by the script about 24 s after the switch.
+- **AFH:** the narrow host map `00 00 00 ff df ff 07 00 00 00` was sent to the Pi's controller before the link (status 00). That is only the host's input; whether the ESP32 as master used any map is not known, and the decoded LMP_set_AFH is what would show it.
+- **Clock:** the Pi's clock was about 0.15 s behind the host's, measured and written to the timeline.
+- **Written to the internal NVMe, then copied here.** A first attempt written straight to this drive lost samples (304 Sample Overrun warnings): over a long write the exFAT drive manages about 15 MB/s, and the recording needs about 80 MB/s. That run was deleted. Record on the NVMe and copy afterwards.
 
 ## On the drive but not ours
 
