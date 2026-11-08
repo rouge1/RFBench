@@ -48,6 +48,10 @@ CONDA="${CONDA:-$HOME/miniconda3/bin/conda}"
 # l2ping traffic. Flood with a 200-byte payload keeps the air busy so the marker pauses stand out;
 # set PING_ARGS="-s 44" for the plain 1 Hz ping the dry run used.
 PING_ARGS="${PING_ARGS:--s 200 -f}"
+# SPP=1: also open an RFCOMM channel to the ESP32 (it must run scripts/esp32_spp_sender) and read what it
+# streams, so the ESP32 SENDS multi-slot packets - after the switch, as master. l2ping alone cannot do that:
+# the slave's echo replies are all it ever sends. Use PING_ARGS="-s 600 -f" with it (5-slot packets from the Pi).
+SPP="${SPP:-0}"
 
 # Time layout (seconds after the recording starts): pause 1, switch, pause 2.
 WARM_S=6                                   # link up and pinging before the first marker
@@ -67,6 +71,9 @@ LOGDIR="$DATA_ROOT/sidecar"
 REC_LOG="$LOGDIR/${TAG}.recorder.log"
 BT_REMOTE="/tmp/btmon_dapie_${TAG}.btsnoop"
 PING_REMOTE="/tmp/l2ping_${TAG}.log"
+SINK_REMOTE="/tmp/spp_sink_${TAG}.log"
+SINK_PID="/tmp/spp_sink.pid"
+SINK_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bt_spp_sink.py"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 ev()  { printf '%s %s\n' "$(date +%s.%N)" "$1" >> "$TL"; echo "  [$(date +%H:%M:%S.%N | cut -c1-12)] $1"; }
@@ -101,7 +108,7 @@ if [ "${RF:-0}" != 0 ]; then
 else REBLOCK=0; fi
 rs 'sudo hciconfig hci0 up; sleep 1; hciconfig hci0 | sed -n 2,3p'
 # clear anything left from an earlier run
-rs 'sudo pkill -x btmon 2>/dev/null; sudo pkill -x l2ping 2>/dev/null; sudo rm -f /tmp/btmon_dapie_* /tmp/l2ping_*; sleep 0.5; true'
+rs 'sudo pkill -x btmon 2>/dev/null; sudo pkill -x l2ping 2>/dev/null; sudo rm -f /tmp/btmon_dapie_* /tmp/l2ping_* /tmp/spp_sink_* /tmp/bt_spp_sink.py; sleep 0.5; true'
 
 # ---- .meta (freeze_truth reads master=/slave= lines with BD=, and freq_mhz) ----
 # The sidecar "master" is the device that PAGED. daPie pages the ESP32 and is central at setup.
@@ -117,6 +124,7 @@ rs 'sudo pkill -x btmon 2>/dev/null; sudo pkill -x l2ping 2>/dev/null; sudo rm -
   echo "encryption=NONE (unpaired; l2ping only; no authentication requested)"
   echo "scenario=role switch mid-link: daPie central -> peripheral via hcitool sr $ESP_BD slave"
   echo "marker_pause_s=$PAUSE_S"
+  echo "traffic=l2ping $PING_ARGS from daPie; spp=$SPP (1 = ESP32 streams 512 B chunks over RFCOMM to daPie, paused with P/G bytes at the markers; sketch scripts/esp32_spp_sender)"
   if [ "$AFH_MAP" = none ]; then echo "afh=NOT set"; else echo "afh_host_classification=$AFH_MAP (HCI 0x03|0x003f, daPie host input only; NOT the map in force - see afhmap lines in .timeline)"; fi
   echo "notes=after the switch the ESP32 is master: hop sequence = ESP32 LAP/UAP; whether it applies an AFH map is unknown"
 } > "$META"
@@ -175,7 +183,13 @@ start_ping() { rs "sudo setsid sh -c 'stdbuf -oL l2ping -i hci0 $PING_ARGS -c 10
 # are only good to ~0.3 s). Those two daPie-clock times are the same clock btmon stamps with.
 marker() {   # $1 = name
   local out a b
-  out=$(rs "sudo pkill -STOP -x l2ping; a=\$(date +%s.%N); sleep $PAUSE_S; b=\$(date +%s.%N); sudo pkill -CONT -x l2ping; echo \$a \$b")
+  if [ "$SPP" = 1 ]; then
+    # Both streams are told to stop first (the sketch stops on P; its queue drains in well under 0.8 s),
+    # and only then is the pause stamped, so a..b is true silence on the ESP32 side too.
+    out=$(rs "sudo pkill -STOP -x l2ping; kill -USR1 \$(cat $SINK_PID); sleep 0.8; a=\$(date +%s.%N); sleep $PAUSE_S; b=\$(date +%s.%N); sudo pkill -CONT -x l2ping; kill -USR2 \$(cat $SINK_PID); echo \$a \$b")
+  else
+    out=$(rs "sudo pkill -STOP -x l2ping; a=\$(date +%s.%N); sleep $PAUSE_S; b=\$(date +%s.%N); sudo pkill -CONT -x l2ping; echo \$a \$b")
+  fi
   read -r a b <<<"$out"
   printf '%s %s_pause_start (daPie clock)\n%s %s_pause_end (daPie clock)\n' "$a" "$1" "$b" "$1" >> "$TL"
   echo "    $1: daPie clock $a .. $b"
@@ -191,9 +205,17 @@ readmap() {   # $1 = name
   printf '%s afhmap_%s %s\n' "${out%% *}" "$1" "${out#* }" >> "$TL"
   echo "    afhmap $1: ${out#* }" | cut -c1-200
 }
-stop_ping()   { rs "sudo pkill -CONT -x l2ping; sudo pkill -INT -x l2ping; true" >/dev/null; }
+start_sink() {   # the RFCOMM channel goes over the ACL link l2ping's page made (daPie central), never before it
+  scp -q -o ConnectTimeout=8 "$SINK_SRC" "$DAPIE_SSH:/tmp/bt_spp_sink.py" || die "cannot copy the SPP sink to daPie"
+  rs "setsid python3 /tmp/bt_spp_sink.py $ESP_BD $SINK_REMOTE </dev/null >/dev/null 2>&1 & echo \$! > $SINK_PID; sleep 2; cat $SINK_REMOTE"
+}
+stop_ping()   { rs "sudo pkill -CONT -x l2ping; sudo pkill -INT -x l2ping; [ -s $SINK_PID ] && kill -TERM \$(cat $SINK_PID) 2>/dev/null; sleep 0.5; true" >/dev/null; }
 
 ev "l2ping_start"; start_ping
+if [ "$SPP" = 1 ]; then
+  sleep 3     # page and connect first: daPie is central before anything else touches the link
+  ev "spp_sink_start"; start_sink | sed 's/^/    sink: /'
+fi
 wait_until "$P1_AT"; marker marker1; readmap after_marker1
 wait_until "$P2_AT"; marker marker2; readmap after_marker2
 wait_until "$SW_AT"; readmap before_switch
@@ -213,6 +235,7 @@ echo "T1=$(date +%s.%N)" >> "$TL"
 rs "sudo pkill -INT -x btmon; sleep 1; true"
 scp -o ConnectTimeout=8 "$DAPIE_SSH:$BT_REMOTE" "$BT_LOCAL" || echo "btmon copy failed (file stays on daPie at $BT_REMOTE)"
 scp -o ConnectTimeout=8 "$DAPIE_SSH:$PING_REMOTE" "$LOGDIR/${TAG}.l2ping.log" 2>/dev/null || true
+[ "$SPP" = 1 ] && { scp -o ConnectTimeout=8 "$DAPIE_SSH:$SINK_REMOTE" "$LOGDIR/${TAG}.spp_sink.log" 2>/dev/null || echo "SPP sink log copy failed"; }
 if [ "$REBLOCK" = 1 ]; then rs 'sudo hciconfig hci0 down; sudo rfkill block bluetooth; true'; echo "  daPie Bluetooth re-blocked"; fi
 
 echo
@@ -225,3 +248,4 @@ echo "  --- host events in btmon (Role Change / Connect / Disconnect) ---"
 btmon -T -r "$BT_LOCAL" 2>/dev/null | grep -a -E '^(<|>) HCI (Command|Event): (Switch|Role Change|Connect Com|Create Conn|Disconn)' -A3 \
   | grep -a -E 'HCI|Status|Role|Reason' | head -20
 echo "  --- l2ping summary ---"; tail -2 "$LOGDIR/${TAG}.l2ping.log" 2>/dev/null
+[ "$SPP" = 1 ] && { echo "  --- SPP sink (ESP32 -> daPie) ---"; grep -a -E 'connected|total_bytes|closed|error|sent' "$LOGDIR/${TAG}.spp_sink.log" 2>/dev/null | cut -c1-120 | tail -12; }
