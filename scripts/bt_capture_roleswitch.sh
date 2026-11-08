@@ -25,7 +25,7 @@
 set -uo pipefail
 
 LABEL="${1:-dapie_esp32_roleswitch}"
-FREQ_MHZ="${2:-2441}"
+FREQ_MHZ="${2:-2439}"   # 2439 sees channels 24-50; 2441 sees 26-52 and missed a channel of each master's AFH map
 PRE_S="${3:-30}"
 POST_S="${4:-30}"
 PAUSE_S="${PAUSE_S:-2}"
@@ -117,7 +117,7 @@ rs 'sudo pkill -x btmon 2>/dev/null; sudo pkill -x l2ping 2>/dev/null; sudo rm -
   echo "encryption=NONE (unpaired; l2ping only; no authentication requested)"
   echo "scenario=role switch mid-link: daPie central -> peripheral via hcitool sr $ESP_BD slave"
   echo "marker_pause_s=$PAUSE_S"
-  if [ "$AFH_MAP" = none ]; then echo "afh=NOT set"; else echo "afh_host_classification=$AFH_MAP (HCI 0x03|0x003f, daPie host input to its controller; map in force unread)"; fi
+  if [ "$AFH_MAP" = none ]; then echo "afh=NOT set"; else echo "afh_host_classification=$AFH_MAP (HCI 0x03|0x003f, daPie host input only; NOT the map in force - see afhmap lines in .timeline)"; fi
   echo "notes=after the switch the ESP32 is master: hop sequence = ESP32 LAP/UAP; whether it applies an AFH map is unknown"
 } > "$META"
 
@@ -180,19 +180,29 @@ marker() {   # $1 = name
   printf '%s %s_pause_start (daPie clock)\n%s %s_pause_end (daPie clock)\n' "$a" "$1" "$b" "$1" >> "$TL"
   echo "    $1: daPie clock $a .. $b"
 }
+# The AFH map in force, read from daPie's controller (HCI Read_AFH_Channel_Map 0x05|0x0006, handle
+# LE16). The host classification is only an input: the 2026-11-08 run showed the map in force
+# differed from it (one channel dropped, and later changes). One remote command, daPie's clock.
+readmap() {   # $1 = name
+  local out
+  out=$(rs "a=\$(date +%s.%N); h=\$(sudo hcitool con | sed -n 's/.*handle \\([0-9]*\\).*/\\1/p' | head -1); if [ -z \"\$h\" ]; then echo \"\$a no_connection\"; else printf -v lo '%02x' \$((h & 255)); printf -v hi '%02x' \$((h >> 8)); echo \"\$a handle=\$h \$(sudo hcitool -i hci0 cmd 0x05 0x0006 \$lo \$hi | tr '\\n' ' ')\"; fi")
+  printf '%s afhmap_%s %s\n' "${out%% *}" "$1" "${out#* }" >> "$TL"
+  echo "    afhmap $1: ${out#* }" | cut -c1-200
+}
 stop_ping()   { rs "sudo pkill -CONT -x l2ping; sudo pkill -INT -x l2ping; true" >/dev/null; }
 
 ev "l2ping_start"; start_ping
-wait_until "$P1_AT"; marker marker1
-wait_until "$P2_AT"; marker marker2
-wait_until "$SW_AT"
+wait_until "$P1_AT"; marker marker1; readmap after_marker1
+wait_until "$P2_AT"; marker marker2; readmap after_marker2
+wait_until "$SW_AT"; readmap before_switch
 rs "sudo hcitool con" | sed 's/^/    daPie: /'
 SWOUT=$(rs "a=\$(date +%s.%N); sudo timeout 10 hcitool sr $ESP_BD slave; rc=\$?; b=\$(date +%s.%N); echo \$a \$b \$rc")
 read -r SW_A SW_B SW_RC <<<"$SWOUT"
 printf '%s switch_req (daPie clock)\n%s switch_cmd_returned (daPie clock) exit=%s\n' "$SW_A" "$SW_B" "$SW_RC" >> "$TL"
 echo "    switch: daPie clock $SW_A .. $SW_B exit=$SW_RC"
 rs "sudo hcitool con" | sed 's/^/    daPie: /'
-wait_until "$P3_AT"; marker marker3
+readmap after_switch
+wait_until "$P3_AT"; marker marker3; readmap after_marker3
 
 # ---- finish ----
 if [ -n "$REC_PID" ]; then wait "$REC_PID"; fi
