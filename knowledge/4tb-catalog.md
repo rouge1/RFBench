@@ -30,7 +30,7 @@ them by name.
 | `sdr-archive/rf-games-20261030-night2/` | 345 | 63 `.cf32`, 84.3 GB | ours: RF games night 2 with fm-rec2, cable only |
 | `data/iq/ota_*` | 7 | 7 `.cf32` | ours: copies of the stage 2 and 3 captures, in bluey's tree |
 | `data/synth-batch2/mixed_v2/` | 4 | 2 `.cf32`, 4.0 GB | ours: a copy of `sdr-synth-tmp/mixed/` |
-| `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 6 | 1 `.cf32`, 23.4 GB | ours: the 2026-11-08 daPie and ESP32 role-switch recording, see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
+| `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 12 | 2 `.cf32`, 46.7 GB | ours: two 2026-11-08 daPie and ESP32 role-switch recordings (centred 2441 and 2439 MHz), see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
 | everything else | | | not ours, see [the end](#on-the-drive-but-not-ours) |
 
 The synthetic files from before 2026-10-05 (stages 1 and 3, `synth_*`
@@ -880,10 +880,35 @@ recorded the whole of it. Made by `scripts/bt_capture_roleswitch.sh` (branch
 | `sidecar/....l2ping.log` | 292 KB | 0 % loss |
 
 - **Devices:** Pi D8:3A:DD:65:49:35 (LAP 654935, UAP DD); ESP32 04:B2:47:06:0A:C2 (LAP 060AC2, UAP 47). Unpaired, no encryption.
-- **Timeline, from `.timeline`:** warm-up 6 s; two 2.00 s l2ping pauses (SIGSTOP/SIGCONT) before the switch; the switch about 36 s in; one more pause after it; the link was ended by the script about 24 s after the switch.
-- **AFH:** the narrow host map `00 00 00 ff df ff 07 00 00 00` was sent to the Pi's controller before the link (status 00). That is only the host's input; whether the ESP32 as master used any map is not known, and the decoded LMP_set_AFH is what would show it.
-- **Clock:** the Pi's clock was about 0.15 s behind the host's, measured and written to the timeline.
+- **Timeline, from `.timeline`:** warm-up 6 s; two 2.00 s l2ping pauses (SIGSTOP/SIGCONT) before the switch; the switch about 36 s in; one more pause after it; the ESP32 ended the link (Remote User Terminated) about 24 s after the switch.
+- **AFH:** the narrow host map `00 00 00 ff df ff 07 00 00 00` was sent to the Pi's controller before the link (status 00). That is only the host's input, and it was not the map in force: decoding found the Pi's controller dropped channel 24 (25 channels, 25-36 and 38-50), and the receiver at 2441 MHz sees only channels 26-52, so channel 25 of that map is out of view and the AFH check failed on the view, not on the switch. After the switch the ESP32 hopped on all 79 channels until about 41.0 s, then on AFH with channels 25-49 (bluey-bb `knowledge/roleswitch-check.md`). The second take below was made to fix the view.
+- **Clock:** the Pi's clock was about 0.15 s behind the host's, measured and written to the timeline - but do not apply that to IQ time: the markers show IQ time is the Pi's epoch minus a constant, with no host offset.
 - **Written to the internal NVMe, then copied here.** A first attempt written straight to this drive lost samples (304 Sample Overrun warnings): over a long write the exFAT drive manages about 15 MB/s, and the recording needs about 80 MB/s. That run was deleted. Record on the NVMe and copy afterwards.
+
+### `data/` - `dapie_esp32_roleswitch_map_20261108_150907`
+
+The second take, made to fix what the first could not show. Same devices, same
+traffic, same switch about 36 s in; two changes in `scripts/bt_capture_roleswitch.sh`
+(branches `bt-roleswitch-afhmap` and `bt-roleswitch-afhretry`): the BB60D is
+centred on **2439 MHz**, which sees channels 24-50 where 2441 MHz saw 26-52 and
+missed a channel of each master's map, and the Pi's controller is asked for the
+**AFH map in force** (HCI Read AFH Channel Map, `0x05|0x0006`) after each marker,
+before and after the switch. Six files, copied from the internal NVMe after the
+run and checked by sha256.
+
+| File | Size | What |
+|---|---|---|
+| `iq/bb60d_dapie_esp32_roleswitch_map_20261108_150907.cf32` | 23.36 GB | 2439 MHz, 40 MS/s, 73 s, RF gain 0; 0 Sample Overrun warnings; one ADC overflow line 18 ms after the recorder started (start-up settling; the next read shows none) |
+| `btsnoop/btmon_dapie_dapie_esp32_roleswitch_map_20261108_150907.btsnoop` | 1.9 MB | the Pi's HCI side: AFH command, the five map reads with their replies, Connect Complete, the Role Change to Peripheral, Disconnect |
+| `sidecar/dapie_esp32_roleswitch_map_20261108_150907.meta` | 690 B | devices, AFH host map, scenario |
+| `sidecar/....timeline` | 1.6 KB | `iq_start_wall`, `iq_rate_hz`, marker and switch times on the Pi's clock, and an `afhmap_*` line per read |
+| `sidecar/....recorder.log` | 5 KB | the recorder's own log |
+| `sidecar/....l2ping.log` | 318 KB | ends "Connection reset by peer": the ESP32 ended the link, as before |
+
+- **The map in force, from the `afhmap_*` lines (byte 3 onward):** before the switch AFH is enabled and the map is the host's with channel 24 dropped (`FE DF FF 07 ...`), and from the second marker with channel 32 dropped too (`FE DE FF 07 ...`; channel 37 was already out); after the switch AFH is disabled with an all-zero map (the ESP32 hopping on all 79); after the last marker it is enabled again with channels 25-51 all in (`FE FF FF 0F ...`). All five reads were command-complete on the first try.
+- **Link:** connected 15:09:18, Role Change to Peripheral 15:09:54, Disconnect "Remote User Terminated" 15:10:18 (the Pi's clock).
+- **Decoded by blue3 (bluey-bb `knowledge/roleswitch-check.md`): the role-switch check passes on this take.** The Pi's piconet locks blind on one clock (all its rows), with maps that match the HCI reads exactly (25-36 and 38-50, then also without 32 from about 25.2 s). After the switch the ESP32 hops on all 79 channels (AFH disabled, as read) until about 41.3 s, then on AFH with channels 25-51, the same clock. The role-switch FHS agrees with the ESP32's clock to 0 slots. The ESP32 does not lock blind (channel 51 is outside the 24-50 view; the 79-channel stretch is too short). The page FHS was not decoded here. The traffic is still DM3 only, so the hop model's gap after multi-slot packets is not tested; a 5-slot take would need `PING_ARGS` with a payload of about 600 B.
+- **Written to the NVMe, then copied here**, as the first take was; the rehearsal files in the scratchpad were temporary and are gone.
 
 ## On the drive but not ours
 
