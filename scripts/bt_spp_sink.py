@@ -12,8 +12,9 @@ Signals from the script's marker pauses:
     SIGUSR2  send b'G' -> the sketch resumes
 SIGTERM / SIGINT: log the totals and exit.
 
-The channel is not assumed: 1..30 are tried until one connects.  Nothing is
-paired or encrypted.  The sketch ignores everything but P and G.
+The channel is not assumed: 1..30 are tried until one connects.  The connect pairs the
+link (Just Works) and encrypts it - see the comment at the socket.  The sketch ignores
+everything but P and G.
 """
 import signal
 import socket
@@ -54,6 +55,10 @@ signal.signal(signal.SIGINT, on_term)
 sock = None
 for ch in range(1, 31):
     s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    # Security is left at the kernel's default. Tried and failed 2026-11-08: BT_SECURITY level 0 (SDP) makes the
+    # ESP32 refuse the RFCOMM channel and hang up with "Authentication Failure" (EACCES here). At the default
+    # level the Pi authenticates by Simple Pairing (Just Works) and encrypts the link - so an SPP run is NOT
+    # unpaired or unencrypted, and its btsnoop holds a link key (the Pi does not store it; never print it).
     s.settimeout(4.0)
     try:
         s.connect((addr, ch))

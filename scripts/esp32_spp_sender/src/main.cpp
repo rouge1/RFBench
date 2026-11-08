@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include "BluetoothSerial.h"
 #include "esp_bt_device.h"
+#include "esp_gap_bt_api.h"
 
 BluetoothSerial SerialBT;
 static uint8_t chunk[512];
@@ -16,12 +17,28 @@ static void printAddr() {
   Serial.printf("BD_ADDR %02X:%02X:%02X:%02X:%02X:%02X\n", a[0], a[1], a[2], a[3], a[4], a[5]);
 }
 
+// This test is unpaired. A bond left by an earlier session makes the ESP32 challenge the next link
+// and hang up with "Authentication Failure", so every bond is erased at boot. Only the count is printed.
+static void eraseBonds() {
+  int n = esp_bt_gap_get_bond_device_num();
+  Serial.printf("bonded devices at boot: %d\n", n);
+  if (n <= 0) return;
+  esp_bd_addr_t *list = (esp_bd_addr_t *)malloc(n * sizeof(esp_bd_addr_t));
+  if (!list) return;
+  int m = n;
+  if (esp_bt_gap_get_bond_device_list(&m, list) == ESP_OK)
+    for (int i = 0; i < m; i++) esp_bt_gap_remove_bond_device(list[i]);
+  free(list);
+  Serial.printf("bonded devices now: %d\n", esp_bt_gap_get_bond_device_num());
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
   for (size_t i = 0; i < sizeof(chunk); i++) chunk[i] = (uint8_t)i;
   SerialBT.begin("esp32-rstest");   // classic, general discoverable + connectable
-  Serial.println("esp32-rstest: classic BT up, spp-sender v1 (512 B chunks, P/G control)");
+  eraseBonds();
+  Serial.println("esp32-rstest: classic BT up, spp-sender v2 (512 B chunks, P/G control)");
   printAddr();
 }
 
