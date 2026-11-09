@@ -30,7 +30,7 @@ them by name.
 | `sdr-archive/rf-games-20261030-night2/` | 345 | 63 `.cf32`, 84.3 GB | ours: RF games night 2 with fm-rec2, cable only |
 | `data/iq/ota_*` | 7 | 7 `.cf32` | ours: copies of the stage 2 and 3 captures, in bluey's tree |
 | `data/synth-batch2/mixed_v2/` | 4 | 2 `.cf32`, 4.0 GB | ours: a copy of `sdr-synth-tmp/mixed/` |
-| `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 12 | 2 `.cf32`, 46.7 GB | ours: two 2026-11-08 daPie and ESP32 role-switch recordings (centred 2441 and 2439 MHz), see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
+| `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 19 | 3 `.cf32`, 70.1 GB | ours: three 2026-11-08 daPie and ESP32 role-switch recordings (2441, 2439 and 2439 MHz), see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
 | everything else | | | not ours, see [the end](#on-the-drive-but-not-ours) |
 
 The synthetic files from before 2026-10-05 (stages 1 and 3, `synth_*`
@@ -909,6 +909,34 @@ run and checked by sha256.
 - **Link:** connected 15:09:18, Role Change to Peripheral 15:09:54, Disconnect "Remote User Terminated" 15:10:18 (the Pi's clock).
 - **Decoded by blue3 (bluey-bb `knowledge/roleswitch-check.md`): the role-switch check passes on this take.** The Pi's piconet locks blind on one clock (all its rows), with maps that match the HCI reads exactly (25-36 and 38-50, then also without 32 from about 25.2 s). After the switch the ESP32 hops on all 79 channels (AFH disabled, as read) until about 41.3 s, then on AFH with channels 25-51, the same clock. The role-switch FHS agrees with the ESP32's clock to 0 slots. The ESP32 does not lock blind (channel 51 is outside the 24-50 view; the 79-channel stretch is too short). The page FHS was not decoded here. The traffic is still DM3 only, so the hop model's gap after multi-slot packets is not tested; a 5-slot take would need `PING_ARGS` with a payload of about 600 B.
 - **Written to the NVMe, then copied here**, as the first take was; the rehearsal files in the scratchpad were temporary and are gone.
+
+### `data/` - `dapie_esp32_roleswitch_spp_20261108_184230`
+
+The third take, for the one case the first two did not have: the ESP32 as the **new master sending multi-slot
+packets**. Same BB60D centre (2439 MHz), rate, 73 s, switch about 36 s in, markers and five AFH map reads as
+the second take; the traffic changed (`scripts/bt_capture_roleswitch.sh` with `SPP=1`, branch
+`bt-roleswitch-spp`). daPie runs `l2ping -s 600 -f` to the ESP32, and also opens an RFCOMM channel to it
+(`scripts/bt_spp_sink.py`, channel scanned: 1); the ESP32, now running `scripts/esp32_spp_sender`, streams 512-byte
+chunks over it, about 100 KB/s, 6.11 MB in all, before the switch as slave and after it as master. At each marker both
+streams are told to stop (a `P` byte to the sketch) before the pause is stamped, so the pause is silent both ways.
+Seven files, copied from the internal NVMe after the run and checked by sha256.
+
+| File | Size | What |
+|---|---|---|
+| `iq/bb60d_dapie_esp32_roleswitch_spp_20261108_184230.cf32` | 23.36 GB | 2439 MHz, 40 MS/s, 73 s, RF gain 0; 0 Sample Overrun warnings, 0 ADC overflow lines |
+| `btsnoop/btmon_dapie_dapie_esp32_roleswitch_spp_20261108_184230.btsnoop` | 8.3 MB | the Pi's HCI side: the five map reads, Connect Complete, pairing and encryption events including a **link key notification**, the one Role Change to Peripheral, the ACL data both ways |
+| `sidecar/dapie_esp32_roleswitch_spp_20261108_184230.meta` | 1 KB | devices, traffic, `encryption=YES` |
+| `sidecar/....timeline` | 1.7 KB | `iq_start_wall`, `iq_rate_hz`, marker, switch and `afhmap_*` lines on the Pi's clock |
+| `sidecar/....recorder.log` | 5 KB | the recorder's own log |
+| `sidecar/....l2ping.log` | | 2111 sent, 2111 received, 0 % loss |
+| `sidecar/....spp_sink.log` | | RFCOMM bytes per second on the Pi's clock: zero in each marker window |
+
+- **This take is paired and encrypted.** The RFCOMM connect makes the Pi authenticate by Simple Pairing (Just Works) and encrypt the link. The ESP32's SPP server refuses an unauthenticated channel: with the socket's security level at the lowest (SDP) the ESP32 hung up with "Authentication Failure" in two rehearsals. The Pi does not keep the key, but the btsnoop holds it: **never print, quote or send it.** Pairing and encryption leave the hop sequence, access codes and packet headers alone; the payload after the pairing is encrypted.
+- **Packet types are whatever the controllers chose**: not checked here, so BR DH5/DM5 versus EDR 2-DH5/3-DH5 is for the decoder to read off the headers.
+- **Map reads (the Pi's controller, bytes 3 onward, bit 0 = channel 24):** `FE DF FF 07` after marker 1, `FF 03 FE 07` after marker 2, `FD 93 FD 06` just before the switch (the Pi's map changed more than once before the switch this time); after the switch AFH disabled with an all-zero map; after marker 3 `FE FF FF 0F`.
+- **The link lasted to the end**, about 36 s after the switch, with no disconnect in the window; the ESP32 kept streaming through the switch and to the end. Takes 1 and 2 ended about 24 s after the switch, when the ESP32 hung up.
+- **The ESP32 now runs `esp32_spp_sender`**, not the earlier plain test sketch. Its original flash is backed up in the scratchpad of the session that flashed it, and the sketch is in the repo.
+- Not decoded at the time of writing.
 
 ## On the drive but not ours
 
