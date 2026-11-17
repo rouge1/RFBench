@@ -38,6 +38,25 @@ and `synth_hop20_*`) are not on this drive. They live in bluey's own
 `data/` folder (74 `synth_*.cf32` in `/data/python/bluey-ox-walker/data/iq/`), and every one of
 them can be made again from its generator commit.
 
+The counts above are from 2026-11-05. What was deleted since is in [the clean-up of 2026-11-17](#clean-up-of-2026-11-17).
+
+## Clean-up of 2026-11-17
+
+The drive reached 100 % (29 GB free) during bluey-bb's AFH truth captures. With the user's go, and after bluey-bb (blue5) checked each target against its gates, tests and manifests, this was deleted. Free space went from 29 GB to 625 GB.
+
+| What | Size | Left behind |
+|---|---|---|
+| `data/iq/bb60d_afhtruth_M3_20261117_092313.cf32` | 25.6 GB | its sidecars; invalid take (one ADC overflow), bluey-bb re-records it |
+| 72 `align/` crops under `sdr-synth-tmp/bench/` | 226 GB | their `.json` sidecars |
+| the 116 `.cf32` of `samelap`, `rxoffset`, `freshset`, `rxsweep` and `e-controls` | 360 GB | their sidecars and manifests (1.9 GB), see each set below |
+
+Not deleted, and why:
+
+- `sdr-synth-tmp/recall-confirm/` (232 GB): bluey-bb does not need it, but it cannot be rebuilt (a sidecar step lives only in `recall-confirm-private`), and bluey-ox-walker's score step re-reads its sidecars against `SHA256SUMS.txt`. If its `.cf32` ever goes, keep the sidecars, `SHA256SUMS.txt` and `map.json`. Graded by ox-walker on 2026-10-28, verdict SUPPORTED (`knowledge/f-recall-confirm-result.md` there).
+- `sdr-synth-tmp/slotb2/` (47 GB): bluey-bb's burst-class calibration was fitted on `slotb:A/C1/D` and `slotb2:R_s1, R_20msps_s1, X_first_id10_s1`. Nothing re-fits it, but keep at least those three files unless a bit-exact rebuild is shown.
+- `conf/`, `interf/` and `data/synth-batch2/mixed_v2/`: bluey-bb reads them by path (its truth tests). If one copy of `mixed` must go, delete `sdr-synth-tmp/mixed/`.
+- `data/iq/ota_*` (14 GB) and `bb60d_audio14` to `audio17` (46 GB): bluey-bb does not reference them, but bluey-ox-walker does, and the user has not decided.
+
 ## Synthetic Classic sets, 2026-10-05 to 10-07
 
 Known-truth Classic Bluetooth captures built from the repo's `scripts/bt_synth_*.py` generators, one folder per question asked by bluey-ox-walker. Every `.cf32` has a `.json` sidecar with the truth; sidecar sizes match the IQ files (8 bytes per sample) in all 117 cases.
@@ -399,6 +418,8 @@ Non-IQ files: `manifest.json`, `run.log`, `SHA256SUMS.txt`, `verify.txt` (post-r
 
 ### `sdr-synth-tmp/samelap/`
 
+**Gone, 2026-11-17:** The 29 `.cf32` files were deleted on 2026-11-17 to make room (bluey-bb needs none of them). The sidecars and manifests stay. Rebuild with `scripts/bt_synth_slotb2.py --set SL` at `287635c`; 4 files were made at `287635c-dirty`, so those are not exactly pinned. `rxoffset` and `rxsweep` were made from these files.
+
 See [bluey-test-signals](bluey-test-signals.md). Built with `scripts/bt_synth_slotb2.py --set SL` at commit 287635c, on 2026-10-16 (17:25 to 17:43), for bluey's same-LAP audit. Two LAPs (0x0466AB, 0x662492), master carrier offset 0 or -30 kHz, the symbol phase of the first IDs, and a noise seed. Cells with the same noise seed share one noise and carrier-phase realisation.
 
 | File | GB | Rate MS/s | Centre MHz | What differs |
@@ -457,6 +478,8 @@ Non-IQ files: `manifest.json`, `run.log`, `SHA256SUMS.txt`, and one `.cf32.verif
 
 ### `sdr-synth-tmp/rxoffset/`
 
+**Gone, 2026-11-17:** The 13 `.cf32` files were deleted on 2026-11-17 to make room. The sidecars stay. Rebuild with `scripts/bt_rx_offset.py` (`40435b2`) from the `samelap` and `laptest` sources named in each row; the `samelap` sources must be rebuilt first.
+
 See [bluey-test-signals](bluey-test-signals.md). Built with `scripts/bt_rx_offset.py` (commit 40435b2) from the samelap and laptest files named in each row, on 2026-10-17 (21:53 to 22:20). For bluey: what a receiver with a wrong reference records. The sources are not in this folder.
 
 | File | GB | Rate MS/s | Centre MHz | What differs |
@@ -478,6 +501,8 @@ See [bluey-test-signals](bluey-test-signals.md). Built with `scripts/bt_rx_offse
 Non-IQ files: `manifest.json`, `run.log`, `SHA256SUMS.txt`, `verify_paired.txt`. The `dcp10` file fails the carrier part of the paired check (worst 394 Hz against a 300 Hz bound); the verify log puts this down to estimation noise from the +10 dB spur. Its positions pass.
 
 ### `sdr-synth-tmp/freshset/`
+
+**Gone, 2026-11-17:** The 32 `.cf32` files were deleted on 2026-11-17 to make room. The sidecars and manifest stay. Rebuild with `scripts/bt_synth_slotb2.py --set FR` at `2c64b19`; one noise seed per file (3001 to 3032) fixes each file.
 
 See [bluey-test-signals](bluey-test-signals.md). Built with `scripts/bt_synth_slotb2.py --set FR` at commit 2c64b19 on 2026-10-18 (20:16 to 21:38), for bluey's carrier-threshold replication: six LAPs chosen by a rule committed before the search, 32 files, one noise seed per file (3001 to 3032). Cell codes: `p0` grid 50.0 us (symbol phase 0); `p10` grid 50.25 us (phase 10); `p10b` as p10 with another noise realisation; `d23` +23 ppm clock drift, which walks the phase through all 40 samples; `h28` and `h35` modulation index 0.28 or 0.35 instead of 0.32 (from the manifest).
 
@@ -568,6 +593,8 @@ The plan and seeds behind recall-confirm. This is the answer key for bluey's bli
 
 ### `sdr-synth-tmp/e-controls/`
 
+**Gone, 2026-11-17:** The 28 `.cf32` files were deleted on 2026-11-17 to make room. The sidecars stay. The two 24 s RSF-control files come from `scripts/bt_synth_endlen.py`; the 6 s carrier, GFSK and noise files came from a scratch script, `ec_carrier.py`, that is not in the repo, so those can be remade only from the description here.
+
 Controls with no Bluetooth packet in them: a carrier, random-bit GFSK bursts with no access code, and noise, each 6 s at 20 and 40 MS/s; plus two 24 s files of one connection with no role switch (the RSF control). The sidecars' `truth` fields say what each file must not contain, and the notes do not record who asked for them. The 6 s files were made by a scratch script, `ec_carrier.py`, which is not in the repo, on `scripts.bt_synth_interf.noise_block` and `apps.bt_br_frame.gfsk` at generator_commit 0ef2d7b, dated 2026-10-30 00:07 to 00:23. The RSF files are `scripts/bt_synth_endlen.py` kind `np` at the same commit, with a second scratch script (not in the repo) that adds the two stems. The truth file `RSF_truth.json` describes them. See [bluey-test-signals](bluey-test-signals.md) (the NULL/POLL-heavy connection, `E_np`).
 
 | File | GB | Rate MS/s | Centre MHz | What differs |
@@ -584,6 +611,8 @@ Non-IQ files: 28 `.json` sidecars (the RSF two are about 24 MB each), `RSF_truth
 
 ### `sdr-synth-tmp/rxsweep/`
 
+**Gone, 2026-11-17:** The 14 `.cf32` files were deleted on 2026-11-17 to make room. The sidecars and manifest stay. Rebuild with `scripts/bt_rx_offset.py --rx-offset-hz` (`616bec9`) from the two sources named above; the `samelap` source must be rebuilt first (`laptest/` is still on the drive).
+
 The receiver's own frequency offset applied to two slotb2 files, LAPs 0x0466AB and 0x4073AD: the same bursts with `scripts/bt_rx_offset.py --rx-offset-hz` set, a pure rotation with no ppm and no DC spur. The transmitter's offset stays 0, so the receiver reads the offset alone (`cfo_observed_hz`). Built 2026-10-30 07:46 to 09:09, manifest 09:46, with `bt_rx_offset.py` at tool_commit 616bec9; the notes do not record who asked for the sweep. Sources: `samelap/synth_slotb2_S_0466AB_c0_p10_n1.cf32` (generator_commit 287635c) and `laptest/synth_slotb2_S_4073AD_c0_p10_n1.cf32` (a894e02). See [bluey-test-signals](bluey-test-signals.md) (a receiver's own offset, 2026-10-17).
 
 | File | GB | Rate MS/s | Centre MHz | What differs |
@@ -594,6 +623,8 @@ The receiver's own frequency offset applied to two slotb2 files, LAPs 0x0466AB a
 Non-IQ files: 14 `.json` sidecars (about 21 MB each), `manifest.json` (set `rx_offset`, `rx_ppm` 0 in every file), and `SHA256SUMS.txt` covering the 28 files.
 
 ## Bench recordings for bluey, 2026-10-18 to 10-27
+
+**The `align/` crops are gone (2026-11-17).** The 72 crop `.cf32` files named in the tables below as `align/` rows (and `cal/cal2_align/`) were deleted to make room, 226 GB. Their `.json` sidecars stay, and every recording they were cut from is still here. bluey-bb never read them; its aligner is `bt_bench` in this repo. The shots and crops carry `6eff350-dirty`, so they cannot be promised to rebuild byte for byte. bluey-ox-walker's notes mention `/align` in 7 files, which were not checked.
 
 Recordings made on the BB60D of the VSG60A playing the bench shots for bluey-ox-walker's Bluetooth tests; the Played / recorded column reads shot, level and commanded offset, then seconds, gain, adc and lost overflow counts from the `.rec.json`, and `warn`, the number of `Sample Overrun` lines in the `.rec.log` (the json does not count them).
 
@@ -938,6 +969,10 @@ Seven files, copied from the internal NVMe after the run and checked by sha256.
 - **The ESP32 now runs `esp32_spp_sender`**, not the earlier plain test sketch. Its original flash is backed up in the scratchpad of the session that flashed it, and the sketch is in the repo.
 - **Decoded by blue3 (bluey-bb `knowledge/roleswitch-check.md`, "Take 3"): the role-switch check passes on this take, and the multi-slot case it was made for works.** The Pi's piconet locks blind on one clock for all its rows, and its three blind maps match the HCI reads exactly, both pre-switch changes included. After the switch the ESP32 hops on all 79 channels for 4.2 s (fit 1.000), then on AFH 25-51 at the same clock; the role-switch FHS is 0 slots off. As new master the ESP32 sent 7,695 three-slot packets, and all 7,471 slave replies sit on the packet's start channel; with the multi-slot rule its fit goes from 0.565 to 0.9996. The live lock gets a 79-channel lock 1.01 s after the switch. **Follow-up:** during its 79-channel seconds the ESP32 also sends 466 three-slot packets whose replies follow the 79-channel sequence, so the multi-slot remap must stay off in that mode. Nothing from the link key was extracted or kept.
 - **The NVMe originals of this take are deleted** (sha256 of all seven files checked against these copies first, by blue3), so the files here are the only copy.
+
+## AFH truth captures, 2026-11-17
+
+Made by bluey-bb (not by this repository), recorded here because they filled the drive. Its own catalog is `data/catalog.md` on the drive, which has the per-take epochs. daPie (master) and the ESP32 (slave) on a BB60D at 2441 MHz, 40 MS/s, 80 s per take, with daPie's AFH classification changed at set times and its channel map and clock read back every 0.5 s as the truth. 15 valid takes, 25.6 GB each (384 GB), in `data/iq/bb60d_afhtruth_<take>_<stamp>.cf32`: S, W, C, D, Q, N, H, then the held-out D2, Q2, W2, V2, P3, D3 and W3. M3 was invalid and has been deleted; bluey-bb re-records it. Keep all of them: its blind-map gates depend on them. The sidecars are in `data/sidecar/afhtruth_*`, the btmon traces in `data/btsnoop/`, and the derived rows and scores in `data/archive/afh_truth/`.
 
 ## On the drive but not ours
 
