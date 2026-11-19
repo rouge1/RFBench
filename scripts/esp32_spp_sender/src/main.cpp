@@ -2,7 +2,9 @@
 // answers L2CAP echo (l2ping), and once a peer opens its SPP (RFCOMM) channel it streams 512-byte
 // chunks to it, so the ESP32 sends multi-slot packets - after a role switch, as the master.
 // The peer pauses and resumes it with one byte: 'P' stops writing, 'G' resumes (the marker pauses).
-// No pairing is requested; SSP is left off.
+// The sketch asks for no pairing itself, but Simple Pairing is on in the ESP32 and its SPP
+// server refuses an unauthenticated RFCOMM channel, so opening SPP pairs the link (Just Works: NoInputNoOutput,
+// no bonding, no MITM) and encrypts it. l2ping alone stays unpaired. Seen in take 3's btsnoop, 2026-11-08.
 #include <Arduino.h>
 #include "BluetoothSerial.h"
 #include "esp_bt_device.h"
@@ -17,8 +19,9 @@ static void printAddr() {
   Serial.printf("BD_ADDR %02X:%02X:%02X:%02X:%02X:%02X\n", a[0], a[1], a[2], a[3], a[4], a[5]);
 }
 
-// This test is unpaired. A bond left by an earlier session makes the ESP32 challenge the next link
-// and hang up with "Authentication Failure", so every bond is erased at boot. Only the count is printed.
+// Every link starts unpaired. A bond left by an earlier session makes the ESP32 challenge the next link with
+// a key the peer no longer has (daPie does not store it) and hang up with "Authentication Failure", so every
+// bond is erased at boot. Only the count is printed.
 static void eraseBonds() {
   int n = esp_bt_gap_get_bond_device_num();
   Serial.printf("bonded devices at boot: %d\n", n);

@@ -120,7 +120,7 @@ rs 'sudo pkill -x btmon 2>/dev/null; sudo pkill -x l2ping 2>/dev/null; sudo rm -
   echo "rate_hz=$RATE_HZ"
   echo "bb60_gain=$GAIN"
   echo "master=daPie (Raspberry Pi, BlueZ) BD=$DAPIE_BD"
-  echo "slave=ESP32-D0WD-V3 esp32-rstest (Classic, SSP off) BD=$ESP_BD"
+  echo "slave=ESP32-D0WD-V3 esp32-rstest (Classic, Simple Pairing on, NoInputNoOutput; pairs only when SPP opens) BD=$ESP_BD"
   if [ "$SPP" = 1 ]; then echo "encryption=YES: the RFCOMM connect pairs the link (Simple Pairing, Just Works) and encrypts it; the key is not stored on daPie"; else echo "encryption=NONE (unpaired; l2ping only; no authentication requested)"; fi
   echo "scenario=role switch mid-link: daPie central -> peripheral via hcitool sr $ESP_BD slave"
   echo "marker_pause_s=$PAUSE_S"
