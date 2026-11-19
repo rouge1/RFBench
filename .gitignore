@@ -40,3 +40,8 @@ Thumbs.db
 
 # local notes that are not part of the repo
 knowledge/snappy-twirling-glacier.md
+
+# PlatformIO build output, and ESP32 flash dumps (a dump can hold the device's
+# Bluetooth bonds and link keys - never commit one; this repository is public).
+.pio/
+scripts/esp32_spp_sender/backup_*.bin
