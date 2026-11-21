@@ -138,7 +138,7 @@ read back too. Transmitters at 915 MHz (FM video 5800), 10 % (UBX gain 3 dB).
 | Subcarrier | ✅ | carrier and the 20 kHz subcarrier |
 | FM + RDS | ✅ | **`rdsReceiver` on the BB60D: 99 % blocks good**, PS, RadioText, Now Playing, stereo pilot |
 | **ATSC** | ❌ **12 MS/s asked, 12.5 given** | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
-| NTSC | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; receiver result inconclusive, below |
+| **NTSC** | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; **but `ntscReceiver` on the BB60D: "picture, but only 0-2 frames a second"**, where the VSG60 decodes 17.9 - below |
 | ISM | ✅ LO 400 kHz low on purpose | **`ismReceiver` on the BB60D: every burst decoded**, Nexus-TH 19.0 °C 71 % as sent (at 433.92 MHz) |
 | FM video | ✅ 20 MS/s at 5.8 GHz | **`fmVideoReceiver` on the BB60D: picture, 17.4-18.1 frames/s**, colour, line rate within 3 ppm, deviation read 7.87-7.94 MHz of 7.93 set - below FM threshold at 10 % (CNR 1-11 dB), so clicks |
 
@@ -150,10 +150,24 @@ pilot landed exactly where that predicts. Both apps ask for 12 MS/s for a
 USRP (`SAMPLE_RATES` in `atscReceiver`, `samp_rate` in `atscXmitter`); 10
 or 12.5 would be an N210 rate. Not changed yet.
 
-**The ATSC transmitter also underran through the run** - 4 to 20 `U` in
-the first 20 s of each, against none from the 2-10 MS/s apps - so its
-encoder may not keep up in real time on worklaptop1 either. The NTSC and
-FM video transmitters' few `U` came only at start-up.
+**The ATSC transmitter also underran** - 4 to 20 `U` in the first 20 s of
+each run, against none from the 2-10 MS/s apps. Not separated from the rate
+fault: a radio draining 4.17 % faster than the app paces itself would
+underrun just so. Look again once the rate is fixed. The NTSC and FM video
+transmitters' few `U` (1-6) came only at start-up.
+
+**NTSC transmit is wrong on the Ettus side, cause not found.** The same
+app, test pattern and receiver, with the VSG60 at −9.5 dBm, decoded
+"locked - picture decoding", 17.9 frames a second in colour, at −52 dBFS
+on the BB60D (floor −67 dBFS with nothing on). The N210 arrived stronger,
+about −44 dBFS, and gave 0-2 frames a second with no line rate measured.
+Its carriers are exactly placed, and FM video at the same 20 MS/s decodes
+- but FM ignores amplitude and NTSC picture is amplitude. A guess, not
+checked: 20 MS/s is an interpolation of 5 from the N210's 100 MHz, odd, and
+UHD warns that the CIC then droops across the band; a vestigial-sideband
+picture would show that and an FM one would not. Next: a capture of each
+transmitter's channel side by side, compared for flatness, and the app at
+10 MS/s on the radio if it can be.
 
 ### Receivers on the N210
 
@@ -163,20 +177,18 @@ FM video transmitters' few `U` came only at start-up.
 | **ATSC** | RF 36 (605 MHz) off air | ❌ **radio at 12.5 MS/s, app at 12: "pilot not found"** at −40 dBFS. The BB60D beside it found the pilot (+196 Hz, 38 dB clear) but could not decode - the station is weak here |
 | ISM | VSG60 Nexus-TH at 433.92 | ✅ every burst decoded, 30-32 dB SNR; tunes 300 kHz low on purpose |
 | FM video | VSG60 at 5800, −20 dBm | inconclusive: "no carrier" at −71 dBFS - too weak over the air at 5.8 GHz; 20 MS/s, no overruns |
-| NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, **and 20 MS/s receive dropped packets all through**: `D` and 3-4 `usrp_source` overflows a second |
+| NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, confounded: the receive dropped packets all through (`D`, and 3-4 `usrp_source` overflows a second) |
 
-**20 MS/s receive is at the edge** through worklaptop1's USB Ethernet
-adapter: the NTSC receiver lost packets throughout, the FM video receiver
-at the same rate did not. 80 MB/s of samples is most of what such an
-adapter carries. A built-in gigabit port, or 10-12.5 MS/s where the app
-allows it, is the thing to try.
+**The link carries 20 MS/s; the NTSC receiver did not keep up with it.**
+UHD's `benchmark_rate` received 20 MS/s for 20 s through worklaptop1's USB
+Ethernet adapter with 0 dropped samples, 0 overruns and 0 sequence errors,
+and the FM video receiver at the same rate dropped nothing. So the NTSC
+receiver's drops are its own processing on worklaptop1, not the network.
+Rerun it on a quieter or faster host before judging its decode.
 
-**NTSC did not decode in any pairing with the test pattern** - N210 into
-the BB60D gave "picture, but only 0-2 frames a second", and the VSG60 into
-the BB60D (the pair [ntsc](ntsc.md) records at 17.6 frames a second with a
-video file at −9.5 dBm on RF 24) and into the N210 gave none. So that is
-the NTSC setup or apps, not the Ettus; try a video file and the level the
-note used before blaming either radio.
+A VSG60 control at −20 dBm decoded nothing either, but it arrived at −62
+dBFS, barely over the BB60D's −67 floor, so it proved nothing; at −9.5 dBm
+(the level [ntsc](ntsc.md) used) it decoded at once.
 
 ## Running the tests again
 
