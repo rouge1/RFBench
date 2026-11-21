@@ -46,7 +46,16 @@ from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
 # channel sits 6 MHz off DC with the sound carrier still inside the band.
 # The composite is decimated back to 10 MS/s before the decoder, which is
 # where the expensive work is.
-SAMPLE_RATES = {'hackrf': 20e6, 'usrp': 20e6, 'bb60': 20e6}
+# **25 on an Ettus N210.** Its 20 is a decimation of 5 from 100 MHz, odd,
+# which leaves the halfband filter off and the CIC rolling off toward the
+# band edge - where the channel sits, 3 to 9 MHz below the LO. Measured
+# against the BB60D on the same signal it tilted the channel about 12 dB,
+# the picture carrier down against colour and sound, and nothing synced
+# (knowledge/ettus.md). 25 is a decimation of 4, with the halfband on. The
+# decoder works at any rate, so the composite is simply 12.5 MS/s there, the
+# sound decimates by 125 to the same 200 kHz, and only the spectrum display
+# spans 12.5 MHz rather than the transmitter's 10.
+SAMPLE_RATES = {'hackrf': 20e6, 'usrp': 25e6, 'bb60': 20e6}
 COMPOSITE_DECIM = 2
 #: The spectrum display runs at the transmitter's own 10 MS/s, so that the
 #: two windows show the same span of the same channel at the same zoom.

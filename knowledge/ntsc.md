@@ -297,6 +297,8 @@ The radio runs at twice the picture's 10 MS/s - 20 MS/s - except on an
 Ettus N210, which takes 25 (`RADIO_RATE_RATIO`): its 20 is an odd
 interpolation that tilted the channel about 6 dB and left the receiver at
 0-2 frames a second - see [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
+The receiver likewise takes 25 MS/s from an N210, and its decoder then
+simply works on a 12.5 MS/s composite.
 
 **The RF architecture was already right and needed nothing.** Four other
 things were wrong, and each of them alone stopped it working:

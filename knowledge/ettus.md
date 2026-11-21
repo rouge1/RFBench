@@ -253,12 +253,19 @@ Then (no mid-run moves):
   −20 dBm it sat at MER 17.2 dB whatever the gain (9.5 or 28.5 dB) and every
   packet failed - but the BB60D read the same VSG60 at the same MER, 17.5,
   so that limit is the VSG60's path through the air here, not the N210.
-- **NTSC does not receive**: no sync at −29 and −38 dBFS (gain 50 % and
-  25 %), 0 overruns, while the VSG60's NTSC decodes on the BB60D at 17.9
-  frames a second. That is the N210's side; its receive at 20 MS/s is the
-  odd decimation of 5 that UHD warns of, the same rolloff that broke NTSC
-  transmit. Not fixed yet: the receiver decimates by 2 into a 10 MS/s
-  composite, so 25 MS/s needs a resampler.
+- **NTSC did not receive at 20 MS/s** - no sync at −29 and −38 dBFS (gain
+  50 % and 25 %), 0 overruns, while the VSG60's NTSC decoded on the BB60D.
+  The same signal captured on both and compared, each against its own
+  picture carrier: the N210 carried colour +9.9 dB, sound +11.9 dB and the
+  lower vestige −9.5 dB against the BB60D - about a 12 dB slope, worst
+  furthest from the LO, where the channel sits; the odd decimation of 5,
+  the rolloff that broke NTSC transmit, worse on receive. **Fixed: 25 MS/s
+  for a USRP** in `ntscReceiver`'s `SAMPLE_RATES` (a decimation of 4, the
+  halfband on). No resampler was needed after all: the decoder works at any
+  rate, so the composite is 12.5 MS/s there and the sound decimates by 125
+  to the same 200 kHz. Then **"Locked - picture decoding" for 40 s, 702
+  frames at 17.4-18.6 a second, 0 dropped, colour, 0 overruns**, and no
+  odd-decimation warning. The spectrum display spans 12.5 MHz on the N210.
 
 **The link carries 20 MS/s; the NTSC receiver did not keep up with it.**
 UHD's `benchmark_rate` received 20 MS/s for 20 s through worklaptop1's USB
@@ -347,8 +354,10 @@ on worklaptop1.
 - Receiving above 20 MS/s (20 MS/s is clean by `benchmark_rate`; about
   25 MS/s at 16-bit samples is the usual top for an N210), and transmitting
   at 20 MS/s with no app in the way.
-- An NTSC picture received on the N210 - its 20 MS/s receive, an odd
-  decimation, is the suspect, and the fix needs a resampler.
+- PPM-OOK still transmits, and FM video transmits and receives, at 20 MS/s
+  on the N210 - the odd ratio. FM video decodes and measures right both
+  ways (FM does not care about amplitude); PPM-OOK was judged by spectrum
+  only.
 - Antennas 1 and 3 again from the N210's new place. Antenna 2 from there
   (`n210_ota_test.sh`, the N210 local, corrected dBFS): 101.1 MHz −44.7,
   433.92 −56.2, 915 −36.3, 2440 −41.0 (one ADC overflow), RDS 99.5 % - not
