@@ -219,6 +219,26 @@ ignores amplitude.
 | FM video | VSG60 at 5800, −20 dBm | inconclusive: "no carrier" at −71 dBFS - too weak over the air at 5.8 GHz; 20 MS/s, no overruns |
 | NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, confounded: the receive dropped packets all through (`D`, and 3-4 `usrp_source` overflows a second) |
 
+**Receiving again, on the performance governor, VSG60 transmitting** (no
+mid-run moves): **FM video decodes on the N210** at −5 dBm - picture in
+colour, 13.5-14 frames a second, line rate within 6 ppm, deviation read
+7.89-7.90 MHz of 7.93 - though weak (CNR 3-4 dB, clicks), with 1 `O`/`D`.
+**ATSC and NTSC still overran** - 40 and 134 `O`/`D`, the NTSC receiver
+too starved to update its own status; ATSC found the pilot at MER 17.6 dB
+but did not decode. Both ran beside the VSG60's ATSC or NTSC *encoder* on
+the same 8 cores, and the ATSC receiver alone on the N210 (off air, RF 36)
+had 0 `O`/`D` even on powersave - so this is the two ends sharing
+worklaptop1, not the receivers. A receiver test needs the transmitter on
+another machine: the N210 on this laptop's Ethernet, say, with the VSG60
+left on worklaptop1.
+
+**Receiving at 20 MS/s also takes an odd decimation of 5**, and UHD says so
+for the NTSC and FM video receivers just as it does for the transmitters.
+FM video does not care; NTSC may, as its transmitter did - but its receiver
+decimates by 2 into a decoder built for a 10 MS/s composite, so 25 MS/s on
+receive needs a resampler, not a table entry. Prove it is the rolloff, with
+the receiver on a machine of its own, before changing it.
+
 **The link carries 20 MS/s; the NTSC receiver did not keep up with it.**
 UHD's `benchmark_rate` received 20 MS/s for 20 s through worklaptop1's USB
 Ethernet adapter with 0 dropped samples, 0 overruns and 0 sequence errors,
