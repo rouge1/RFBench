@@ -349,6 +349,9 @@ on worklaptop1.
   at 20 MS/s with no app in the way.
 - An NTSC picture received on the N210 - its 20 MS/s receive, an odd
   decimation, is the suspect, and the fix needs a resampler.
-- The antenna comparison again, now that the N210 sits on another machine.
+- Antennas 1 and 3 again from the N210's new place. Antenna 2 from there
+  (`n210_ota_test.sh`, the N210 local, corrected dBFS): 101.1 MHz −44.7,
+  433.92 −56.2, 915 −36.3, 2440 −41.0 (one ADC overflow), RDS 99.5 % - not
+  comparable with the table above, the geometry having changed.
 - Anything through a cable and pad, and any absolute level in dBm.
 - Whether the ±9.16 kHz spurs come from `tx_waveforms` or the radio.
