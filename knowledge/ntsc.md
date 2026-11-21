@@ -293,6 +293,11 @@ channel as System M: vestigial-sideband AM for the picture, an FM aural
 carrier 4.5 MHz above the visual one. `cf` is the channel *centre*, as in
 the ATSC apps, which puts the visual carrier 1.25 MHz above the lower edge.
 
+The radio runs at twice the picture's 10 MS/s - 20 MS/s - except on an
+Ettus N210, which takes 25 (`RADIO_RATE_RATIO`): its 20 is an odd
+interpolation that tilted the channel about 6 dB and left the receiver at
+0-2 frames a second - see [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
+
 **The RF architecture was already right and needed nothing.** Four other
 things were wrong, and each of them alone stopped it working:
 

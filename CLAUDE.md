@@ -92,7 +92,7 @@ fixed.
 | [ptt.md](knowledge/ptt.md) | `scripts/dmr_demod.py`, `scripts/dmr_fec.py`, `scripts/dmr_synth.py`, anything on push-to-talk radio: TETRA, P25, DMR, NXDN, dPMR, CTCSS/DCS, trunking, MCPTT, D-STAR, M17 | an index to one note per system, each drafted from the public ETSI, NXDN Forum, FCC and 3GPP documents (kept in `docs/ptt/`): modulation, burst and frame layouts, sync words, addressing, the push-to-talk call, FEC, encryption, how to decode, and what the documents did not give |
 | [media.md](knowledge/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
 | [radios.md](knowledge/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
-| [ettus.md](knowledge/ettus.md) | anything on the Ettus N210 or its antennas, running any app on it, `scripts/n210_ota_test.sh`, `scripts/app_pair.sh`, `scripts/app_tx_check.py`, `scripts/app_rx_check.py`, `scripts/spectrum_report.py`, `scripts/bb60_tone.py`, `scripts/vsg_tone.py` | the N210 and its UBX-40, RF1 and RF2, the host's socket buffers, its LO leak, spurs and frequency against the BB60D, three antennas compared over the air, every app run on it - which work, the ATSC apps' 12 MS/s that no N210 can make, NTSC transmit failing - and how to test an app on a radio over the air |
+| [ettus.md](knowledge/ettus.md) | anything on the Ettus N210 or its antennas, running any app on it, `scripts/n210_ota_test.sh`, `scripts/app_pair.sh`, `scripts/app_tx_check.py`, `scripts/app_rx_check.py`, `scripts/spectrum_report.py`, `scripts/bb60_tone.py`, `scripts/vsg_tone.py` | the N210 and its UBX-40, RF1 and RF2, the host's socket buffers, its LO leak, spurs and frequency against the BB60D, three antennas compared over the air, every app run on it - which work, the ATSC apps' 12 MS/s that no N210 can make and NTSC's 20 MS/s rolloff, both fixed, what receiving on it still lacks - and how to test an app on a radio over the air |
 | [signal-hound-specs.md](knowledge/signal-hound-specs.md) | choosing a sample rate, a bandwidth or a level on the VSG60A or BB60D | what the manufacturer's documents give for each - the 27 MHz and 40 MHz instantaneous bandwidths, flatness, levels that damage, timebases, the 10 MHz reference connectors - beside what has been measured here |
 | [signal-hound-calibration.md](knowledge/signal-hound-calibration.md) | trusting a level or frequency from the VSG60A or BB60D, temperature, recalibration | neither has a calibration source inside: factory tables per temperature, the BB60D recalibrating at open and on `bbInitiate` (2 °C), the one-year cycle and the lab it needs, and the 10 MHz adjustment's limited flash |
 | [ui.md](knowledge/ui.md) | `RFbenchToolkit.py`, `apps/theme.py`, the window and dialog code in `apps/utils.py`, `settings_dialog`, `apps/_run.py` | flip tiles, banks that collapse, Settings and the Ettus's one IP address, where windows come back and what their controls were left at, dialog layout, the themes (dark, light and walnut) and the disc that picks one, for launcher, dialogs and flowgraph windows, the fonts, the end-to-end GUI test, and running one app without the launcher |
@@ -195,6 +195,13 @@ damage something. Each links to the why.
   `scripts/test_theme.py` read them out of the launcher's source with
   `ast` rather than importing it.
   [ui](knowledge/ui.md#testing-the-launcher-end-to-end)
+- **An Ettus N210 runs only at 100 MHz over a whole number** (25, 20,
+  12.5, 10 MS/s ...), and asked for anything else it takes the nearest
+  without an error: ATSC's 12 MS/s became 12.5 and went out 4.17 % fast,
+  undecodable. An odd ratio (20 MS/s is 5) turns its halfband filter off and
+  tilts the band edges - NTSC's picture broke on it. Read the rate back
+  after setting it, and keep the ratio even.
+  [ettus](knowledge/ettus.md#every-app-on-the-n210-2026-11-21)
 - **Anything run on TVAdemo gets a `timeout -k`**, and a transmitter and
   its receiver are started as two separate commands. A plain `timeout`
   only sends `SIGTERM`, and never ends a process that ignores it.

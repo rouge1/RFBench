@@ -165,14 +165,16 @@ SoapySDR module refuses 12.5, and for the VSG60); the receiver's
   the program list read). **A clean decode on the N210 is not shown yet**:
   with the VSG60's ATSC encoder and the N210 receiver both on worklaptop1,
   the receiver overran (31 `O`/`D`, `usrp_source` overflows every second)
-  and MER sat at 14.5-17.7 dB. worklaptop1 was on the powersave governor
-  with every C-state on, as it is after any reboot; try again with the
-  performance governor, or the transmitter on another machine.
+  and MER sat at 14.5-17.7 dB. On the performance governor it did the same
+  (23-40 `O`/`D`, MER 17.0-17.7), with the VSG60's ATSC transmitter on 3.4
+  cores, the receiver on 3.1 and worklaptop1 83 % busy. So the cause is not
+  separated: two heavy apps on one 8-core machine, or one stage of the
+  receiver that cannot keep up at 12.5 MS/s - the off-air run alone had no
+  overruns, but it found no pilot then, so its decoder sat idle.
 
 **The ATSC transmitter also underran** - 4 to 20 `U` in the first 20 s of
 each run, against none from the 2-10 MS/s apps. After the rate fix: 10 in
-one run and 0 in the next, so not gone; the encoder on worklaptop1's
-powersave governor is the likelier cause now. The NTSC and FM video
+one run and 0 in every one since, cause unknown. The NTSC and FM video
 transmitters' few `U` (1-6) came only at start-up.
 
 **NTSC transmit was wrong on the Ettus side - fixed, see below.** The same
@@ -198,13 +200,16 @@ At 25 the colour and sound carriers came within 1.4 dB of the VSG60's, and
 `ntscReceiver` on the BB60D held **"Locked - picture decoding" for 40 s,
 696 frames at 16-18 a second, 0 dropped, colour**, with 2 `U`.
 
-Two things learned on the way. **25 MS/s needs worklaptop1 on the
-performance governor**: run at 25 on powersave this app's chain underran
-about 1.9 million times in a run (`sudo cpupower idle-set -D 2 && sudo
-cpupower frequency-set -g performance`, undone by any reboot). And **the
-NTSC receiver does not recover from a hop**: moving the transmitter 100 kHz
-and back for a moment left it at "picture, but only 0 frames a second" for
-the rest of the run - which is why `app_pair.sh` has `TX_NO_CALLBACKS=1`.
+It needs no change to the host: on the powersave governor, 25 MS/s with
+no mid-run moves underran twice in a run and decoded the same. (Some runs
+underran about 1.9 million times; that was `app_tx_check.py` restoring the
+sample rate with the radio's rate, so the app asked for 62.5 MS/s - fixed,
+and not the governor, as was first written here.) **Something does not
+recover from the mid-run moves**: changing power, moving the transmitter
+100 kHz and back, and setting the sample rate again on the streaming N210
+left the receiver at "picture, but only 0 frames a second" for the rest of
+the run. Whether the transmitter or the receiver stayed broken is not
+separated - which is why `app_pair.sh` has `TX_NO_CALLBACKS=1`.
 FM video and PPM-OOK also transmit at 20 MS/s on the N210 and got the same
 UHD warning; FM video decoded and measured right regardless, since FM
 ignores amplitude.
@@ -216,21 +221,18 @@ ignores amplitude.
 | RDS | 98.7 WMZQ off air | ✅ **100 % blocks good**, PI, PS, PTY, RadioText, stereo pilot; 2 MS/s on RX2 |
 | **ATSC** | RF 36 (605 MHz) off air | ❌ **radio at 12.5 MS/s, app at 12: "pilot not found"** (fixed - pilot found; see above) at −40 dBFS. The BB60D beside it found the pilot (+196 Hz, 38 dB clear) but could not decode - the station is weak here |
 | ISM | VSG60 Nexus-TH at 433.92 | ✅ every burst decoded, 30-32 dB SNR; tunes 300 kHz low on purpose |
-| FM video | VSG60 at 5800, −20 dBm | inconclusive: "no carrier" at −71 dBFS - too weak over the air at 5.8 GHz; 20 MS/s, no overruns |
+| FM video | VSG60 at 5800 | ✅ at −5 dBm: picture, colour, 13.5-14 frames/s, deviation read right - weak, CNR 3-4 dB (at −20 dBm: "no carrier") |
 | NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, confounded: the receive dropped packets all through (`D`, and 3-4 `usrp_source` overflows a second) |
 
-**Receiving again, on the performance governor, VSG60 transmitting** (no
-mid-run moves): **FM video decodes on the N210** at −5 dBm - picture in
+**Receiving again, VSG60 transmitting** (performance governor, no mid-run
+moves): **FM video decodes on the N210** at −5 dBm - picture in
 colour, 13.5-14 frames a second, line rate within 6 ppm, deviation read
 7.89-7.90 MHz of 7.93 - though weak (CNR 3-4 dB, clicks), with 1 `O`/`D`.
 **ATSC and NTSC still overran** - 40 and 134 `O`/`D`, the NTSC receiver
 too starved to update its own status; ATSC found the pilot at MER 17.6 dB
 but did not decode. Both ran beside the VSG60's ATSC or NTSC *encoder* on
-the same 8 cores, and the ATSC receiver alone on the N210 (off air, RF 36)
-had 0 `O`/`D` even on powersave - so this is the two ends sharing
-worklaptop1, not the receivers. A receiver test needs the transmitter on
-another machine: the N210 on this laptop's Ethernet, say, with the VSG60
-left on worklaptop1.
+the same 8 cores; whether that, or a receiver stage too slow at its rate,
+is the cause is not separated (above).
 
 **Receiving at 20 MS/s also takes an odd decimation of 5**, and UHD says so
 for the NTSC and FM video receivers just as it does for the transmitters.
@@ -302,7 +304,9 @@ on worklaptop1.
 - Receiving above 20 MS/s (20 MS/s is clean by `benchmark_rate`; about
   25 MS/s at 16-bit samples is the usual top for an N210), and transmitting
   at 20 MS/s with no app in the way.
-- Why NTSC transmit fails on the N210, and the FM video receiver on the
-  N210 against a signal strong enough to judge.
+- A clean ATSC decode, and an NTSC picture, received *on* the N210 - with
+  the transmitter on another machine, or a receiver stage found too slow.
+- Whether the NTSC receiver at 20 MS/s (an odd decimation) suffers the
+  rolloff its transmitter did.
 - Anything through a cable and pad, and any absolute level in dBm.
 - Whether the ±9.16 kHz spurs come from `tx_waveforms` or the radio.

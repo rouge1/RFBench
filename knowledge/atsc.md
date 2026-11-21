@@ -23,6 +23,10 @@ fixing. Three other things did:
   sample on the one radio most likely to be attached. The second resampler is
   8/19 rather than 25/57 now, which lands on exactly 12.000000 MS/s from the
   same 28.5 MS/s intermediate stage and still carries the 6 MHz channel.
+  **But not on an Ettus N210**, which cannot make 12 and quietly gave 12.5,
+  so everything went out 4.17 % fast: the transmitter and the receiver both
+  take 12.5 for a USRP now (`RADIO_RATES`, `SAMPLE_RATES`) - see
+  [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
 - **It clipped.** 8VSB is noise-like: measured 8.7 dB peak-to-average, and the
   chain came out at 1.007 peak against radios that take 1.0 as I/Q full scale,
   so the loudest samples were flattened before the signal left the box - worse
