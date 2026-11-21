@@ -45,7 +45,10 @@ from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
 # SoapyHackRF takes whole megahertz only, and the BB60D's ladder is
 # 40/20/10/5/2.5. The receive filter is an arbitrary resampler, so any of
 # them reaches the 10.762237 MS/s symbol clock exactly.
-SAMPLE_RATES = {'hackrf': 12e6, 'usrp': 12e6, 'bb60': 10e6}
+# An Ettus N210 makes only 100 MHz over a whole number: asked for 12 it gives
+# 12.5 without an error, and a receiver that believed 12 put the pilot 112 kHz
+# from where it was and never found it (knowledge/ettus.md). So 12.5 for it.
+SAMPLE_RATES = {'hackrf': 12e6, 'usrp': 12.5e6, 'bb60': 10e6}
 # Samples per symbol into the demodulator. This one number sets how much
 # work the receiver does: the arbitrary resampler that carries the radio's
 # rate to the symbol clock *is* the bottleneck - measured, everything from

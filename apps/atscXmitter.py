@@ -53,6 +53,19 @@ from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
 # last set, and the receiver opens on the same one.
 DEFAULT_CHANNEL = 24            # 533 MHz
 
+# The radio's sample rate, and the second resampler stage that reaches it
+# from 28.5 MS/s, for each radio. No one rate suits them all: SoapyHackRF
+# takes only whole megahertz from 1 to 20 and refuses 12.5 outright, and an
+# Ettus N210 makes only 100 MHz over a whole number (25, 20, 12.5, 10 ...) -
+# asked for 12 it quietly gives 12.5, so the whole signal went out 4.17 %
+# fast, the pilot 112 kHz off where A/53 puts it, and no receiver locked
+# (knowledge/ettus.md). The VSG60 takes either; it keeps 12.
+RADIO_RATES = {                 # radio: (sample rate, interpolation, decimation)
+    'hackrf': (12e6, 8, 19),
+    'vsg': (12e6, 8, 19),
+    'usrp': (12.5e6, 25, 57),
+}
+
 # Baseband amplitude out of the modulator, before the radio's own level
 # control. See the note where it is applied: 8VSB peaks ~8.7 dB above its rms,
 # and the radios take 1.0 as I/Q full scale.
@@ -338,12 +351,10 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
         self.rfPwrDefault = rfPwrDefault = pwr
         self.cfDefault = cfDefault = cf
         self.atscFileName = atscFileName = self.video_file
-        # 12 MS/s, not the 12.5 this once used: SoapyHackRF accepts only whole
-        # megahertz between 1 and 20 and rejects anything else outright, so on
-        # a HackRF the app died in the constructor with "Unsupported sample
-        # rate" and could never transmit at all. 12 MS/s carries the 6 MHz
-        # channel just as well and every backend here takes it.
-        self.samp_rate = samp_rate = 12e6
+        # Per radio - see RADIO_RATES. Both carry the 6 MHz channel.
+        samp_rate, rate_interp, rate_decim = RADIO_RATES.get(
+            radio_type, RADIO_RATES['hackrf'])
+        self.samp_rate = samp_rate
         self.rfPwr = rfPwr = rfPwrDefault
         self.pilot_freq = pilot_freq = (6000000.0 - (symbol_rate / 2)) / 2
         self.outputIpAddr = outputIpAddr = ipXmitAddr
@@ -395,11 +406,11 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
             self.radio_sink.set_gain(0, 'VGA', scale_power(rfPwr, self._power_range))
             self.radio_sink.set_gain(0, 'AMP', 0)
         # The first stage takes the 10.762237 MS/s symbol stream to exactly
-        # 28.5 MS/s (x143/54); this one brings that to the radio rate. 8/19
-        # lands on 12 MS/s exactly, where 25/57 landed on 12.5.
+        # 28.5 MS/s (x143/54); this one brings that to the radio rate: 8/19
+        # lands on 12 MS/s exactly, 25/57 on 12.5 (RADIO_RATES).
         self.rational_resampler_xxx_1 = filter.rational_resampler_ccc(
-                interpolation=8,
-                decimation=19,
+                interpolation=rate_interp,
+                decimation=rate_decim,
                 taps=[],
                 fractional_bw=0)
         self.rational_resampler_xxx_0 = filter.rational_resampler_ccc(

@@ -137,7 +137,7 @@ read back too. Transmitters at 915 MHz (FM video 5800), 10 % (UBX gain 3 dB).
 | FM audio | ✅ | 204 kHz wide for its 100 kHz deviation |
 | Subcarrier | ✅ | carrier and the 20 kHz subcarrier |
 | FM + RDS | ✅ | **`rdsReceiver` on the BB60D: 99 % blocks good**, PS, RadioText, Now Playing, stereo pilot |
-| **ATSC** | ❌ **12 MS/s asked, 12.5 given** | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
+| **ATSC** | ❌ **12 MS/s asked, 12.5 given** (fixed - below) | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
 | **NTSC** | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; **but `ntscReceiver` on the BB60D: "picture, but only 0-2 frames a second"**, where the VSG60 decodes 17.9 - below |
 | ISM | ✅ LO 400 kHz low on purpose | **`ismReceiver` on the BB60D: every burst decoded**, Nexus-TH 19.0 °C 71 % as sent (at 433.92 MHz) |
 | FM video | ✅ 20 MS/s at 5.8 GHz | **`fmVideoReceiver` on the BB60D: picture, 17.4-18.1 frames/s**, colour, line rate within 3 ppm, deviation read 7.87-7.94 MHz of 7.93 set - below FM threshold at 10 % (CNR 1-11 dB), so clicks |
@@ -148,12 +148,31 @@ not one; UHD takes 12.5 without an error. Everything the transmitter sends
 plays 4.17 % fast, and the receiver, told 12, misreads a real 12.5. The
 pilot landed exactly where that predicts. Both apps ask for 12 MS/s for a
 USRP (`SAMPLE_RATES` in `atscReceiver`, `samp_rate` in `atscXmitter`); 10
-or 12.5 would be an N210 rate. Not changed yet.
+or 12.5 would be an N210 rate.
+
+**Fixed the same day: 12.5 MS/s for a USRP in both.** The transmitter takes
+its rate and its second resampler stage per radio from `RADIO_RATES`
+(28.5 MS/s × 25/57 = 12.5 for the N210, × 8/19 = 12 for the HackRF, whose
+SoapySDR module refuses 12.5, and for the VSG60); the receiver's
+`SAMPLE_RATES` gives `usrp` 12.5. Then, on the air:
+
+- **N210 transmitting**: pilot at −2690.73 kHz, 5.51 MHz wide, and
+  `atscReceiver` on the BB60D **"Locked - clean stream", MER 22.6-23.3 dB,
+  19.45 Mbps, 0 bad packets of 6408**, both programs' streams listed.
+- **N210 receiving**: radio and app agree at 12.5 MS/s, and the pilot is
+  found where it was not - RF 36 off air (+300 Hz, 41 dB clear; too weak
+  here to decode, as on the BB60D) and the VSG60 at 915 MHz (+493-550 Hz,
+  the program list read). **A clean decode on the N210 is not shown yet**:
+  with the VSG60's ATSC encoder and the N210 receiver both on worklaptop1,
+  the receiver overran (31 `O`/`D`, `usrp_source` overflows every second)
+  and MER sat at 14.5-17.7 dB. worklaptop1 was on the powersave governor
+  with every C-state on, as it is after any reboot; try again with the
+  performance governor, or the transmitter on another machine.
 
 **The ATSC transmitter also underran** - 4 to 20 `U` in the first 20 s of
-each run, against none from the 2-10 MS/s apps. Not separated from the rate
-fault: a radio draining 4.17 % faster than the app paces itself would
-underrun just so. Look again once the rate is fixed. The NTSC and FM video
+each run, against none from the 2-10 MS/s apps. After the rate fix: 10 in
+one run and 0 in the next, so not gone; the encoder on worklaptop1's
+powersave governor is the likelier cause now. The NTSC and FM video
 transmitters' few `U` (1-6) came only at start-up.
 
 **NTSC transmit is wrong on the Ettus side, cause not found.** The same
@@ -174,7 +193,7 @@ transmitter's channel side by side, compared for flatness, and the app at
 | App | Signal | Result |
 |---|---|---|
 | RDS | 98.7 WMZQ off air | ✅ **100 % blocks good**, PI, PS, PTY, RadioText, stereo pilot; 2 MS/s on RX2 |
-| **ATSC** | RF 36 (605 MHz) off air | ❌ **radio at 12.5 MS/s, app at 12: "pilot not found"** at −40 dBFS. The BB60D beside it found the pilot (+196 Hz, 38 dB clear) but could not decode - the station is weak here |
+| **ATSC** | RF 36 (605 MHz) off air | ❌ **radio at 12.5 MS/s, app at 12: "pilot not found"** (fixed - pilot found; see above) at −40 dBFS. The BB60D beside it found the pilot (+196 Hz, 38 dB clear) but could not decode - the station is weak here |
 | ISM | VSG60 Nexus-TH at 433.92 | ✅ every burst decoded, 30-32 dB SNR; tunes 300 kHz low on purpose |
 | FM video | VSG60 at 5800, −20 dBm | inconclusive: "no carrier" at −71 dBFS - too weak over the air at 5.8 GHz; 20 MS/s, no overruns |
 | NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, confounded: the receive dropped packets all through (`D`, and 3-4 `usrp_source` overflows a second) |
