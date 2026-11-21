@@ -192,8 +192,8 @@ dBFS, barely over the BB60D's −67 floor, so it proved nothing; at −9.5 dBm
 
 ## Running the tests again
 
-All four are in `scripts/`. None writes `config/`, and each transmitter runs
-under `timeout -k`.
+All in `scripts/`. None writes `config/`, none closes an app's window, and
+each transmitter runs under `timeout -k`.
 
 ```sh
 # The whole antenna test: four tones, then a minute of RDS. The N210 is driven
@@ -205,6 +205,33 @@ python scripts/vsg_tone.py 915e6 -40 12         # on the VSG60's machine: a tone
 python scripts/rds_tau_sweep.py CAPTURE         # RDS from a capture, at every timing
 ```
 
+The app tests above. `app_pair.sh` runs one transmitter app on TX_HOST - on
+the N210, or the VSG60 as a known-good control - and judges it by a receiver
+app on the BB60D, by a receiver app on the N210, or by a BB60D spectrum:
+
+```sh
+export TX_HOST=worklaptop1-fast USRP_ADDR=<the N210's address>
+scripts/app_pair.sh usrp fmRdsTransmitter frequency_mhz 915 power_percent 10 \
+    bb60 rdsReceiver frequency_mhz 915 40 30           # decoded on the BB60D
+scripts/app_pair.sh usrp atscXmitter cf 915 pwr 10 \
+    spectrum - - 915 20e6 0.5                          # pilot, width, peaks
+scripts/app_pair.sh vsg ismXmitter cf 433.92 pwr -30dBm \
+    usrp ismReceiver frequency_mhz 433.92 50 30 -- interval_s=5   # VSG60 into the N210
+```
+
+Underneath it, each runnable alone on the radio's own machine:
+`app_tx_check.py` (one transmitter app: values from its own dialog,
+frequency and power set and confirmed before anything goes out, the radio
+read back, the callbacks moved), `app_rx_check.py` (one receiver app,
+headless, printing its window's status every 5 s) and `spectrum_report.py`
+(width, centre, peaks and envelope of a `bb60_tone.py --out` capture). The
+frequency and power keys differ per app: `cf` (MHz) everywhere but the
+FM + RDS Transmitter's `frequency_mhz`; `pwr`, `rfPwr` (PPM-OOK, FM audio,
+subcarrier) or `power_percent`. Receivers take `frequency_mhz` (RDS, ISM)
+or `center_mhz` (ATSC, NTSC, FM video). Run the transmitters at 10 % here:
+at 0 dB of attenuation the BB60D a metre away overflows, so the spectrum
+captures take 20.
+
 `uhd_find_devices` on TX_HOST gives the N210's address. Tell any other
 session using the N210 or the BB60D before starting; the VSG60 and the BB60D
 cannot stream on one host at the same time, which is why the transmitters run
@@ -212,8 +239,10 @@ on worklaptop1.
 
 ## Not tested yet
 
-- **Receiving on the N210**, and so whether it overruns (`O` or `D`) at any rate.
-- Its highest sample rate over the gigabit link (about 25 MS/s at 16-bit
-  samples is the usual figure for an N210; not measured here).
+- Receiving above 20 MS/s (20 MS/s is clean by `benchmark_rate`; about
+  25 MS/s at 16-bit samples is the usual top for an N210), and transmitting
+  at 20 MS/s with no app in the way.
+- Why NTSC transmit fails on the N210, and the FM video receiver on the
+  N210 against a signal strong enough to judge.
 - Anything through a cable and pad, and any absolute level in dBm.
 - Whether the ±9.16 kHz spurs come from `tx_waveforms` or the radio.
