@@ -110,6 +110,74 @@ the skinny-fm-receiver repository, `knowledge/signal-hound-calibration.md`,
 <https://github.com/rouge1/skinny-fm-receiver/blob/main/knowledge/signal-hound-calibration.md#no-blind-spot-at-the-bb60ds-centre-2026-11-21> It is not dBm, and nothing here measured antenna
 gain.
 
+## Every app on the N210 (2026-11-21)
+
+The first time the apps were run on the Ettus: antenna 2 on RF1 (TX/RX),
+a second antenna 2 on RF2 (RX2), the BB60D and the VSG60 on antennas.
+RF1 and RF2 on the front panel are TX/RX and RX2. **Every transmitter
+transmits on TX/RX and every receiver listens on RX2**, set in each app's
+usrp branch - so a receiver needs an antenna on RF2 of its own.
+
+Each app was built from its own dialog with Settings patched to `usrp`,
+frequency and power set explicitly (the saved dialogs held 50-87 % power on
+300 and 533 MHz), and the radio read back after `main()`: frequency, gain,
+sample rate, antenna. Its power and frequency callbacks were then moved and
+read back too. Transmitters at 915 MHz (FM video 5800), 10 % (UBX gain 3 dB).
+
+### Transmitters
+
+| App | On the N210 | Over the air into the BB60D |
+|---|---|---|
+| AM sine | ✅ LO 330 kHz low on purpose | carrier and 1 kHz sidebands at 915.000; LO leak −43 dBc at −330 kHz |
+| ASK | ✅ | 1.6 MHz wide, centred - it runs unfiltered |
+| FSK | ✅ | tones at ±50 kHz, 214 kHz wide |
+| PSK | ✅ (1 `U`) | 110 kHz wide, centred |
+| PPM-OOK | ✅ 20 MS/s (2 `U`) | 5.2 MHz pulses on a 40 kHz comb |
+| AM audio | ✅ | follows the programme |
+| FM audio | ✅ | 204 kHz wide for its 100 kHz deviation |
+| Subcarrier | ✅ | carrier and the 20 kHz subcarrier |
+| FM + RDS | ✅ | **`rdsReceiver` on the BB60D: 99 % blocks good**, PS, RadioText, Now Playing, stereo pilot |
+| **ATSC** | ❌ **12 MS/s asked, 12.5 given** | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
+| NTSC | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; receiver result inconclusive, below |
+| ISM | ✅ LO 400 kHz low on purpose | **`ismReceiver` on the BB60D: every burst decoded**, Nexus-TH 19.0 °C 71 % as sent (at 433.92 MHz) |
+| FM video | ✅ 20 MS/s at 5.8 GHz | **`fmVideoReceiver` on the BB60D: picture, 17.4-18.1 frames/s**, colour, line rate within 3 ppm, deviation read 7.87-7.94 MHz of 7.93 set - below FM threshold at 10 % (CNR 1-11 dB), so clicks |
+
+**The ATSC apps cannot run on an N210 as written.** Its sample rates are
+100 MHz over a whole number - 25, 20, 12.5, 10, 5, 2 MS/s - and 12 is
+not one; UHD takes 12.5 without an error. Everything the transmitter sends
+plays 4.17 % fast, and the receiver, told 12, misreads a real 12.5. The
+pilot landed exactly where that predicts. Both apps ask for 12 MS/s for a
+USRP (`SAMPLE_RATES` in `atscReceiver`, `samp_rate` in `atscXmitter`); 10
+or 12.5 would be an N210 rate. Not changed yet.
+
+**The ATSC transmitter also underran through the run** - 4 to 20 `U` in
+the first 20 s of each, against none from the 2-10 MS/s apps - so its
+encoder may not keep up in real time on worklaptop1 either. The NTSC and
+FM video transmitters' few `U` came only at start-up.
+
+### Receivers on the N210
+
+| App | Signal | Result |
+|---|---|---|
+| RDS | 98.7 WMZQ off air | ✅ **100 % blocks good**, PI, PS, PTY, RadioText, stereo pilot; 2 MS/s on RX2 |
+| **ATSC** | RF 36 (605 MHz) off air | ❌ **radio at 12.5 MS/s, app at 12: "pilot not found"** at −40 dBFS. The BB60D beside it found the pilot (+196 Hz, 38 dB clear) but could not decode - the station is weak here |
+| ISM | VSG60 Nexus-TH at 433.92 | ✅ every burst decoded, 30-32 dB SNR; tunes 300 kHz low on purpose |
+| FM video | VSG60 at 5800, −20 dBm | inconclusive: "no carrier" at −71 dBFS - too weak over the air at 5.8 GHz; 20 MS/s, no overruns |
+| NTSC | VSG60 at 915, −20 dBm | ❌ no sync at −36 to −46 dBFS, **and 20 MS/s receive dropped packets all through**: `D` and 3-4 `usrp_source` overflows a second |
+
+**20 MS/s receive is at the edge** through worklaptop1's USB Ethernet
+adapter: the NTSC receiver lost packets throughout, the FM video receiver
+at the same rate did not. 80 MB/s of samples is most of what such an
+adapter carries. A built-in gigabit port, or 10-12.5 MS/s where the app
+allows it, is the thing to try.
+
+**NTSC did not decode in any pairing with the test pattern** - N210 into
+the BB60D gave "picture, but only 0-2 frames a second", and the VSG60 into
+the BB60D (the pair [ntsc](ntsc.md) records at 17.6 frames a second with a
+video file at −9.5 dBm on RF 24) and into the N210 gave none. So that is
+the NTSC setup or apps, not the Ettus; try a video file and the level the
+note used before blaming either radio.
+
 ## Running the tests again
 
 All four are in `scripts/`. None writes `config/`, and each transmitter runs
