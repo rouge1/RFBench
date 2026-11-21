@@ -48,6 +48,9 @@ type and clock time.
   not separate the two.)
   For a clean FM-band result, give the BB60D an FM antenna or a cable with
   30-40 dB of pad; do not turn the power up in the broadcast band.
+  Later that day a better antenna on the N210 alone was enough: 99.5% and
+  99.8% at 101.1 MHz on two others, at the same settings - the three
+  compared in [ettus](ettus.md#the-antennas-three-compared).
 - **Near the FM threshold the result depends on the timing picked at start-up**:
   runs with identical settings decoded 71% and 83%. `RdsDemod` picks `tau`
   once from the first 1800 bits and keeps it. On a weak signal several
@@ -55,6 +58,10 @@ type and clock time.
   one. Offline, a pick with 91% good blocks had lost sync for a fifth of
   the capture - read blocks seen beside blocks good, never the percentage
   alone. On a strong signal it does not matter: 915 MHz decoded 100%.
+  The link itself also moved under the pick: the first 5 s of that 20 s
+  capture decode 98.6% (receiver's own pick) and 99.5% at the best `tau`,
+  the whole 20 s about 82% at best. `scripts/rds_tau_sweep.py CAPTURE`
+  repeats the whole-capture sweep, with blocks seen beside blocks good.
 - **The clock comes through off air**, sent by the transmitter and shown by
   the receiver: first displayed 151 s after tuning in (it is believed only
   once two 4A groups agree), and it turned over to the new minute within a
@@ -90,6 +97,7 @@ python scripts/test_rds_core.py <capture>   # capture path without .cfile
 python scripts/test_rds_radiotext.py        # RadioText changes - no radio, no capture
 python scripts/test_rds_clock.py            # clock time, received and sent - no radio
 python scripts/test_rds_pilot.py            # the stereo indicator against noise - no radio
+python scripts/rds_tau_sweep.py <capture>   # every symbol timing, blocks seen and good - no radio
 ```
 
 `RdsDemod` mixes the MPX down by the 57 kHz subcarrier and integrates each
