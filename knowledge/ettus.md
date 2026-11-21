@@ -12,7 +12,7 @@ the three antennas tried on it compare. Everything below was measured on
 | Motherboard | USRP N210 r4, FPGA 11.1 - `uhd_find_devices` calls it `type: usrp2` |
 | Daughterboard | UBX-40 v2, rev 7, RX and TX: 10-6000 MHz, PGA0 gain 0-31.5 dB in 0.5 dB steps |
 | Antenna ports | TX/RX (transmit and receive), RX2 (receive only), CAL |
-| Link | gigabit Ethernet, through a USB Ethernet adapter on worklaptop1 - not USB |
+| Link | gigabit Ethernet through a USB Ethernet adapter - not USB. On worklaptop1 until 2026-11-21, then moved to the BB60D's machine with its adapter, under a NetworkManager profile of its own (manual IPv4, IPv6 off) |
 | Host software | UHD 4.8.0, the conda `gnu` environment |
 
 `apps/utils.py`'s USRP power range falls back to 0-31.5 dB, which is this
@@ -241,6 +241,25 @@ decimates by 2 into a decoder built for a 10 MS/s composite, so 25 MS/s on
 receive needs a resampler, not a table entry. Prove it is the rolloff, with
 the receiver on a machine of its own, before changing it.
 
+**With the two ends on separate machines** - the N210 moved to the BB60D's
+machine, the VSG60 left on worklaptop1 - every receiver ran with **0
+`O`/`D`**, so the earlier overruns were the two apps sharing worklaptop1.
+Then (no mid-run moves):
+
+- **FM video receives well**: 18 frames a second in colour, CNR 18.7 dB,
+  1.3 clicks a frame, deviation read 7.88-7.92 MHz of 7.93.
+- **ATSC receives clean**: from the VSG60 at −9.5 dBm, "Locked - clean
+  stream", MER 20 dB, 0 bad packets of 6900, both programs listed. At
+  −20 dBm it sat at MER 17.2 dB whatever the gain (9.5 or 28.5 dB) and every
+  packet failed - but the BB60D read the same VSG60 at the same MER, 17.5,
+  so that limit is the VSG60's path through the air here, not the N210.
+- **NTSC does not receive**: no sync at −29 and −38 dBFS (gain 50 % and
+  25 %), 0 overruns, while the VSG60's NTSC decodes on the BB60D at 17.9
+  frames a second. That is the N210's side; its receive at 20 MS/s is the
+  odd decimation of 5 that UHD warns of, the same rolloff that broke NTSC
+  transmit. Not fixed yet: the receiver decimates by 2 into a 10 MS/s
+  composite, so 25 MS/s needs a resampler.
+
 **The link carries 20 MS/s; the NTSC receiver did not keep up with it.**
 UHD's `benchmark_rate` received 20 MS/s for 20 s through worklaptop1's USB
 Ethernet adapter with 0 dropped samples, 0 overruns and 0 sequence errors,
@@ -252,6 +271,29 @@ A VSG60 control at −20 dBm decoded nothing either, but it arrived at −62
 dBFS, barely over the BB60D's −67 floor, so it proved nothing; at −9.5 dBm
 (the level [ntsc](ntsc.md) used) it decoded at once.
 
+## RF1 into RF2 on the one radio
+
+The N210 transmits on RF1 and receives on RF2 at once, but only from **one
+process** - whichever opens it owns it - so two apps, a transmitter and its
+receiver, cannot share it. UHD's `txrx_loopback_to_file` does both in one:
+
+```sh
+$CONDA_PREFIX/lib/uhd/examples/txrx_loopback_to_file \
+    --tx-args addr=<N210> --rx-args addr=<N210> --tx-freq 915e6 --rx-freq 915e6 \
+    --tx-rate 1e6 --rx-rate 1e6 --tx-gain 0 --rx-gain 0 --tx-ant TX/RX --rx-ant RX2 \
+    --wave-type SINE --wave-freq 100e3 --ampl 0.3 --type float --nsamps 2000000 \
+    --file loop.cf32
+python scripts/spectrum_report.py loop.cf32 1e6 915e6
+```
+
+With antenna 2 on each port, centimetres apart, gain 0 both ways: the tone
+at +100.0 kHz, **−14.0 dBFS** - strong; leave the gains low - its mirror at
+−100 kHz −46 dBc (receive I/Q imbalance), spurs at ±9.16 and ±18.3 kHz
+−46 dBc, the same ones `tx_waveforms` shows, which this tool's tone shares
+(so the wave table, more likely than not), and no leak at centre in the top
+peaks - transmit and receive share the frequency, so the leak lands at DC
+where the receiver's own DC correction takes it.
+
 ## Running the tests again
 
 All in `scripts/`. None writes `config/`, none closes an app's window, and
@@ -260,7 +302,7 @@ each transmitter runs under `timeout -k`.
 ```sh
 # The whole antenna test: four tones, then a minute of RDS. The N210 is driven
 # over ssh from TX_HOST, the machine on its Ethernet link; the BB60D is local.
-TX_HOST=worklaptop1-fast USRP_ADDR=<the N210's address> scripts/n210_ota_test.sh ant2
+USRP_ADDR=<the N210's address> scripts/n210_ota_test.sh ant2   # N210_HOST=... if not local
 
 python scripts/bb60_tone.py 915e6 --wait 4      # one BB60D capture; peaks in dBFS
 python scripts/vsg_tone.py 915e6 -40 12         # on the VSG60's machine: a tone, 12 s
@@ -272,7 +314,8 @@ the N210, or the VSG60 as a known-good control - and judges it by a receiver
 app on the BB60D, by a receiver app on the N210, or by a BB60D spectrum:
 
 ```sh
-export TX_HOST=worklaptop1-fast USRP_ADDR=<the N210's address>
+export TX_HOST=worklaptop1-fast USRP_ADDR=<the N210's address>   # TX_HOST: the VSG60
+# N210_HOST: where the N210 is - 'local' (the default) or an ssh alias
 scripts/app_pair.sh usrp fmRdsTransmitter frequency_mhz 915 power_percent 10 \
     bb60 rdsReceiver frequency_mhz 915 40 30           # decoded on the BB60D
 scripts/app_pair.sh usrp atscXmitter cf 915 pwr 10 \
@@ -304,9 +347,8 @@ on worklaptop1.
 - Receiving above 20 MS/s (20 MS/s is clean by `benchmark_rate`; about
   25 MS/s at 16-bit samples is the usual top for an N210), and transmitting
   at 20 MS/s with no app in the way.
-- A clean ATSC decode, and an NTSC picture, received *on* the N210 - with
-  the transmitter on another machine, or a receiver stage found too slow.
-- Whether the NTSC receiver at 20 MS/s (an odd decimation) suffers the
-  rolloff its transmitter did.
+- An NTSC picture received on the N210 - its 20 MS/s receive, an odd
+  decimation, is the suspect, and the fix needs a resampler.
+- The antenna comparison again, now that the N210 sits on another machine.
 - Anything through a cable and pad, and any absolute level in dBm.
 - Whether the ±9.16 kHz spurs come from `tx_waveforms` or the radio.
