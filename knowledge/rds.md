@@ -27,6 +27,38 @@ type and clock time.
   everything *except* the station you want. 80% blocks good is usable but
   well short of the 96–99% a HackRF gets — the antenna on it is set up for
   UHF television, not the FM band.
+- **That ceiling is the antenna, measured** (2026-11-21). The FM + RDS
+  Transmitter ran on the Ettus N210 (UBX-40) over the air into this
+  receiver on the BB60D at 60%, with nothing changed between runs but the
+  frequency:
+
+  | | 101.1 MHz | 915 MHz |
+  |---|---|---|
+  | blocks good | 71–83% (two live runs and a capture) | **100.0%** (5392/5392) |
+  | carrier | −65.8 dBFS | −37.0 dBFS |
+  | carrier to noise, 200 kHz | ~12 dB | ~50 dB |
+
+  At 101.1 the signal sits at the FM threshold, and after the discriminator
+  the RDS band stands only about 1 dB over the noise beside it. Ruled out on
+  the way: the code (`test_rds_loopback.py` decodes 100%, clock included),
+  and the symbol timing - a 20 s capture at 101.1, decoded offline with each
+  of the 16 `tau` values forced, never got more than 747 of the ~913 blocks
+  sent, about 82%. (A first run at 10% transmit power and 75% receive gain
+  gave 75%; the BB60D gain changed along with the power, so that run does
+  not separate the two.)
+  For a clean FM-band result, give the BB60D an FM antenna or a cable with
+  30-40 dB of pad; do not turn the power up in the broadcast band.
+- **Near the FM threshold the result depends on the timing picked at start-up**:
+  runs with identical settings decoded 71% and 83%. `RdsDemod` picks `tau`
+  once from the first 1800 bits and keeps it. On a weak signal several
+  candidates score about the same, and the winner is not always the best
+  one. Offline, a pick with 91% good blocks had lost sync for a fifth of
+  the capture - read blocks seen beside blocks good, never the percentage
+  alone. On a strong signal it does not matter: 915 MHz decoded 100%.
+- **The clock comes through off air**, sent by the transmitter and shown by
+  the receiver: first displayed 151 s after tuning in (it is believed only
+  once two 4A groups agree), and it turned over to the new minute within a
+  second of the real one.
 - **It tunes 30 MHz to 6 GHz, not only 87.5-108**, so it can follow the FM +
   RDS Transmitter off the broadcast band - nothing in the chain after the
   radio depends on the carrier. The dialog's slider still sweeps only the
