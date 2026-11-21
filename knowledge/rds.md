@@ -35,7 +35,7 @@ type and clock time.
   | | 101.1 MHz | 915 MHz |
   |---|---|---|
   | blocks good | 71–83% (two live runs and a capture) | **100.0%** (5392/5392) |
-  | carrier | −65.8 dBFS | −37.0 dBFS |
+  | carrier (corrected, see [ettus](ettus.md#the-antennas-three-compared)) | −68.2 dBFS | −39.4 dBFS |
   | carrier to noise, 200 kHz | ~12 dB | ~50 dB |
 
   At 101.1 the signal sits at the FM threshold, and after the discriminator

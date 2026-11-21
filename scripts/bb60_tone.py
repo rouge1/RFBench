@@ -83,7 +83,13 @@ def peaks(buf, freq, rate, nfft=1 << 18, count=6):
     w = np.blackman(nfft)
     psd = np.mean(np.abs(np.fft.fftshift(np.fft.fft(segs * w, axis=1),
                                          axes=1)) ** 2, axis=0)
-    psd /= np.sum(w) ** 2
+    # Scaled for power, not for a tone's peak: each bin then holds its share
+    # of the power, so the seven bins summed round a tone read its whole
+    # power and the floor is the true noise per bin. Scaling by sum(w)**2
+    # instead read both 2.37 dB high - the Blackman window's noise bandwidth
+    # - which is what every absolute dBFS figure here before 2026-11-21's
+    # fix carried (comparisons between captures were unaffected).
+    psd /= nfft * np.sum(w ** 2)
     f = np.fft.fftshift(np.fft.fftfreq(nfft, 1 / rate))
     db = 10 * np.log10(psd + 1e-30)
     floor = np.median(db)

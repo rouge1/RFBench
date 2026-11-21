@@ -68,10 +68,10 @@ into `rdsReceiver` at 60 %, at 101.1 MHz (an empty channel here), for 60 s.
 
 | | ant 1, run a | ant 1, run b | ant 2 | ant 3 |
 |---|---|---|---|---|
-| 101.1 MHz | −71.2 dBFS | −78.7 | −47.9 | **−41.0** |
-| 433.92 MHz | −48.8 | −42.3 | −42.0 | −51.4 |
-| 915 MHz | −46.5 | −45.5 | **−31.2** | −34.3 |
-| 2440 MHz | −47.3 | −46.0 | **−42.9** | −54.9 |
+| 101.1 MHz | −73.6 dBFS | −81.1 | −50.3 | **−43.4** |
+| 433.92 MHz | −51.2 | −44.7 | −44.4 | −53.8 |
+| 915 MHz | −48.9 | −47.9 | **−33.6** | −36.7 |
+| 2440 MHz | −49.7 | −48.4 | **−45.3** | −57.3 |
 | RDS at 101.1 | **0 %** (no sync in 60 s) | 70.7 % (1956 blocks seen of ~2740) | 99.5 % | **99.8 %** |
 
 - **Antenna 3 is the FM antenna**: 7 dB over antenna 2 at 101.1 MHz, and
@@ -86,14 +86,18 @@ into `rdsReceiver` at 60 %, at 101.1 MHz (an empty channel here), for 60 s.
 
 **How much one run can be trusted.** Antenna 1's two runs agreed within
 1.3 dB at 915 and 2440 MHz, and differed by 6.5-7.5 dB at 101.1 and 433.92.
-The VSG60's tone at a fixed −40 dBm read −81.8 dBFS in the morning and −74.4
+The VSG60's tone at a fixed −40 dBm read −84.2 dBFS in the morning and −76.8
 dBFS in the afternoon. So, over the air on this bench, treat a difference
 under about 7 dB at FM or 433 MHz as unproven from a single run; the 915 and
 2440 MHz figures hold better. A cable with a pad would remove all of that, at
 the price of not testing the antenna.
 
 **These are relative.** dBFS on the BB60D at one centre and gain compares
-one antenna with another. It is not dBm, and nothing here measured antenna
+one antenna with another. The figures here are corrected: as first
+measured, `bb60_tone.py` scaled its spectrum for a tone's peak and then summed
+seven bins, which read every tone and floor 2.37 dB high (the Blackman window's
+noise bandwidth); 2.4 dB has been taken off each. Differences between them were
+never affected. It is not dBm, and nothing here measured antenna
 gain.
 
 ## Running the tests again
