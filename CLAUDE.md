@@ -308,7 +308,7 @@ mapped onto that radio's own range by `scale_power()` in `apps/utils.py` —
 | Radio | Range | Unit |
 |-------|-------|------|
 | HackRF One | 0 – 47 | dB VGA gain |
-| Ettus USRP | queried via `get_gain_range()`; 0 – 31.5 on the N-series/WBX here, which is also the fallback | dB gain |
+| Ettus USRP | queried via `get_gain_range()`; 0 – 31.5 on the N210 with a UBX-40 here, which is also the fallback | dB gain |
 | Signal Hound VSG60 | −120 – +10 | dBm, calibrated absolute output |
 
 This replaced an earlier scheme where the slider was labelled dBm but fed

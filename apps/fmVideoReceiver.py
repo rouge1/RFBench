@@ -76,9 +76,10 @@ AUDIO_TOP = 15e3
 #: Demodulating straight at the audio rate folds everything below it into
 #: the audio band - the same trap the NTSC receiver's sound has.
 SOUND_IF_RATE = 200e3
-#: The USRP here has a WBX, which stops at 2.2 GHz and so cannot reach the
-#: 5.8 GHz FPV band at all.
-USRP_TOP_MHZ = 2200.0
+#: The top of the USRP's daughterboard. The N210 here has a UBX-40, which
+#: reaches 6 GHz and so the whole 5.8 GHz FPV band; it had a WBX, which
+#: stopped at 2.2 GHz. Lower this if a daughterboard that stops short goes in.
+USRP_TOP_MHZ = 6000.0
 #: Weaker than this and what the sound chain is demodulating is the noise in
 #: an empty band, not a subcarrier. A real one is 20 to 30 dB under the
 #: carrier; measured against a real FPV transmitter that sends no sound at
@@ -643,7 +644,8 @@ class ConfigDialog(Qt.QDialog):
             value=PROFILES[DEFAULT_PROFILE].default_mhz,
             channels=PROFILES[DEFAULT_PROFILE].channels)
         self.layout.addWidget(self.cf_chooser)
-        # A USRP with a WBX cannot reach 5.8 GHz, and a receiver that simply
+        # A USRP daughterboard that stops short of 5.8 GHz (a WBX stops at
+        # 2.2 GHz) cannot reach the FPV band, and a receiver that simply
         # hears nothing looks exactly like a disconnected aerial - which has
         # cost this project whole afternoons more than once.
         self.reach_note = Qt.QLabel("")
@@ -657,9 +659,9 @@ class ConfigDialog(Qt.QDialog):
                         and self.cf_chooser.value() > USRP_TOP_MHZ)
         self.reach_note.setText(
             f"<b>This USRP cannot tune {self.cf_chooser.value():,.0f} MHz.</b> "
-            f"The WBX daughterboard here stops at {USRP_TOP_MHZ:,.0f} MHz, so "
-            "the 5.8 GHz FPV band is out of its reach - it would open and "
-            "hear nothing at all. Use the HackRF One or the BB60D."
+            f"Its daughterboard stops at {USRP_TOP_MHZ:,.0f} MHz, so this "
+            "frequency is out of its reach - it would open and hear nothing "
+            "at all. Use the HackRF One or the BB60D."
             if out_of_reach else "")
 
     def create_gain_control(self):

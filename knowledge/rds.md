@@ -268,7 +268,8 @@ Things worth knowing before changing it:
   101.3: nothing in the multiplex or the modulator depends on the carrier,
   so the band limit it once had was only the spin box's. 30 MHz is the
   VSG60's floor and 6 GHz the HackRF's and the VSG60's ceiling; a USRP's
-  daughterboard may stop short of either, as the WBX here does at 2.2 GHz.
+  daughterboard may stop short of either, as a WBX does at 2.2 GHz (the
+  N210 here now has a UBX-40, 10 MHz to 6 GHz).
   Off the broadcast band a car radio hears nothing, so the RDS Receiver,
   which tunes the same span, is the way to listen. The window's frequency
   box tunes on Enter rather than on every keystroke, because across that

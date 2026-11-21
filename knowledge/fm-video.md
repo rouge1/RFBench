@@ -83,8 +83,12 @@ Things worth knowing before changing it:
   passband is 0.45 of the video rate (`INTERPOLATOR_BW`); GNU Radio's
   default 0.4 is flat only to 4 MHz at NTSC's rate.
 - **20 MS/s for every radio**, the HackRF's ceiling, and both standards fit
-  inside it in both formats. The USRP here has a WBX, which stops at
-  2.2 GHz, so it cannot reach 5.8 GHz at all.
+  inside it in both formats. The USRP here is an N210 with a UBX-40,
+  10 MHz to 6 GHz, so it reaches the whole 5.8 GHz band; 20 MS/s is within
+  what an N210 streams over gigabit Ethernet (25 MS/s at 16-bit). It had a
+  WBX until 2026-11, which stopped at 2.2 GHz, and the receiver's
+  `USRP_TOP_MHZ` still warns if a daughterboard that stops short goes in.
+  Not yet tried off air at 5.8 GHz on the USRP.
 - **F.405's networks are bilinear transforms whose one free constant is
   searched for.** The transform keeps a network's gain at DC and at the top
   exactly and moves the frequency axis in between. With the textbook
