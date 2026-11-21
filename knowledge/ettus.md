@@ -16,11 +16,11 @@ the three antennas tried on it compare. Everything below was measured on
 | Host software | UHD 4.8.0, the conda `gnu` environment |
 
 `apps/utils.py`'s USRP power range falls back to 0-31.5 dB, which is this
-daughterboard's own range. Other notes name a WBX here (CLAUDE.md's power
-table, fm-video.md, rds.md), which stops at 2.2 GHz; that may be another
-Ettus - ism.md measured an X310 - but this N210's probe reports a UBX-40,
-good to 6 GHz. worklaptop1's checkout holds a commit saying the same
-(`42e109e`) that is not in this repository's history.
+daughterboard's own range. **It used to carry a WBX**, which stops at
+2.2 GHz; notes written before the swap say WBX, and `42e109e` corrected
+CLAUDE.md, fm-video.md, rds.md and `fmVideoReceiver`'s `USRP_TOP_MHZ`
+(now 6000) for the UBX-40. The X310 measured in ism.md is a different
+radio.
 
 **The host needs bigger socket buffers.** UHD asks for
 `net.core.rmem_max=50000000`, and receiving at any real rate needs it.
