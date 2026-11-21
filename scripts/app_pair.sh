@@ -26,7 +26,8 @@
 # scripts/app_rx_check.py, or scripts/bb60_tone.py and spectrum_report.py at
 # 20 dB of BB60D attenuation (the N210 a metre away overloads it at 0).
 #
-# Optional: TX_REPO (this repo on TX_HOST, default /data/python/SDR), TX_TOOLS
+# Optional: TX_NO_CALLBACKS=1 (do not move the transmitter's power and
+# frequency mid-run), TX_REPO (this repo on TX_HOST, default /data/python/SDR), TX_TOOLS
 # (where TX_HOST finds the two check scripts, default $TX_REPO/scripts), OUT
 # (a folder for the logs; default a new temporary one).
 #
@@ -41,6 +42,9 @@ shift 10
 A1=${1:-40}; A2=${2:-30}; shift 2 2>/dev/null || shift $#
 [ "${1:-}" = "--" ] && shift
 TXSET=""; for kv in "$@"; do TXSET="$TXSET --set $kv"; done
+# TX_NO_CALLBACKS=1 leaves the window's controls alone - the mid-run move
+# of power and frequency is itself a disruption a receiver may not ride out.
+[ -n "${TX_NO_CALLBACKS:-}" ] && TXSET="$TXSET --no-callbacks"
 : "${TX_HOST:?set TX_HOST to the ssh alias of the machine the transmitter is on}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TX_REPO=${TX_REPO:-/data/python/SDR}

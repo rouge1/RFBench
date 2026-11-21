@@ -117,6 +117,18 @@ VESTIGIAL_TRANSITION = 300e3
 #: of the colour subcarrier. The radio is then tuned this far above ``cf``.
 LO_OFFSET = 6e6
 
+#: How far each radio's rate is above the 10 MS/s the picture is built at,
+#: as (interpolation, decimation). 20 MS/s suits the HackRF and the VSG60.
+#: An Ettus N210 reaches 20 from its 100 MHz by interpolating 5, an odd
+#: number, which leaves its halfband filter off and its CIC rolling off
+#: toward the band edge - and the channel sits 3 to 9 MHz below the LO, out
+#: by that edge. Measured off air against the VSG60 it tilted the channel
+#: about 6 dB, the picture carrier down against its sidebands, and the
+#: receiver got 0-2 frames a second where the VSG60's gave 17.9
+#: (knowledge/ettus.md). 25 MS/s is an interpolation of 4, with the halfband
+#: on, and the channel then sits well inside it.
+RADIO_RATE_RATIO = {'hackrf': (2, 1), 'vsg': (2, 1), 'usrp': (5, 2)}
+
 
 class NtscModulator(gr.hier_block2):
     """Composite video in, vestigial-sideband RF baseband out.
@@ -586,12 +598,14 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(5, 10):
             self.top_grid_layout.setColumnStretch(c, 1)
+        self._rate_ratio = RADIO_RATE_RATIO.get(radio_type, (2, 1))
+        radio_rate = self.radio_rate()
         self._power_range = resolve_power_range(radio_type)
         if radio_type == 'vsg':
             from apps.vsg_sink import vsg_sink
             self.radio_sink = vsg_sink(
                 center_freq=cf*1e6+6e6,
-                sample_rate=samp_rate*2,
+                sample_rate=radio_rate,
                 level_dbm=scale_power(rfPwr, self._power_range))
         elif radio_type == 'usrp':
             self.radio_sink = uhd.usrp_sink(
@@ -599,7 +613,7 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
                 uhd.stream_args(cpu_format="fc32", args='', channels=list(range(0,1))),
                 "",
             )
-            self.radio_sink.set_samp_rate(samp_rate*2)
+            self.radio_sink.set_samp_rate(radio_rate)
             self.radio_sink.set_time_now(uhd.time_spec(time.time()), uhd.ALL_MBOARDS)
             self.radio_sink.set_center_freq(cf*1e6+6e6, 0)
             self.radio_sink.set_antenna("TX/RX", 0)
@@ -607,7 +621,7 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
             self.radio_sink.set_gain(scale_power(rfPwr, self._power_range), 0)
         else:
             self.radio_sink = soapy.sink('driver=hackrf', 'fc32', 1, '', '', [''], [''])
-            self.radio_sink.set_sample_rate(0, samp_rate*2)
+            self.radio_sink.set_sample_rate(0, radio_rate)
             self.radio_sink.set_frequency(0, cf*1e6+6e6)
             self.radio_sink.set_gain(0, 'VGA', scale_power(rfPwr, self._power_range))
             self.radio_sink.set_gain(0, 'AMP', 0)
@@ -627,8 +641,8 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
         for c in range(1, 5):
             self.top_grid_layout.setColumnStretch(c, 1)
         self.rational_resampler_xxx_2 = filter.rational_resampler_ccc(
-                interpolation=2,
-                decimation=1,
+                interpolation=self._rate_ratio[0],
+                decimation=self._rate_ratio[1],
                 taps=[],
                 fractional_bw=0)
         self.rational_resampler_xxx_0 = filter.rational_resampler_fff(
@@ -801,7 +815,7 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
                                  videoKind, videoFileName)
         self.modulator = NtscModulator(samp_rate, polarity)
         self.blocks_add_xx_0 = blocks.add_vcc(1)
-        self.analog_sig_source_x_1 = analog.sig_source_c(samp_rate*2, analog.GR_COS_WAVE, -LO_OFFSET, 1, 0, 0)
+        self.analog_sig_source_x_1 = analog.sig_source_c(radio_rate, analog.GR_COS_WAVE, -LO_OFFSET, 1, 0, 0)
         self.analog_sig_source_x_0_0_0 = analog.sig_source_c(samp_rate, analog.GR_COS_WAVE, AURAL_CARRIER, AURAL_AMPLITUDE, 0, 0)
         self.analog_frequency_modulator_fc_0 = analog.frequency_modulator_fc(2*pi*AURAL_DEVIATION/samp_rate)
 
@@ -1025,12 +1039,17 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate
         self.analog_frequency_modulator_fc_0.set_sensitivity(2*pi*AURAL_DEVIATION/self.samp_rate)
         self.analog_sig_source_x_0_0_0.set_sampling_freq(self.samp_rate)
-        self.analog_sig_source_x_1.set_sampling_freq(self.samp_rate*2)
+        self.analog_sig_source_x_1.set_sampling_freq(self.radio_rate())
         self.qtgui_freq_sink_x_0.set_frequency_range(self.cf*1e6, self.samp_rate)
         if self.radio_type == 'usrp':
-            self.radio_sink.set_samp_rate(self.samp_rate*2)
+            self.radio_sink.set_samp_rate(self.radio_rate())
         else:
-            self.radio_sink.set_sample_rate(0, self.samp_rate*2)
+            self.radio_sink.set_sample_rate(0, self.radio_rate())
+
+    def radio_rate(self):
+        """The rate the radio runs at: the picture's, times RADIO_RATE_RATIO."""
+        interp, decim = self._rate_ratio
+        return self.samp_rate * interp / decim
 
     def get_rfPwr(self):
         return self.rfPwr

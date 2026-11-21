@@ -177,7 +177,12 @@ def main():
         stop(5)
 
     problems = []
-    want_rate = getattr(tb, 'samp_rate', None)
+    want_rate = app_rate = getattr(tb, 'samp_rate', None)
+    if callable(getattr(tb, 'radio_rate', None)):
+        # An app whose radio runs at a multiple of samp_rate says so.
+        say(f"NOTE the app asks the radio for {tb.radio_rate():g} "
+            f"(samp_rate {want_rate:g})")
+        want_rate = tb.radio_rate()
     if want_rate and abs(r['rate'] - want_rate) > 1:
         if abs(r['rate'] - 2 * want_rate) < 1:
             say(f"NOTE radio runs at twice samp_rate ({r['rate']:g}), as the app asks")
@@ -215,8 +220,12 @@ def main():
                 problems.append(f"{setp.__name__} {a.power + 5}% left {key} at {r2[key]}")
             setp(a.power)
             setf(cur)
-            if hasattr(tb, 'set_samp_rate') and want_rate:
-                tb.set_samp_rate(want_rate)
+            # The app's own rate, not the radio's: set_samp_rate takes what
+            # samp_rate holds, and an app whose radio runs at a multiple of
+            # it (radio_rate) would otherwise ask the radio for that multiple
+            # again - 62.5 MS/s, once, and a stream of underruns.
+            if hasattr(tb, 'set_samp_rate') and app_rate:
+                tb.set_samp_rate(app_rate)
             say('restored ->', json.dumps(radio()))
         except Exception as e:
             import traceback

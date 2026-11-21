@@ -138,7 +138,7 @@ read back too. Transmitters at 915 MHz (FM video 5800), 10 % (UBX gain 3 dB).
 | Subcarrier | ✅ | carrier and the 20 kHz subcarrier |
 | FM + RDS | ✅ | **`rdsReceiver` on the BB60D: 99 % blocks good**, PS, RadioText, Now Playing, stereo pilot |
 | **ATSC** | ❌ **12 MS/s asked, 12.5 given** (fixed - below) | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
-| **NTSC** | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; **but `ntscReceiver` on the BB60D: "picture, but only 0-2 frames a second"**, where the VSG60 decodes 17.9 - below |
+| **NTSC** | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; **but `ntscReceiver` on the BB60D: "picture, but only 0-2 frames a second"**, where the VSG60 decodes 17.9 (fixed at 25 MS/s - below) |
 | ISM | ✅ LO 400 kHz low on purpose | **`ismReceiver` on the BB60D: every burst decoded**, Nexus-TH 19.0 °C 71 % as sent (at 433.92 MHz) |
 | FM video | ✅ 20 MS/s at 5.8 GHz | **`fmVideoReceiver` on the BB60D: picture, 17.4-18.1 frames/s**, colour, line rate within 3 ppm, deviation read 7.87-7.94 MHz of 7.93 set - below FM threshold at 10 % (CNR 1-11 dB), so clicks |
 
@@ -175,7 +175,7 @@ one run and 0 in the next, so not gone; the encoder on worklaptop1's
 powersave governor is the likelier cause now. The NTSC and FM video
 transmitters' few `U` (1-6) came only at start-up.
 
-**NTSC transmit is wrong on the Ettus side, cause not found.** The same
+**NTSC transmit was wrong on the Ettus side - fixed, see below.** The same
 app, test pattern and receiver, with the VSG60 at −9.5 dBm, decoded
 "locked - picture decoding", 17.9 frames a second in colour, at −52 dBFS
 on the BB60D (floor −67 dBFS with nothing on). The N210 arrived stronger,
@@ -184,9 +184,30 @@ Its carriers are exactly placed, and FM video at the same 20 MS/s decodes
 - but FM ignores amplitude and NTSC picture is amplitude. A guess, not
 checked: 20 MS/s is an interpolation of 5 from the N210's 100 MHz, odd, and
 UHD warns that the CIC then droops across the band; a vestigial-sideband
-picture would show that and an FM one would not. Next: a capture of each
-transmitter's channel side by side, compared for flatness, and the app at
-10 MS/s on the radio if it can be.
+picture would show that and an FM one would not.
+
+**Confirmed and fixed the same day.** Captured side by side, the N210 at
+20 MS/s carried the colour subcarrier 4.8 dB and the sound carrier 6.0 dB
+higher against the picture carrier than the VSG60 did - a tilt of about
+6 dB, loudest nearest the LO, which is the CIC rolloff UHD warns of ("The
+requested interpolation is odd; the user should expect CIC rolloff") for
+every 20 MS/s transmit on the N210. The app now runs the N210 at 25 MS/s
+(`RADIO_RATE_RATIO`: the picture's 10 MS/s × 5/2 rather than × 2, an
+interpolation of 4 with the halfband on); the HackRF and the VSG60 keep 20.
+At 25 the colour and sound carriers came within 1.4 dB of the VSG60's, and
+`ntscReceiver` on the BB60D held **"Locked - picture decoding" for 40 s,
+696 frames at 16-18 a second, 0 dropped, colour**, with 2 `U`.
+
+Two things learned on the way. **25 MS/s needs worklaptop1 on the
+performance governor**: run at 25 on powersave this app's chain underran
+about 1.9 million times in a run (`sudo cpupower idle-set -D 2 && sudo
+cpupower frequency-set -g performance`, undone by any reboot). And **the
+NTSC receiver does not recover from a hop**: moving the transmitter 100 kHz
+and back for a moment left it at "picture, but only 0 frames a second" for
+the rest of the run - which is why `app_pair.sh` has `TX_NO_CALLBACKS=1`.
+FM video and PPM-OOK also transmit at 20 MS/s on the N210 and got the same
+UHD warning; FM video decoded and measured right regardless, since FM
+ignores amplitude.
 
 ### Receivers on the N210
 
