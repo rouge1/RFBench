@@ -97,7 +97,17 @@ one antenna with another. The figures here are corrected: as first
 measured, `bb60_tone.py` scaled its spectrum for a tone's peak and then summed
 seven bins, which read every tone and floor 2.37 dB high (the Blackman window's
 noise bandwidth); 2.4 dB has been taken off each. Differences between them were
-never affected. It is not dBm, and nothing here measured antenna
+never affected.
+
+**A tone on the BB60D's exact centre comes through at full level** - it has
+no blind spot there, unlike the HackRF - so an over-the-air check need not
+keep a transmitter off the BB60D's centre. Measured cabled from the VSG60
+the same day by the skinny-fm-receiver session, flat within 0.18 dB from
+0 Hz to ±100 kHz at 100, 433.92, 915, 2440 and 5800 MHz; the BB60D's own
+spike at centre at 5.8 GHz sits about 60 dB under a −50 dBm tone. That is in
+the skinny-fm-receiver repository, `knowledge/signal-hound-calibration.md`,
+"No blind spot at the BB60D's centre (2026-11-21)":
+<https://github.com/rouge1/skinny-fm-receiver/blob/main/knowledge/signal-hound-calibration.md#no-blind-spot-at-the-bb60ds-centre-2026-11-21> It is not dBm, and nothing here measured antenna
 gain.
 
 ## Running the tests again
