@@ -45,3 +45,7 @@ knowledge/snappy-twirling-glacier.md
 # Bluetooth bonds and link keys - never commit one; this repository is public).
 .pio/
 scripts/esp32_spp_sender/backup_*.bin
+
+# DVB-T2 LDPC built per machine by scripts/build_dvbt2_native.py
+apps/dvbt2/native/*.sources
+*.dylib

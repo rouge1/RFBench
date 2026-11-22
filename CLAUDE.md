@@ -77,7 +77,7 @@ fixed.
 |---|---|---|
 | [rds.md](knowledge/rds.md) | `rdsReceiver`, `fmRdsTransmitter`, `rds_core`, `rds_encode` | decoding RDS through errors, RadioText and RT+, the clock, stereo and channel separation, Next Track |
 | [atsc.md](knowledge/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record - and why the analog receivers' Watch writes from a thread of its own |
-| [dvbt2.md](knowledge/dvbt2.md) | anything DVB-T2, DVB-T, OFDM television, DVB SI (SDT/EIT/NIT), the planned DVB-T2 app | why DVB-T2 exists and where it is used, how it is built (PLPs, LDPC, rotated constellations, P1/P2, FFT sizes, guards, pilots, SFN), how it differs from ATSC 1.0 and 3.0, pros and cons, capacity and thresholds, and what skinny-fm's receiver and the over-the-air test found |
+| [dvbt2.md](knowledge/dvbt2.md) | `dvbt2Xmitter`, `dvbt2Receiver`, `dvbt2_tx`, `apps/dvbt2/`, anything DVB-T2, DVB-T, OFDM television, DVB SI (SDT/EIT/NIT) | why DVB-T2 exists and where it is used, how it is built (PLPs, LDPC, rotated constellations, P1/P2, FFT sizes, guards, pilots, SFN), how it differs from ATSC 1.0 and 3.0, pros and cons, capacity and thresholds; the two apps - live ffmpeg multiplex of several programmes, the decoder copied from skinny-fm and its spawned workers, Watch per programme - and what over the air found |
 | [ntsc.md](knowledge/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
 | [fm-video.md](knowledge/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
 | [ism.md](knowledge/ism.md) | `ism_frame`, `ismXmitter`, `ismReceiver`, anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, what the encoder turned out to need, rtl_433 as the receiver's decoder, and the RTL-SDR's limits |
@@ -366,6 +366,8 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 | `ntscReceiver.py` | NTSC analog video receiver - pictures and sound | ✅ |
 | `atscXmitter.py` | ATSC digital TV transmitter | ✅ |
 | `atscReceiver.py` | ATSC digital TV receiver - decodes the transport stream | ✅ |
+| `dvbt2Xmitter.py` | DVB-T2 transmitter - several videos from the media folder as programmes of one multiplex, encoded live | ✅ VSG60 over the air into a BB60D |
+| `dvbt2Receiver.py` | DVB-T2 receiver - decodes the multiplex, names its programmes, plays the one chosen | ✅ BB60D over the air from the VSG60; HackRF and N210 not tried |
 | `rdsReceiver.py` | RDS/RBDS receiver - decodes FM station data | ✅ |
 | `ismXmitter.py` | ISM transmitter - a 315/433/868/915 MHz sensor or remote, built from its timings and graded by rtl_433 | ✅ VSG60 over the air into a BB60D and into `ismReceiver`: all four devices decode |
 | `ismReceiver.py` | ISM receiver - any radio in Settings, decoded by rtl_433 on a pipe | ✅ HackRF, over the air from the VSG60 |

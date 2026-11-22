@@ -128,6 +128,10 @@ APP_TILES = [
     # sends; this one is what an analog FPV drone puts out on 5.8 GHz.
     (3, 2, [("FM Video Transmitter", "fmVideoXmitter", "fmVideo.jpg", "tx"),
             ("FM Video Receiver", "fmVideoReceiver", "fmVideoRx.jpg", "rx")]),
+    # DVB-T2: a multiplex of several programmes. The icon is the spectrum of
+    # the transmitter's own signal, drawn as the ISM tile draws its frame.
+    (3, 3, [("DVB-T2 Transmitter", "dvbt2Xmitter", "dvbt2.png", "tx"),
+            ("DVB-T2 Receiver", "dvbt2Receiver", "dvbt2.png", "rx")]),
     # The icon is a real Nexus-TH frame drawn as its envelope: the gaps
     # between those pulses are what carries the bits.
     (4, 0, [("ISM Transmitter", "ismXmitter", "ism.png", "tx"),

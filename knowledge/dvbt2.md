@@ -5,10 +5,11 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
 
 This note teaches the standard: why it exists, where it is used, how it is
 built, and how it compares with the ATSC that `atscXmitter` and
-`atscReceiver` speak ([atsc](atsc.md)). The DVB-T2 app is not built yet. Its
-receiver comes from skinny-fm-receiver, whose `knowledge/dvbt2.md` goes block by
-block through the receiver, with the clauses of the standard it rests on.
-Its bench results are summed up at the end of this note.
+`atscReceiver` speak ([atsc](atsc.md)). The toolkit's DVB-T2 apps,
+`dvbt2Xmitter` and `dvbt2Receiver`, are described under [the apps](#the-apps).
+Their decoder comes from skinny-fm-receiver, whose `knowledge/dvbt2.md` goes block
+by block through the receiver, with the clauses of the standard it rests on.
+The bench results are summed up at the end of this note.
 
 Most of what follows comes from general knowledge of the standards. Where a
 number was measured on this bench, or by skinny-fm, it says so. Clause numbers
@@ -273,9 +274,103 @@ why the US move to it is slow and voluntary.
   8 MHz, so a fast-moving receiver's Doppler spreads into its neighbours.
   Mobile reception needs smaller FFTs or T2-Lite.
 
-## On this bench
+## The apps
 
-The app is planned, not built. What is known so far:
+- **Files:**
+  - `apps/dvbt2Xmitter.py`: the transmitter's dialog and window.
+  - `apps/dvbt2_tx.py`: the transmitter's chain, plus what both apps share: the UHF
+    channel table and the rational resampler.
+  - `apps/dvbt2Receiver.py`: the receiver.
+  - `apps/dvbt2/`: the decoder and the frame planning, copied from skinny-fm-receiver at
+    71c2827. Its `__init__` lists what was changed in the copy. A fix belongs in both
+    repos, so tell skinny-fm.
+- **Tile:** both apps share tile (3, 3), the transmitter on one face and the receiver on
+  the other.
+- **Native LDPC:** run `python scripts/build_dvbt2_native.py` once on each machine. It is
+  never committed.
+  - Without it nothing decodes in time.
+  - The receiver's dialog says so, and its status line names it first, because otherwise it
+    looks just like a weak signal.
+
+### The transmitter
+
+- **Programmes:** any number of videos from the media folder, plus the built-in colour bars
+  with a tone. Each becomes one programme, and its SDT name comes from the file name, with
+  dashes and underscores turned into spaces.
+- **The dialog:**
+  - It chooses the constellation and the code rate.
+  - It says how many programmes fit: each needs at least 1.8 Mb/s of picture plus 128 kb/s
+    of sound.
+  - OK stays off until the chosen programmes fit.
+- **Live chain:**
+  - ffmpeg encodes the inputs as they play, each looped with `-stream_loop -1`.
+  - It muxes them at exactly the payload rate (`frame_plan`'s `ts_bps`) into one transport
+    stream on a pipe.
+  - gr-dtv modulates that, and the 35/32 resampler takes it to 10 MS/s.
+- **Speed:** the chain runs about 4 times faster than real time here.
+- **Silent files:** a file with no sound gets no audio stream. ffprobe checks each file
+  first, so the stream numbers after it stay right.
+- **Level:** the baseband runs at rms 0.2, peaking about 0.85. gr-dtv's own output is rms
+  1.004, and the chain scales it down.
+- **Layout:** fixed at 16k FFT, extended carriers, guard 19/128, PP2, one PLP. That is what
+  went over the air, and what the receiver decodes.
+- **Test:** `scripts/test_dvbt2_tx.py` runs the transmit chain into a file and decodes it.
+
+### The receiver
+
+- **Rate:** every radio runs at 10 MS/s. The chain then:
+  - resamples by 32/35 to 64/7 MS/s, the elementary rate;
+  - hands the samples to `t2_sink`, which only queues them;
+  - passes them to `iqt2_live.T2Live` on a thread of its own, with frames decoded in six
+    spawned worker processes.
+- **Worker processes:**
+  - **Started in `main()` after `tb.start()`** (`start_decoder`), not in the constructor.
+  - Each worker runs `_watch_parent`, a thread that ends the worker when its parent dies.
+    Before it, a parent killed or ended with `os._exit` left six workers running for ever.
+    They held the window test's output pipe open, and that test hung.
+  - Closing the window, or `SIGTERM`, runs `shutdown()`: the flowgraph, then the player,
+    the recording, then the workers.
+  - **The signal handler only schedules it** (`QTimer.singleShot`). The stream's lock is
+    not reentrant, and the half-second refresh holds it. Run in place, as it first was, a
+    `SIGTERM` landing there hung in `stop_player` for ever. The radio was already stopped
+    by then, and the workers stayed up, because their parent was stuck, not dead.
+    `scripts/test_dvbt2_rx.py` sends one with the lock held.
+- **The window:**
+  - Status, SNR, codewords, clock offset, and the mode L1 announces.
+  - Packet rate, errored packets and dropped frames.
+  - The programmes from the PAT and the SDT, with now and next from the EIT when a
+    broadcast sends them.
+  - The status line and the packet rate go by the last 4 s, dropped samples included.
+    Judged since the lock, as they first were, one queue overflow held "falling behind" for
+    the rest of the lock, ahead of "Breaking up". Codeword loss is now checked first. The stream arrives a frame
+    (about 0.25 s) at a time, so the rate between two half-second looks jumped between 7
+    and 21 Mb/s.
+- **Watch:**
+  - It runs `ffplay -vst p:N:v -ast p:N:a` on the programme chosen.
+  - Changing programme restarts only the player. A retune stops it.
+  - A programme with no sound plays its picture: ffplay warns that the audio specifier
+    matches nothing and carries on. Checked on a pipe joined mid-stream.
+  - The decoder hands over a whole frame of stream at once, about 0.5 MB at 16 Mb/s, which
+    is more than a pipe holds.
+  - So, as with the analog receivers' Watch ([atsc](atsc.md)), a thread of its own writes to the
+    player, blocking. Past 4 MB queued, the oldest chunks are dropped and counted.
+- **Record:** writes the whole multiplex into the media folder.
+- **Test:** `scripts/test_dvbt2_rx.py` builds the real window offscreen, with a recording
+  of the transmitter's chain looped through a throttle in place of the radio.
+  - Lock and the L1 mode.
+  - The three names.
+  - Frames decoded at the air's pace.
+  - Watch on the silent programme, then a change of programme, with a stand-in ffmpeg
+    player counting pictures. Its `-flush_packets 1` is what lets the count be read while
+    it runs.
+  - No worker process left behind.
+  - The frame across the recording's loop seam fails as a whole, and the test allows for
+    it.
+- **Not tested on a radio:** the HackRF and the N210. Their clocks are tens of ppm out,
+  against the 0.4 ppm measured between the VSG60 and the BB60D. `T2Stream` corrects
+  anything past 1 ppm in the worker, but that has not been tried here.
+
+## On this bench
 
 - **Transmit:**
   - gr-dtv in our GNU Radio 3.10 has a complete DVB-T2 transmitter
@@ -295,6 +390,27 @@ The app is planned, not built. What is known so far:
     apart.
   - Colour bars, colour bars with a tone, and a recorded programme with
     HE-AAC sound all decoded at 99-100 % of codewords.
+- **Over the air, the toolkit's live `dvbt2Xmitter` (2026-11-22):**
+  - Setup:
+    - VSG60 on worklaptop1, through `scripts/app_tx_check.py --level-dbm -10 --no-callbacks`.
+      The callbacks step power up 5 %, which would go over the -10 dBm cap.
+    - 594 MHz, 16QAM 3/5, 93 blocks a frame.
+    - Three programmes encoded live: the colour bars and two clips from the media folder.
+  - Received as an 8 s BB60D capture at 10 MS/s (`scripts/bb60_tone.py --out`), brought to
+    64/7 MS/s with `resample_poly(32, 35)` and decoded by `apps.dvbt2`.
+  - Results:
+    - 1674 of 1674 codewords; 0 errored TS packets; the clocks -0.4 ppm apart; no overruns.
+    - The SDT named all three programmes from their file names, each with H.264 and AAC.
+    - The pictures decoded clean.
+  - 13 of 31 frames were dropped, only because the capture was fed in unthrottled, faster
+    than the workers decode.
+  - **Spawned workers need a `__main__` guard** in whatever script starts `T2Stream`.
+    Without one, every frame shows up as `failed` and nothing else says why.
+- **Over the air, the receiver app too (2026-11-22):** the same transmission, received live
+  by `dvbt2Receiver` on the BB60D at 60 % gain, through `scripts/app_rx_check.py`.
+  - Locked within 5 s, then 60 s of 21,390 codewords of 21,390.
+  - SNR 11.0-11.7 dB (16QAM 3/5 needs about 9.6); -0.4 ppm; input -60 dBFS.
+  - 0 errored packets and 0 dropped frames; the three names from the SDT.
 - **Rates:** 10 MS/s suits all three transmitters here. The Ettus N210
   makes it as 100/10, an even ratio: see
   [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
