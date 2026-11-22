@@ -239,6 +239,48 @@ BCH, QPSK to 4096QAM, layered division multiplexing, and a transport over IP
 instead of MPEG-TS. It is not compatible with ATSC 1.0 receivers, which is
 why the US move to it is slow and voluntary.
 
+## How it compares with LTE
+
+DVB-T2 and the LTE downlink are both OFDM. On a spectrum display, each is a flat block with steep walls,
+and in time each looks like noise. The difference is scale, and it comes from what each is built for.
+LTE's own numbers are in [lte](lte.md). The DVB-T2 column is our transmitter's plan
+(`t2_tx.frame_plan`, `iqt2.kmax`).
+
+| | Our DVB-T2 (16k extended, 8 MHz) | LTE downlink (10 MHz carrier) |
+|---|---|---|
+| Carrier spacing | 558 Hz (64/7 MHz / 16384) | 15 kHz |
+| Carriers | 13,921 | 600 (50 resource blocks of 12) |
+| Occupied width | 7.77 MHz of 8 | 9 MHz of 10 |
+| Useful symbol | 1792 µs | 66.7 µs |
+| Guard / cyclic prefix | 19/128, 266 µs | normal CP, 4.7 µs (5.2 µs on a slot's first symbol) |
+| Sync | P1, 224 µs, once a frame (about 0.25 s here) | PSS and SSS every 5 ms, on the central 1.08 MHz only |
+| Centre carrier | used | left empty (the DC subcarrier) |
+| Power in time | constant, always on | follows the traffic scheduled; TDD bands also switch to uplink |
+| Peak-to-average | about 10-12 dB | about 10-12 dB |
+| Error correction | BCH + LDPC | turbo code (5G NR moved to LDPC) |
+| Multiple access | none: one broadcast to everyone | OFDMA, resource blocks per user; the uplink is SC-FDMA |
+
+Why the numbers differ:
+
+- **Broadcast wants long symbols.** Fixed rooftop aerials, and transmitters tens of km apart on one
+  frequency, need a guard of hundreds of µs. A long guard is cheap only beside a much longer symbol,
+  and a long symbol means narrow carriers: thousands of them.
+- **Phones want short ones.** At speed, Doppler spreads each carrier by up to a few hundred Hz. Against
+  558 Hz carriers that breaks orthogonality; against 15 kHz it barely matters. Cells are small, so a
+  4.7 µs prefix covers the echoes.
+- **Same trade, other ends.** DVB-T2's 1k and 2k modes, and T2-Lite, move towards LTE's end for mobile
+  reception. LTE's extended CP and its MBSFN broadcast mode (7.5 kHz spacing, a 33 µs prefix) move
+  towards DVB-T2's.
+
+How to tell them apart on the BB60D:
+
+- **The centre.** A notch at the middle of an LTE downlink is its empty DC subcarrier. In our DVB-T2
+  signal a notch or a spike there is the radio (LO leak), not the signal.
+- **The envelope.** DVB-T2 is flat in time. LTE comes and goes with load: on an idle cell, the
+  reference signals and the 5 ms sync bursts stand out. `spectrum_report.py`'s envelope shows both.
+- **The width.** A 10 MHz LTE carrier spans about 9 MHz, 20 MHz about 18 MHz. A DVB-T2 multiplex fills
+  7.6 or 7.77 MHz of an 8 MHz UHF channel.
+
 ## Pros and cons
 
 **Pros**
@@ -433,5 +475,6 @@ why the US move to it is slow and voluntary.
 - ETSI EN 300 468, DVB service information (SDT, EIT, NIT, text encoding).
 - ETSI EN 300 744, DVB-T; EN 302 307, DVB-S2 (the shared LDPC and BCH).
 - ATSC A/53 (ATSC 1.0) and A/322 (ATSC 3.0 physical layer), free from atsc.org.
+- 3GPP TS 36.211, the LTE physical layer (kept in `docs/lte/`; see [lte](lte.md)).
 - skinny-fm-receiver's `knowledge/dvbt2.md`: the receiver block by block,
   with clause references and its measurements.
