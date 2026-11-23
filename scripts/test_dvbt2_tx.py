@@ -162,6 +162,9 @@ def main(argv=None):
         want = {1: 'Colour Bars', 2: 'Test Card One', 3: 'Silent Two'}
         expect(f"three programmes, named from the files in the SDT: {names}",
                lambda: (names == want, names))
+        provs = {n: an.psip.services.get(n, {}).get('provider') for n in sorted(an.programs)}
+        expect(f"every programme's provider is the one asked for, not ffmpeg's own: {provs}",
+               lambda: (set(provs.values()) == {'RF Bench'}, provs))
         from apps.dvbt2.atsc_core import STREAM_TYPES
         kinds = {n: sorted(STREAM_TYPES.get(t, hex(t)) for t in an.programs[n]['streams'].values())
                  for n in sorted(an.programs)}

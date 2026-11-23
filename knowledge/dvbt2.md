@@ -350,6 +350,11 @@ How to tell them apart on the BB60D:
     stream on a pipe.
   - gr-dtv modulates that, and the 35/32 resampler takes it to 10 MS/s.
 - **Speed:** the chain runs about 4 times faster than real time here.
+- **Provider name:** the SDT's provider ("RF Bench") goes on each programme as
+  `-metadata:p:N service_provider=...`. ffmpeg's MPEG-TS muxer ignores a global
+  `-metadata service_provider` once `-program` is used and writes "FFmpeg", and `-program`
+  itself rejects the key. Every multiplex before 2026-11-23 went out saying "FFmpeg";
+  skinny-fm read it off the air in CTF night three. The test now checks it.
 - **Silent files:** a file with no sound gets no audio stream. ffprobe checks each file
   first, so the stream numbers after it stay right.
 - **Level:** the baseband runs at rms 0.2, peaking about 0.85. gr-dtv's own output is rms

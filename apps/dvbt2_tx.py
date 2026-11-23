@@ -152,8 +152,11 @@ def ffmpeg_argv(paths, plan, ffmpeg='ffmpeg', provider='RF Bench'):
         # file has any (a silent file maps none, so the numbers after it move up by one).
         sts = ''.join(f':st={k}' for k in streams[i])
         argv += ['-program', f'program_num={i + 1}:title={service_name(path)}{sts}']
-    argv += ['-metadata', f'service_provider={provider}',
-             '-mpegts_transport_stream_id', '1', '-mpegts_original_network_id', '1',
+        # The SDT's provider name comes from each programme's own metadata. The muxer
+        # ignores a global -metadata service_provider once -program is used, and writes
+        # "FFmpeg"; -program itself refuses the key. Found in CTF night three.
+        argv += [f'-metadata:p:{i}', f'service_provider={provider}']
+    argv += ['-mpegts_transport_stream_id', '1', '-mpegts_original_network_id', '1',
              '-muxrate', str(int(round(plan['ts_bps']))), '-f', 'mpegts', 'pipe:1']
     return argv
 
