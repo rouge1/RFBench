@@ -972,6 +972,27 @@ The architectural model to copy is **`gr-rds`**: one module with matched
 encoder and decoder blocks, which is exactly the shape this repository
 already has for RDS and ATSC.
 
+## Over the air at 902-928 MHz, antennas a few inches apart (2026-11-22)
+
+CTF night three ran over the air instead of the cable, in 902-928, 2400-2483.5 and
+5725-5850 MHz only. The VSG60A on worklaptop1 sent through an antenna a few inches from
+the BB60D's, at port levels from −20 to −55 dBm.
+
+- **Link loss:** about 39 dB from the VSG port to the BB60D at 905 MHz. A CW at −55 dBm read
+  −93.8 dBm. It was about 40 dB at 5.8 GHz, from FPV video. At 2.4 GHz a BLE beacon at
+  −20 dBm stood only about 11 dB over the floor in its channel.
+- **The band is not empty.** A real device that isn't ours hops through 902-928:
+  - 2-FSK, 50 kBd, about ±29 kHz deviation.
+  - First seen at 910.01 MHz as 1.88 ms bursts, three per group 0.648 s apart, every
+    13.45 s.
+  - Later seen as about 155 ms bursts every 10.1 s on many channels.
+  - The payload is not decoded.
+  - It also sat on 910.0-910.25 MHz long enough to hide a weak signal placed beside it.
+  - Separately, a steady carrier sits at 920.845 MHz.
+- **What that means for a test:** check a signal's modulation before calling it the
+  neighbour. "That's the neighbour" by frequency alone dismissed real test signals three
+  times that night.
+
 ## Not measured yet
 
 Everything above is from source, documentation, or software-only tests.

@@ -371,6 +371,18 @@ Without `--go` it prints the plan and does nothing.
   `app_tx_check.py` takes SIGTERM, SIGINT and SIGHUP for itself once the app is running. An
   app's own handler (dvbt2Xmitter's) queues `app.quit()`, which ends nothing when no Qt loop
   runs, so before 2026-11-22 a remote stop left the transmitter's process waiting out its time.
+- **Stopping from a script:** send SIGTERM to the local `remote_tx.py` process itself; it
+  stops the remote end and removes the staging folder. Killing the shell or tool task that
+  started it can leave `/tmp/rftx-*` behind on the host, which then has to be removed by
+  hand. Over ssh, `pgrep -f`/`pkill -f` patterns match the ssh shell's own command line, so
+  a `pkill -f` can end the shell and a `pgrep -f` can find "a streamer" that is only itself.
+  Check in a separate command (CTF night three, 2026-11-22).
+- **Rate:** a 60 s `signal_mix` file streamed at 3.2 MS/s (`vsg_stream_file.py`, over a
+  cable into the BB60D) timed exactly. APRS was every 10.00 s, a 200 kBd 16QAM's cyclic line
+  sat at 200,000.1 Hz, and multimon-ng decoded AFSK1200 at the nominal rate. It was recorded
+  at 2.5 MS/s and at 10 MS/s (2026-11-23). It was checked because an over-the-air capture of
+  the same file had timed its narrowband parts 2.4 % fast. That cause is still not known,
+  but it is not the streamer.
 - **The VSG lock:** it points `VSG60_LOCK` at the host's checkout's `config/.vsg60.lock`. A
   copy in `/tmp` has no `config/`, so `vsg_sink`'s lock silently did nothing on the first such
   run (the "could not create VSG lock ... continuing" warning).
