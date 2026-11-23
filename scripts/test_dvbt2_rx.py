@@ -17,6 +17,9 @@ the recording, looped, through a throttle at the radio's 10 MS/s. What it pins:
 - Watch on the programme with no sound, then a change of programme while watching, each
   give a stand-in player (ffmpeg decoding to frame checksums, in place of ffplay) a steady
   run of pictures of that programme, written from the player thread;
+- the stream gone for longer than ``RENEW_S`` and back (a transmitter restarted with a new
+  multiplex) starts the analyser afresh, dropping programmes that went, and restarts the
+  player on the programme watched;
 - a burst of dropped samples shows "falling behind" and then clears once it is RECENT_S old;
   a collapse with drops still says "Breaking up";
 - SIGTERM landing while the stream's lock is held (as refresh() holds it) does not hang: the
@@ -151,6 +154,23 @@ def main(argv=None):
                len(players) == 2 and players[-1].endswith('-p2.framecrc') and second >= 100
                and tb._watching == 2, players)
         report(f"the player kept up: {tb.ts.dropped} bytes dropped", tb.ts.dropped == 0)
+
+        # The stream gone for longer than RENEW_S, then back, as when a transmitter restarts on
+        # the channel with a new multiplex: the analyser starts afresh (a programme that went
+        # would stay listed) and the programme watched gets a new player, which plays.
+        real_on_ts, gap = tb.live.on_ts, {'on': True}
+        tb.live.on_ts = lambda data: None if gap['on'] else real_on_ts(data)
+        tb.ts.analyzer.programs[99] = {'streams': {}}  # a programme the next multiplex lacks
+        pump(rx.RENEW_S + 1.5)
+        gap['on'] = False
+        pump(8)
+        tb.live.on_ts = real_on_ts
+        third = frames_in(players[-1]) if len(players) == 3 else 0
+        names = [tb.program_combo.itemText(i) for i in range(tb.program_combo.count())]
+        report(f"a {rx.RENEW_S + 1.5:g} s gap: a new player on programme 2, {third} pictures in 8 s; "
+               f"the list starts afresh: {names}",
+               len(players) == 3 and players[-1].endswith('-p2.framecrc') and third >= 100
+               and tb._watching == 2 and names == want, (players, names))
 
         # One burst of dropped samples, as when the decoder's queue overflows once: the status
         # says so, then goes back to clean once the burst is older than RECENT_S.

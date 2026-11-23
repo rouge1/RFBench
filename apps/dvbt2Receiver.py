@@ -66,6 +66,9 @@ TS_PACKET = 188
 RECENT_S = 4.0
 #: Stream waiting for the player before the oldest is dropped: about 2 s at 16 Mb/s.
 PLAYER_BACKLOG = 4 << 20
+#: No transport stream for this long, then some again: taken as a new multiplex, a transmitter
+#: restarted on the channel (``dvbt2Receiver._watch_stream``).
+RENEW_S = 3.0
 
 
 class t2_sink(gr.sync_block):
@@ -444,6 +447,8 @@ class dvbt2Receiver(gr.top_block, Qt.QWidget):
         self._seen_overflows = 0
         self._watching = None               # the programme number ffplay was started on
         self._recent = collections.deque()  # (time, codewords, good, dropped samples) for the status
+        self._last_packets = None           # the analyser's packet count at the last look
+        self._last_ts_at = None             # when it last grew
         self._shut_down = False
 
         self._build_controls()
@@ -713,6 +718,28 @@ class dvbt2Receiver(gr.top_block, Qt.QWidget):
         self.ts.reset()
         self._recent.clear()
         self._snaps.clear()
+        self._last_packets = None
+        self._last_ts_at = None
+
+    def _watch_stream(self, now, packets):
+        """The transport stream gone for ``RENEW_S`` or more and back: the multiplex may not
+        be the one before (a transmitter restarted on the channel, its programmes, stream
+        numbers and timestamps new). ffplay keeps the old timeline and limped at about 7
+        pictures a second on the new one (2026-11-22, offline, 3 programmes then 9), and the
+        analyser kept programmes that had gone. So both start afresh, as on a retune, and the
+        programme being watched gets a new ffplay. A shorter fade keeps everything. Returns
+        whether it started afresh."""
+        if packets == self._last_packets:
+            return False
+        renew = self._last_ts_at is not None and now - self._last_ts_at >= RENEW_S
+        if renew:
+            self.ts.reset()
+            self._snaps.clear()
+            if self._watching is not None:
+                self._start_player(self._watching)
+            packets = self.ts.snapshot()['packets']
+        self._last_packets, self._last_ts_at = packets, now
+        return renew
 
     def _program_picked(self, _):
         """A different programme while watching: restart only the player."""
@@ -815,6 +842,8 @@ class dvbt2Receiver(gr.top_block, Qt.QWidget):
         # Over the last RECENT_S, as for the codewords: the stream comes a frame (a quarter of
         # a second) at a time, so between two half-second looks it read 7 or 21 Mb/s by turns.
         snap = self.ts.snapshot()
+        if self._watch_stream(now, snap['packets']):
+            snap = self.ts.snapshot()
         self._snaps.append((now, snap['packets'], snap['errors'], snap['discontinuities']))
         while len(self._snaps) > 2 and now - self._snaps[0][0] > RECENT_S:
             self._snaps.popleft()

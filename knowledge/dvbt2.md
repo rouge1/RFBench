@@ -228,8 +228,8 @@ What each of those means on this bench:
   (7.77 MHz in extended mode).
 - **Level.** Both are noise-like. A wide channel spreads its power, so on
   the BB60D an 8 MHz channel sits about 38 dB lower per bin than a tone of the
-  same power. skinny-fm's -30 dBm test showed nothing for that reason, and
-  -10 dBm gave about 12 dB SNR over the bench antennas.
+  same power. skinny-fm's -30 dBm test showed nothing for that reason.
+  With the antennas extended, -4 dBm gives 27-30 dB SNR over the bench (On this bench).
 - **Timing.** T2's long symbols tolerate a sample clock a few ppm off only if
   the receiver follows it. skinny-fm's receiver fits the P1 spacing and
   resamples. 8VSB's symbol-timing loop does the equivalent all the time.
@@ -390,6 +390,14 @@ How to tell them apart on the BB60D:
 - **Watch:**
   - It runs `ffplay -vst p:N:v -ast p:N:a` on the programme chosen.
   - Changing programme restarts only the player. A retune stops it.
+  - **A new multiplex on the same channel restarts it too.** If the transport stream is gone
+    for `RENEW_S` (3 s) or more and then comes back, the analyser starts afresh and the
+    programme being watched gets a new ffplay. That is what a transmitter restarted with other
+    programmes looks like. Before the fix (2026-11-22, offline: our 3-programme multiplex,
+    a 4 s gap, then our 9-programme one, at air rate), ffplay kept the old timeline. It
+    limped at about 7 pictures a second where a fresh ffplay plays 25, and programmes that had
+    gone stayed in the list. skinny-fm found the same in its own player (its `t2-new-multiplex`,
+    `RENEW_S` there too). A shorter fade keeps everything as it was.
   - A programme with no sound plays its picture: ffplay warns that the audio specifier
     matches nothing and carries on. Checked on a pipe joined mid-stream.
   - The decoder hands over a whole frame of stream at once, about 0.5 MB at 16 Mb/s, which
@@ -405,6 +413,8 @@ How to tell them apart on the BB60D:
   - Watch on the silent programme, then a change of programme, with a stand-in ffmpeg
     player counting pictures. Its `-flush_packets 1` is what lets the count be read while
     it runs.
+  - A gap longer than `RENEW_S`, then the stream again: a new player on the same programme,
+    and the list started afresh.
   - No worker process left behind.
   - The frame across the recording's loop seam fails as a whole, and the test allows for
     it.
@@ -453,6 +463,50 @@ How to tell them apart on the BB60D:
   - Locked within 5 s, then 60 s of 21,390 codewords of 21,390.
   - SNR 11.0-11.7 dB (16QAM 3/5 needs about 9.6); -0.4 ppm; input -60 dBFS.
   - 0 errored packets and 0 dropped frames; the three names from the SDT.
+- **The bench's 12 dB was a short antenna (2026-11-22).** Every run above sat at 11-12 dB SNR,
+  and -4 dBm did not lift it. The VSG60's antenna had not been extended. Extended, the same
+  link gives 27-30 dB at -4 dBm (+17 dB), and 10 MS/s and 20 MS/s on the BB60D give the same
+  SNR. Look at both antennas before suspecting a ceiling in the radios or the room.
+- **16QAM 3/5, 15 minutes, extended antenna (2026-11-22):** `dvbt2Xmitter` at -4 dBm from
+  worklaptop1 through `scripts/remote_tx.py app`, three programmes. skinny-fm's receiver read
+  27-30 dB SNR and 100 % of codewords for the whole run.
+- **A recorded broadcast replayed over the air (2026-11-22).**
+  - What was sent: the Bangkok channel 36 recording from the 4TB drive (`4tb-catalog.md`),
+    64QAM 3/5 at 139 blocks a frame. It was cut to 19.5 s (before its AGC step), resampled
+    20 to 10 MS/s with `dvbt2_tx.rational_resampler`, scaled to rms 0.2, and looped from disk
+    on the VSG60 through `scripts/remote_tx.py stream`.
+  - With the short antenna (11-12 dB) it decoded nothing: 64QAM 3/5 needs about 12.8 dB.
+  - With the antenna extended, at -4 dBm, skinny-fm's receiver decoded 99.3-100 % of codewords
+    and played the 1080i programme. **But the SNR it read, 16.5-16.8 dB, was the recording's,
+    not the link's.** The noise and fading where it was recorded are in the IQ, and a replay
+    sends them out again however strong the link is. Data-cell MER band by band matched the
+    original recording within about 0.5 dB.
+  - So a replayed recording cannot test a receiver at high SNR. Use a signal made at the
+    transmitter for that.
+- **Clean 64QAM 3/5 from `dvbt2Xmitter` (2026-11-22):** -4 dBm, extended antenna, the same
+  layout (138 blocks a frame) and three programmes. In loopback first
+  (`scripts/test_dvbt2_tx.py --mod 64QAM`), 2070 of 2070 codewords. Over the air, read by
+  skinny-fm:
+  - 100 % of codewords; SNR 27.5-28.1 dB; locked 4 s after keying.
+  - Data-cell MER 25.1 dB, flat across the band (22.5-27.0 dB per sixteenth), within about 2 dB
+    of the pilots. The replay over the same link gave 9.1 dB.
+  - The video played at a full 25 fps, with no dropped frames or sound cuts.
+  - So the receiver handles 64QAM cleanly. The weak data cells and the smearing on off-air 64QAM
+    recordings come from the recordings themselves.
+- **Harder signals, extended antenna, -4 dBm (2026-11-22, 19:44-19:58).** Each was checked first
+  in loopback (`scripts/test_dvbt2_tx.py --mod ...`), then sent by `dvbt2Xmitter` through
+  `scripts/remote_tx.py app`:
+  - **256QAM 3/5, 186 blocks, three programmes:** loopback 2790 of 2790 codewords. Over the air,
+    skinny-fm's receiver read 100 % of codewords, SNR 29-30 dB, data-cell MER 27.6 dB (within
+    1-2 dB of the pilots), and Big Buck Bunny at a full 25 fps. That is about 10 dB over the
+    17-18 dB it needs.
+  - **64QAM 3/5 with nine programmes, the dialog's maximum** (about 1.9 Mb/s of picture each):
+    all nine named in the SDT within 4 s of keying, 100 % of codewords, 0 errored packets, TS
+    steady at 21.38 Mb/s. Every programme tried played at 25 fps. On worklaptop1 (8 cores),
+    live encoding took about 5.2 cores for ffmpeg and 1.4 for the modulator, with no underruns.
+  - **Our own `dvbt2Receiver` on 64QAM 3/5,** through `scripts/app_rx_check.py --radio bb60 --gain
+    60`, over 150 s: 78,936 of 78,936 codewords, SNR 26.8-28.0 dB, -0.4 ppm, input -43 dBFS, 0
+    errored packets, 0 dropped frames, no overruns, and all three programmes named.
 - **Rates:** 10 MS/s suits all three transmitters here. The Ettus N210
   makes it as 100/10, an even ratio: see
   [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
@@ -462,8 +516,8 @@ How to tell them apart on the BB60D:
     (about 15 Mb/s), five or six. At 64QAM 3/5 (about 22 Mb/s), eight or
     nine.
   - The thresholds above are what each needs at minimum, plus a few dB of
-    margin. The 12 dB the bench gave at -10 dBm covers QPSK and 16QAM, but
-    not 64QAM.
+    margin. With both antennas extended, the bench's 27-30 dB at -4 dBm covers all three,
+    and 64QAM 3/5 was decoded clean over the air (above).
 - **The public repo:** real broadcasts' L1 carries network identifiers
   (CELL_ID, NETWORK_ID, T2_SYSTEM_ID). They never go into this repo. Test
   with gr-dtv's synthetic signals.
