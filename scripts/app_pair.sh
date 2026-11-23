@@ -59,7 +59,7 @@ conda activate gnu
 busy() {
     # Only a python running one of these, or tx_waveforms itself - a shell
     # whose command line merely mentions them (this one's caller, say) is not.
-    local pat='^[^ ]*python[0-9.]* [^ ]*(app_tx_check|app_rx_check|_run)\.py|^[^ ]*tx_waveforms'
+    local pat='^[^ ]*python[0-9.]* [^ ]*(app_tx_check|app_rx_check|_run|vsg_stream_file)\.py|^[^ ]*tx_waveforms'
     if [ "$1" = local ]; then pgrep -f "$pat" >/dev/null
     else ssh -n "$1" "pgrep -f '$pat'" >/dev/null; fi
 }

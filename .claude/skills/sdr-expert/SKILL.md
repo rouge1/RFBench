@@ -75,6 +75,7 @@ through them in order and check each one rather than guessing:
 | Run one transmitter app on a real radio and check it | `scripts/app_tx_check.py` |
 | Run one receiver app headless and read its status | `scripts/app_rx_check.py` |
 | Transmitter and receiver over ssh, each under its own timeout | `scripts/app_pair.sh`, `scripts/n210_ota_test.sh` |
+| Transmit only, from the radio's other machine, this working tree (an app, or a cf32 file looped from disk) | `scripts/remote_tx.py` (with `scripts/vsg_stream_file.py`) |
 | One app without the launcher | `python apps/_run.py MODULE [--config values.json]` |
 | Decoders already written | `lora_phy.py`, `dmr_demod.py`/`dmr_fec.py`, `rds_core`, `atsc_rx_core`, `ntsc_decode`, `fm_video_core`, rtl_433 for ISM |
 

@@ -230,8 +230,13 @@ def find_devices():
 # device another process is holding, so discovery cannot tell us either. Hence
 # this advisory PID lock: it turns the abort into a normal Python exception for
 # anything that goes through this module.
-_LOCK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          os.pardir, 'config', '.vsg60.lock')
+#
+# The lock lives in the checkout's config/, so it only excludes processes run
+# from the same checkout. A copy run from elsewhere - scripts/remote_tx.py
+# stages the working tree in /tmp on the radio's host - sets VSG60_LOCK to the
+# host's own checkout's lock, so it and that host's launcher see each other.
+_LOCK_PATH = os.environ.get('VSG60_LOCK') or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, 'config', '.vsg60.lock')
 
 
 def _lock_holder():

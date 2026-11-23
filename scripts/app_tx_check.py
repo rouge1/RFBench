@@ -44,6 +44,7 @@ import argparse
 import importlib.util
 import json
 import os
+import signal
 import sys
 import time
 
@@ -194,9 +195,26 @@ def main():
     if a.radio == 'usrp' and r['ant'] != 'TX/RX':
         problems.append(f"antenna {r['ant']}")
 
+    # The app's own handler (dvbt2Xmitter's, say) queues a stop and calls app.quit(), which
+    # ends nothing here: no exec_() loop runs, pump() does. So SIGTERM, SIGINT and SIGHUP are
+    # ours from now on, and end the run within 0.02 s through stop() (2026-11-22: a remote
+    # SIGTERM left dvbt2Xmitter's process waiting out its time).
+    halted = {'sig': None}
+
+    def on_signal(sig, frame):
+        halted['sig'] = signal.Signals(sig).name
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+
     def pump(s):
         end = time.time() + s
         while time.time() < end:
+            if halted['sig']:
+                say('stopped early by', halted['sig'], time.strftime('%H:%M:%S'))
+                for p in problems:
+                    say('PROBLEM', p)
+                say('RESULT', a.module, len(problems))
+                stop(0)
             app.processEvents()
             time.sleep(0.02)
 

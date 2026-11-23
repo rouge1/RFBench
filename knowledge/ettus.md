@@ -344,6 +344,45 @@ or `center_mhz` (ATSC, NTSC, FM video). Run the transmitters at 10 % here:
 at 0 dB of attenuation the BB60D a metre away overflows, so the spectrum
 captures take 20.
 
+### Transmitting from the other machine on its own: `remote_tx.py`
+
+`app_pair.sh` judges a pair, and expects a current checkout on TX_HOST. When only the
+transmitting end is wanted - for a receiver run by hand, or by another session's app - and
+for as long as you like, `remote_tx.py` sends this working tree, uncommitted changes and all:
+
+```sh
+export TX_HOST=worklaptop1-fast
+# a transmitter app, any app_tx_check.py arguments; local media paths in --set are copied
+scripts/remote_tx.py --secs 600 --go app dvbt2Xmitter --radio vsg --fkey cf --freq 594 \
+    --pkey pwr --level-dbm -10 --no-callbacks --set modulation=16QAM --set code_rate=3/5 \
+    --set 'programmes=["<colour bars>", "/data/media/SDR/Big-Buck-Bunny-Opening.mp4"]'
+# a cf32 recording of any length, looped from disk (scripts/vsg_stream_file.py)
+scripts/remote_tx.py --secs 600 --go stream capture_10M.cf32 --rate 10e6 --freq 594 --level-dbm -10
+```
+
+Without `--go` it prints the plan and does nothing.
+
+- **Checks first:** the radio is on the host's USB, and nothing else is running there.
+- **Staging:** it copies the tree to a fresh `/tmp/rftx-XXXXXX` on the host, with every local
+  file the arguments name, and rewrites their paths.
+- **The run:** under `timeout -k`, with the remote PID kept so Ctrl-C here stops it there. It
+  prints ON AIR and until when, then removes the staging folder after checking nothing is left.
+- **Stopping:** SIGTERM goes to the remote PID; anything still there 20 s later gets SIGKILL.
+  `app_tx_check.py` takes SIGTERM, SIGINT and SIGHUP for itself once the app is running. An
+  app's own handler (dvbt2Xmitter's) queues `app.quit()`, which ends nothing when no Qt loop
+  runs, so before 2026-11-22 a remote stop left the transmitter's process waiting out its time.
+- **The VSG lock:** it points `VSG60_LOCK` at the host's checkout's `config/.vsg60.lock`. A
+  copy in `/tmp` has no `config/`, so `vsg_sink`'s lock silently did nothing on the first such
+  run (the "could not create VSG lock ... continuing" warning).
+- **Guards:** a VSG60 level is required, at most 0 dBm unless `--max-dbm` raises it (never
+  past +10), and `--secs` at most 1800.
+- `vsg_stream_file.py` is the streaming cousin of `vsg_play_loop.py`, which is cable-only and
+  10.24 s at most. The file loops with a jump at the seam.
+- Tested without radio or network by `scripts/test_remote_tx.py`, through a stand-in `ssh`.
+
+Each over-the-air run still needs the user's go, and the sessions sharing the radios
+get told first.
+
 `uhd_find_devices` on TX_HOST gives the N210's address. Tell any other
 session using the N210 or the BB60D before starting; the VSG60 and the BB60D
 cannot stream on one host at the same time, which is why the transmitters run
