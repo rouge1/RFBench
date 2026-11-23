@@ -381,8 +381,10 @@ Without `--go` it prints the plan and does nothing.
   cable into the BB60D) timed exactly. APRS was every 10.00 s, a 200 kBd 16QAM's cyclic line
   sat at 200,000.1 Hz, and multimon-ng decoded AFSK1200 at the nominal rate. It was recorded
   at 2.5 MS/s and at 10 MS/s (2026-11-23). It was checked because an over-the-air capture of
-  the same file had timed its narrowband parts 2.4 % fast. That cause is still not known,
-  but it is not the streamer.
+  the same file had timed its narrowband parts 2.5 % fast. That turned out to be the
+  receiver's analysis: a cut asked for `max_rate=250e3` from 10 MS/s took the whole-number
+  decimation 41 (243,902 S/s), and was measured as if it were 250 kS/s. When a resampler
+  picks the rate, read back the rate it used.
 - **The VSG lock:** it points `VSG60_LOCK` at the host's checkout's `config/.vsg60.lock`. A
   copy in `/tmp` has no `config/`, so `vsg_sink`'s lock silently did nothing on the first such
   run (the "could not create VSG lock ... continuing" warning).
