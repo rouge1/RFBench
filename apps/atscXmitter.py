@@ -53,17 +53,27 @@ from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
 # last set, and the receiver opens on the same one.
 DEFAULT_CHANNEL = 24            # 533 MHz
 
+# The whole channel is shifted down by this before the radio, and the radio
+# is tuned this far above ``cf``, so the radio's own LO leakage lands 1.5 MHz
+# above the channel instead of in the middle of it. Without it a VSG60 at
+# -59 dBm put its leak 20 dB under the channel, and a full-gain capture lost
+# 47 % of packets. ntscAnalogVideoRecorded does the same (its LO_OFFSET).
+# The channel then spans -7.5 to -1.5 MHz at baseband, inside the 80 % of
+# 20 MS/s that Signal Hound allow the VSG60. knowledge/atsc.md.
+LO_OFFSET = 4.5e6
+
 # The radio's sample rate, and the second resampler stage that reaches it
-# from 28.5 MS/s, for each radio. No one rate suits them all: SoapyHackRF
-# takes only whole megahertz from 1 to 20 and refuses 12.5 outright, and an
-# Ettus N210 makes only 100 MHz over a whole number (25, 20, 12.5, 10 ...) -
-# asked for 12 it quietly gives 12.5, so the whole signal went out 4.17 %
-# fast, the pilot 112 kHz off where A/53 puts it, and no receiver locked
-# (knowledge/ettus.md). The VSG60 takes either; it keeps 12.
+# from 28.5 MS/s, for each radio: wide enough for the channel and the
+# offset. SoapyHackRF takes only whole megahertz from 1 to 20, and an Ettus
+# N210 makes only 100 MHz over a whole number and wants it even - asked for
+# 12 it quietly gave 12.5, so the signal went out 4.17 % fast and no
+# receiver locked; at 20 (a divide of 5) its halfband filter is off and the
+# band edges tilt (knowledge/ettus.md). So 20 for the HackRF and the VSG60,
+# 25 (a divide of 4) for the N210.
 RADIO_RATES = {                 # radio: (sample rate, interpolation, decimation)
-    'hackrf': (12e6, 8, 19),
-    'vsg': (12e6, 8, 19),
-    'usrp': (12.5e6, 25, 57),
+    'hackrf': (20e6, 40, 57),
+    'vsg': (20e6, 40, 57),
+    'usrp': (25e6, 50, 57),
 }
 
 # Baseband amplitude out of the modulator, before the radio's own level
@@ -384,7 +394,7 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
         if radio_type == 'vsg':
             from apps.vsg_sink import vsg_sink
             self.radio_sink = vsg_sink(
-                center_freq=cf*1e6,
+                center_freq=cf*1e6 + LO_OFFSET,
                 sample_rate=samp_rate,
                 level_dbm=scale_power(rfPwr, self._power_range))
         elif radio_type == 'usrp':
@@ -395,19 +405,19 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
             )
             self.radio_sink.set_samp_rate(samp_rate)
             self.radio_sink.set_time_now(uhd.time_spec(time.time()), uhd.ALL_MBOARDS)
-            self.radio_sink.set_center_freq(cf*1e6, 0)
+            self.radio_sink.set_center_freq(cf*1e6 + LO_OFFSET, 0)
             self.radio_sink.set_antenna("TX/RX", 0)
             self._power_range = resolve_power_range(radio_type, self.radio_sink)
             self.radio_sink.set_gain(scale_power(rfPwr, self._power_range), 0)
         else:
             self.radio_sink = soapy.sink('driver=hackrf', 'fc32', 1, '', '', [''], [''])
             self.radio_sink.set_sample_rate(0, samp_rate)
-            self.radio_sink.set_frequency(0, cf*1e6)
+            self.radio_sink.set_frequency(0, cf*1e6 + LO_OFFSET)
             self.radio_sink.set_gain(0, 'VGA', scale_power(rfPwr, self._power_range))
             self.radio_sink.set_gain(0, 'AMP', 0)
         # The first stage takes the 10.762237 MS/s symbol stream to exactly
-        # 28.5 MS/s (x143/54); this one brings that to the radio rate: 8/19
-        # lands on 12 MS/s exactly, 25/57 on 12.5 (RADIO_RATES).
+        # 28.5 MS/s (x143/54); this one brings that to the radio rate: 40/57
+        # lands on 20 MS/s exactly, 50/57 on 25 (RADIO_RATES).
         self.rational_resampler_xxx_1 = filter.rational_resampler_ccc(
                 interpolation=rate_interp,
                 decimation=rate_decim,
@@ -502,6 +512,9 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
         # further into the Gaussian tail it reaches. Backing the baseband off
         # leaves 10 dB of headroom; the analog stage sets the actual power.
         self.blocks_multiply_const_vxx_0 = blocks.multiply_const_cc(BASEBAND_SCALE)
+        # Down by LO_OFFSET, after the spectrum display has seen the channel
+        # where it belongs: the display is labelled in RF around cf.
+        self.lo_shift = blocks.rotator_cc(-2 * math.pi * LO_OFFSET / samp_rate, False)
         self.fft_filter_xxx_0 = filter.fft_filter_ccc(1, firdes.root_raised_cosine(0.11, symbol_rate, symbol_rate/2, 0.1152, 200), 1)
         self.fft_filter_xxx_0.declare_sample_delay(0)
         self.dtv_dvbs2_modulator_bc_0 = dtv.dvbs2_modulator_bc(
@@ -549,7 +562,8 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
         self.connect((self.dtv_dvbs2_modulator_bc_0, 0), (self.blocks_rotator_cc_0, 0))
         self.connect((self.fft_filter_xxx_0, 0), (self.rational_resampler_xxx_0, 0))
         self.connect((self.rational_resampler_xxx_0, 0), (self.rational_resampler_xxx_1, 0))
-        self.connect((self.rational_resampler_xxx_1, 0), (self.blocks_multiply_const_vxx_0, 0))
+        self.connect((self.rational_resampler_xxx_1, 0), (self.lo_shift, 0))
+        self.connect((self.lo_shift, 0), (self.blocks_multiply_const_vxx_0, 0))
         self.connect((self.rational_resampler_xxx_1, 0), (self.qtgui_freq_sink_x_0, 0))
 
 
@@ -608,6 +622,7 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
 
     def set_samp_rate(self, samp_rate):
         self.samp_rate = samp_rate
+        self.lo_shift.set_phase_inc(-2 * math.pi * LO_OFFSET / self.samp_rate)
         self.qtgui_freq_sink_x_0.set_frequency_range(self.cf*1e6, self.samp_rate)
         if self.radio_type == 'usrp':
             self.radio_sink.set_samp_rate(self.samp_rate)
@@ -662,9 +677,9 @@ class atscXmitter2(gr.top_block, Qt.QWidget):
         self.cf = cf
         self.qtgui_freq_sink_x_0.set_frequency_range(self.cf*1e6, self.samp_rate)
         if self.radio_type == 'usrp':
-            self.radio_sink.set_center_freq(self.cf*1e6, 0)
+            self.radio_sink.set_center_freq(self.cf*1e6 + LO_OFFSET, 0)
         else:
-            self.radio_sink.set_frequency(0, self.cf*1e6)
+            self.radio_sink.set_frequency(0, self.cf*1e6 + LO_OFFSET)
 
 def main(top_block_cls=atscXmitter2, options=None, app=None, config_values=None):
     own_app = app is None
