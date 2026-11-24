@@ -7,7 +7,7 @@ that can be decided with numpy lives here, free of GNU Radio and Qt so it
 can be tested without a radio - the same split as ``rds_core`` against
 ``rdsReceiver``.
 
-Four jobs:
+Five jobs:
 
 **Find the pilot, and say how far it is from where A/53 puts it.** 8VSB
 carries a small residual carrier 309.441 kHz above the lower edge of the
@@ -24,6 +24,13 @@ time to find, and is why ``afc_correction`` returns both.
 **Measure how open the eye is.** ``gr-dtv``'s equalizer emits soft symbols
 on the ideal 8VSB grid, so the distance from each to its nearest level is
 the error, and the ratio of signal power to that is MER.
+
+**Find any narrow line in the channel that is not the pilot.** 8VSB data
+is flat across the channel, so a carrier sitting in it - a direct-conversion
+transmitter's own LO leak, most often - stands out of a fine spectrum at
+any frequency and any level. ``LeakMeter`` finds such lines and gives each
+in dBc against the whole channel, so the receiver reports the transmitter's
+fault rather than hiding it.
 
 **Say what is in the recovered stream.** A transport stream announces its
 own programs in the PAT and PMT, so a few hundred bytes of parsing turns
@@ -221,6 +228,204 @@ class Afc:
     @property
     def ppm(self):
         return (self.clock_ratio - 1.0) * 1e6
+
+
+# --- lines in the channel that are not the pilot -------------------------
+#
+# A direct-conversion transmitter leaks its LO, and where that lands depends
+# on the radio: at the channel centre for one that tunes there, a few hundred
+# kHz away for a VSG60 that parks its LO off the requested centre, outside the
+# channel for one that offsets it on purpose. So the receiver does not guess
+# where to look. 8VSB is flat, a carrier is one bin wide in a fine spectrum,
+# and anything that stands well above the flat floor is a line.
+
+#: Bin spacing to aim for. Fine enough that a -40 dBc line clears the floor
+#: by several dB (a line gains 10log(channel width / bin width) on the data,
+#: which is 44 dB at 200 Hz), coarse enough that one AFC tap gives a dozen
+#: segments to average.
+LEAK_RESOLUTION_HZ = 200.0
+#: How far above the local floor a bin has to stand to count as a line, once
+#: the spectrum is averaged over LeakMeter.AVERAGE taps. The floor's own
+#: scatter is then a few tenths of a dB.
+LEAK_THRESHOLD_DB = 6.0
+#: The part of the channel that is flat data, either side of the carrier:
+#: the 8VSB spectrum rolls off over the outer 310 kHz of each edge.
+LEAK_SEARCH_HZ = CHANNEL_BW / 2 - 0.35e6
+#: Within this of the transmitter's centre, the receiver's centre notch
+#: removes a line (it is about 3 kHz wide at -3 dB, with the AFC on).
+NOTCHABLE_HZ = 1.0e3
+
+
+def channel_psd(samples, sample_rate, resolution_hz=LEAK_RESOLUTION_HZ):
+    """Averaged power spectral density of ``samples``: ``(freqs, psd, df)``.
+
+    Hann-windowed segments, half overlapping, scaled as a density, so that a
+    sum of ``psd * df`` over any band is the power in it - for the data and
+    for a line alike, which is what lets a line be given in dBc.
+    """
+    x = np.asarray(samples, dtype=np.complex64)
+    nfft = 1 << int(np.ceil(np.log2(sample_rate / resolution_hz)))
+    if x.size < nfft:
+        return None
+    w = np.hanning(nfft).astype(np.float32)
+    starts = range(0, x.size - nfft + 1, nfft // 2)
+    acc = np.zeros(nfft)
+    for k in starts:
+        acc += np.abs(np.fft.fft(x[k:k + nfft] * w)) ** 2
+    psd = np.fft.fftshift(acc / len(starts)) / (sample_rate * float(np.sum(w ** 2)))
+    freqs = np.fft.fftshift(np.fft.fftfreq(nfft, 1.0 / sample_rate))
+    return freqs, psd, sample_rate / nfft
+
+
+def _local_floor(psd, block):
+    """The median of each ``block`` bins, drawn as a line under the spectrum.
+
+    Local rather than one median for the whole channel, so a tilt - the
+    BB60D's own flatness, or multipath - does not read as a line.
+    """
+    n = psd.size // block
+    if n < 2:
+        return np.full_like(psd, np.median(psd))
+    meds = np.median(psd[:n * block].reshape(n, block), axis=1)
+    centres = (np.arange(n) + 0.5) * block
+    return np.interp(np.arange(psd.size), centres, meds)
+
+
+def carrier_lines(freqs, psd, df, carrier_hz, threshold_db=LEAK_THRESHOLD_DB):
+    """Narrow lines in the channel, the pilot apart.
+
+    ``carrier_hz`` is where the transmitter's centre sits in ``freqs`` - the
+    AFC's error, since ``freqs`` are the radio's own. Returns ``(lines,
+    pilot_dbc, sensitivity_dbc)``: each line a dict with ``offset_hz`` from
+    the transmitter's centre, ``raw_hz`` from the receiver's, and ``dbc``
+    against the whole channel, strongest first; the pilot's own level, as a
+    check on the arithmetic; and the weakest line that would have been
+    reported.
+    """
+    rel = freqs - carrier_hz
+    channel = np.abs(rel) < CHANNEL_BW / 2
+    total = float(np.sum(psd[channel]) * df)
+    if total <= 0:
+        return [], None, None
+    search = np.abs(rel) < LEAK_SEARCH_HZ
+    idx = np.nonzero(search)[0]
+    if idx.size < 64:
+        return [], None, None
+    p = psd[idx]
+    floor = _local_floor(p, max(16, int(50e3 / df)))
+    excess = p - floor
+    half = 3                                   # the Hann main lobe and a bit
+
+    # The pilot: measured, never reported as a leak.
+    pilot_at = carrier_hz + PILOT_OFFSET
+    near_pilot = np.abs(freqs - pilot_at) < 4 * df
+    pilot_dbc = None
+    if near_pilot.any():
+        jp = int(np.argmax(np.where(near_pilot, psd, 0)))
+        ref = np.abs(freqs - (pilot_at + 30e3)) < 20e3     # data just above it
+        local = float(np.median(psd[ref])) if ref.any() else 0.0
+        pp = float(np.sum(np.clip(psd[jp - half:jp + half + 1] - local, 0, None)) * df)
+        pilot_dbc = 10 * np.log10(pp / total) if pp > 0 else None
+
+    hot = excess > floor * (10 ** (threshold_db / 10) - 1)
+    lines = []
+    j = 0
+    while j < p.size:
+        if not hot[j]:
+            j += 1
+            continue
+        k = j
+        while k + 1 < p.size and hot[k + 1]:
+            k += 1
+        peak = j + int(np.argmax(p[j:k + 1]))
+        f = float(freqs[idx[peak]])
+        if abs(f - pilot_at) > 4 * df:
+            lo, hi = max(0, peak - half), min(p.size, peak + half + 1)
+            power = float(np.sum(np.clip(excess[lo:hi], 0, None)) * df)
+            if power > 0:
+                lines.append({'offset_hz': f - carrier_hz, 'raw_hz': f,
+                              'dbc': 10 * np.log10(power / total)})
+        j = k + 1
+    lines.sort(key=lambda d: -d['dbc'])
+    floor_bin = float(np.median(floor)) * df * 1.5    # Hann's noise bandwidth
+    sensitivity = 10 * np.log10(floor_bin * (10 ** (threshold_db / 10) - 1)
+                                / total)
+    return lines, pilot_dbc, sensitivity
+
+
+class LeakMeter:
+    """Averages the channel's spectrum over several taps and finds its lines.
+
+    One AFC tap at 10 MS/s is 52 ms, a dozen segments; averaged over
+    ``AVERAGE`` of them the floor settles to a few tenths of a dB and a line
+    40 dB under the channel stands clear of it. The average is of the
+    radio's own spectrum, so a retune starts it again.
+    """
+
+    AVERAGE = 8
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.psd = None
+        self.count = 0
+        self.freqs = None
+        self.df = None
+
+    def update(self, samples, sample_rate):
+        got = channel_psd(samples, sample_rate)
+        if got is None:
+            return
+        freqs, psd, df = got
+        if self.psd is None or self.psd.shape != psd.shape:
+            self.psd, self.freqs, self.df, self.count = psd, freqs, df, 1
+            return
+        self.count = min(self.count + 1, self.AVERAGE)
+        self.psd += (psd - self.psd) / self.count
+
+    @property
+    def ready(self):
+        return self.count >= 3
+
+    def lines(self, carrier_hz):
+        if self.psd is None:
+            return [], None, None
+        return carrier_lines(self.freqs, self.psd, self.df, carrier_hz)
+
+
+def describe_leak(lines, sensitivity, notch_on=False, afc_on=True):
+    """The readout's words for what ``carrier_lines`` found.
+
+    The notch sits wherever the AFC has put the transmitter's centre; with
+    the AFC off it sits at the radio's own centre instead, and misses a leak
+    even 2 kHz away (a VSG60 at 5.83 GHz: 48 % lost, 28 % with the notch on
+    and the AFC off, 0.16 % with both on).
+    """
+    if not lines:
+        if sensitivity is None:
+            return "-"
+        return f"none in the channel (would see {sensitivity:.0f} dBc)"
+    parts = []
+    for line in lines[:2]:
+        off = line['offset_hz']
+        where = (f"{off / 1e3:+.1f} kHz from the transmitter's centre"
+                 if abs(off) >= 50 else "at the transmitter's centre")
+        text = f"{line['dbc']:.1f} dBc {where}"
+        if abs(line['raw_hz']) < 2 * LEAK_RESOLUTION_HZ:
+            text += " - also this radio's own centre, so it may be its own leak"
+        parts.append(text)
+    if len(lines) > 2:
+        parts.append(f"and {len(lines) - 2} more")
+    text = "; ".join(parts)
+    if abs(lines[0]['offset_hz']) < NOTCHABLE_HZ:
+        if notch_on and afc_on:
+            text += "  (notched)"
+        elif notch_on:
+            text += "  - not notched: the notch needs AFC on"
+        else:
+            text += "  - the centre notch would remove it"
+    return text
 
 
 # --- how open the eye is ---------------------------------------------------

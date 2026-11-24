@@ -352,7 +352,7 @@ with `atscXmitter` sending the colour bars:
     to 19.5) but decodes. The real link was nearer the edge, and the
     VSG at −59 dBm brings more than white noise.
 
-Three fixes, on branch `atsc-leak-fixes`:
+Three fixes and a readout, on branch `atsc-leak-fixes`:
 
 1. **`atscXmitter` tunes the radio `LO_OFFSET` (4.5 MHz) above the
    channel** and shifts the signal down to match after the last
@@ -379,18 +379,34 @@ Three fixes, on branch `atsc-leak-fixes`:
      up: into a null sink, 2.1× real time at 20 MS/s and 1.85× at 25,
      against 1.96× at the old 12 (on this 20-thread host, possibly with
      another session's tests running).
-2. **`atscReceiver` notches the channel centre** after the AFC rotator,
-   which has put the transmitter's carrier at DC: the input less a
-   one-pole running mean (`CENTRE_NOTCH_LEN` = 1024 samples). At 10 MS/s it
-   is −3 dB at ±1.5 kHz, −10 dB at ±500 Hz and −1.8 dB at ±2.2 kHz. It is there for a transmitter that leaks into its own channel,
-   ours before the fix or anyone's.
+2. **`atscReceiver` can notch the channel centre**, after the AFC rotator
+   has put the transmitter's carrier at DC: the input less a one-pole
+   running mean (`CENTRE_NOTCH_LEN` = 1024 samples). At 10 MS/s it is −3 dB
+   at ±1.5 kHz, −10 dB at ±500 Hz and −1.8 dB at ±2.2 kHz.
+   - **Off by default, a "Centre Notch" checkbox in the window**
+     (2026-11-24, after the user asked how a fixed notch could know where
+     an unknown transmitter leaks). It cannot: it catches only a leak at the
+     transmitter's own centre, and a VSG60 parks its LO up to a few hundred
+     kHz from there at some frequencies. The leak is the transmitter's
+     fault, and a receiver that removes it silently reports a good MER for
+     a bad transmitter. So the window measures every line instead (4,
+     below), and the notch is a workaround to tick when a centre leak is
+     stopping a decode. It switches by scaling the subtracted mean
+     (`set_centre_notch`), never by rebuilding the flowgraph.
+   - **It is not free: 0.7 dB of MER on a clean signal.**
+     `test_atsc_receiver.py` at 30 dB SNR: 23.4 dB with no leak and no
+     notch, 22.7 with the notch on, 19.5 with a −20 dBc leak unnotched,
+     22.7 notched - it gets back all but its own cost. (The first version
+     of the test had the notch on in the no-leak run too, and read "no
+     cost"; it was wrong.)
+   - On the full-gain −59 dBm capture, in the window itself (offscreen, fed
+     from the file): 48 % lost unticked, 0.16 % ticked mid-run, 28-30 %
+     ticked with the AFC off.
    - `dc_blocker_cc` did the same job and took the receiver from 1.46× to
-     0.91× real time; the one-pole keeps 1.53×.
-   - `test_atsc_receiver.py` adds a −20 dBc leak: MER 19.5 dB unnotched,
-     22.7 notched, 22.7 with no leak at all.
+     0.91× real time; the one-pole keeps 1.5×.
    - With AFC off the leak sits wherever the carrier error puts it - +2.2
      kHz from the VSG60 at 5.8 GHz - where the notch takes only 1.8 dB off
-     it. So it works only with AFC on, the default.
+     it. So it works only with AFC on, and the readout says so.
    - Our own transmitter no longer needs it: the post-fix −59 dBm capture
      decodes the same with the notch off (MER 18.2 dB) as on (18.1).
 3. **`atsc_source` names the programme in the SDT**: the clip's name as
@@ -400,6 +416,26 @@ Three fixes, on branch `atsc-leak-fixes`:
      (VCT, MGT), and `atscReceiver` lists programmes from the PAT and PMT.
    - A pre-made `.ts` plays as it is and keeps whatever tables it was made
      with. `scripts/test_atsc_source.py` reads the SDT back.
+
+4. **`atscReceiver` reports any carrier in the channel** as "Carrier
+   Leak", in dBc against the whole channel and in kHz from the
+   transmitter's centre (`LeakMeter` in `atsc_rx_core`).
+   - 8VSB is flat, so a line stands out of a fine spectrum at any frequency
+     and level: ~150-200 Hz bins (2^16 points at 10-12.5 MS/s), Hann,
+     averaged over eight AFC taps, a local median for the floor, 6 dB over
+     it to count. It sees down to about −39 dBc. The pilot is excluded and
+     measured as a check: it reads −11.5 to −11.6 dBc, A/53's figure.
+   - On the bench captures it reads what was measured by hand: −19.4 to
+     −19.8 dBc at the centre at −59 dBm (−19.8 by hand), −28.8 at −20 dBm
+     (−28.6), and nothing in the channel from the fixed transmitter.
+   - A line at the receiver's own centre is flagged as possibly the
+     receiver's leak: a HackRF or N210 receiving puts its own there, and
+     only a transmitter error separates the two.
+   - It names the notch only for a line within 1 kHz of the transmitter's
+     centre. About 10 ms of FFT every second refresh, on the GUI thread.
+   - ATSC only. DVB-T2's continual pilots are lines by design, and NTSC
+     and FM video have carriers in the channel, so each would need its own
+     rule for what counts as a leak.
 
 `test_atsc_loopback.py` follows the new chain: it shifts back by
 `LO_OFFSET` before `dtv.atsc_rx` and takes an optional leak at the

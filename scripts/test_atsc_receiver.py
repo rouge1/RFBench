@@ -39,7 +39,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apps.atsc_rx_core import (  # noqa: E402
     PILOT_OFFSET, SYMBOL_RATE, TsAnalyzer, VSB_LEVELS, afc_correction,
     channel_center_mhz, channel_for_center, mer_db, pilot_offset_hz)
-from apps.atscReceiver import AtscDemod, ts_sink  # noqa: E402
+from apps.atsc_rx_core import LeakMeter, describe_leak  # noqa: E402
+from apps.atscReceiver import AFC_WINDOW, AtscDemod, ts_sink  # noqa: E402
 from apps.bb60_source import (gain_plan as bb60_gain_plan,  # noqa: E402
                               nearest_rate as bb60_nearest_rate)
 
@@ -123,7 +124,7 @@ class Decode(gr.top_block):
     clock then measures the receiver alone.
     """
 
-    def __init__(self, path, carrier_hz=0.0, clock_ratio=1.0, centre_notch=True):
+    def __init__(self, path, carrier_hz=0.0, clock_ratio=1.0, centre_notch=False):
         gr.top_block.__init__(self, "decode", catch_exceptions=True)
         src = blocks.file_source(gr.sizeof_gr_complex, path, False, 0, 0)
         self.demod = AtscDemod(RATE, centre_notch=centre_notch)
@@ -200,6 +201,72 @@ def run(name, seconds, **kwargs):
           f"{r['corrected']:5.2f} bytes/pkt corrected, MER {r['mer']:5.1f} dB, "
           f"{r['speed']:.2f}x real time, {lock}")
     return r
+
+
+def meter(x, carrier_hz):
+    """What the window's LeakMeter reports for ``x``, fed as the app feeds it."""
+    m = LeakMeter()
+    step = (x.size - AFC_WINDOW) // LeakMeter.AVERAGE
+    for k in range(LeakMeter.AVERAGE):
+        m.update(x[k * step:k * step + AFC_WINDOW], RATE)
+    return m.lines(carrier_hz) + (m.df,)
+
+
+def tone(n, hz, power):
+    return (np.sqrt(power) * np.exp(2j * np.pi * hz / RATE
+                                    * np.arange(n))).astype(np.complex64)
+
+
+def leak_meter_checks(noisy, leaky, fast, fast_carrier_hz):
+    n = int(RATE * 1.0)
+    x = np.fromfile(noisy, dtype=np.complex64, count=n)
+    p = float(np.mean(np.abs(x) ** 2))
+
+    lines, pilot, sens, df = meter(x, 0.0)
+    print(f"       clean: pilot {pilot:.2f} dBc, would see {sens:.1f} dBc, "
+          f"{df:.0f} Hz bins")
+    check("a clean channel has no line but the pilot", not lines, repr(lines))
+    check("the pilot reads as A/53's, -11.6 dBc, to within 1 dB",
+          pilot is not None and abs(pilot + 11.6) < 1.0, f"{pilot:.2f} dBc")
+    check("lines down to -38 dBc would be seen", sens < -38, f"{sens:.1f} dBc")
+
+    lines, _, sens, df = meter(np.fromfile(leaky, dtype=np.complex64, count=n),
+                               0.0)
+    check("the -20 dBc leak at the centre is found, and only it",
+          len(lines) == 1 and abs(lines[0]['offset_hz']) < df
+          and abs(lines[0]['dbc'] + 20) < 1.0, repr(lines))
+    text = describe_leak(lines, sens)
+    check("and the readout says the notch would take it", 'notch would' in text,
+          text)
+    check("and says so once it has", '(notched)' in describe_leak(
+        lines, sens, notch_on=True))
+    text = describe_leak(lines, sens, notch_on=True, afc_on=False)
+    check("but not with the AFC off, where the notch is not on the leak",
+          'needs AFC on' in text, text)
+
+    # A VSG60 that parks its LO off the centre, and a weaker spur besides.
+    y = x + tone(n, 200e3, p * 1e-3) + tone(n, -1.3e6, p * 10 ** -3.8)
+    lines, _, sens, df = meter(y, 0.0)
+    want = [(200e3, -30.0), (-1.3e6, -38.0)]
+    got = [(round(d['offset_hz']), round(d['dbc'], 1)) for d in lines]
+    check("lines anywhere in the channel are found: +200 kHz and -1.3 MHz",
+          len(lines) == 2 and all(abs(d['offset_hz'] - f) < df
+                                  and abs(d['dbc'] - lvl) < 1.5
+                                  for d, (f, lvl) in zip(lines, want)), repr(got))
+    text = describe_leak(lines, sens)
+    check("and the notch is not offered for them", 'notch' not in text, text)
+
+    # A transmitter 13 ppm out, and a line at the receiver's own centre:
+    # it is that far from the transmitter's, and flagged as maybe the radio's.
+    z = np.fromfile(fast, dtype=np.complex64, count=n)
+    z = z + tone(n, 0.0, float(np.mean(np.abs(z) ** 2)) * 10 ** -2.5)
+    lines, _, sens, df = meter(z, fast_carrier_hz)
+    check("a line at the receiver's centre is placed against the transmitter's",
+          len(lines) == 1 and abs(lines[0]['offset_hz'] + fast_carrier_hz) < df
+          and abs(lines[0]['dbc'] + 25) < 1.0, repr(lines))
+    text = describe_leak(lines, sens)
+    check("and flagged as possibly the receiver's own", "radio's own" in text,
+          text)
 
 
 def main():
@@ -343,9 +410,15 @@ def main():
         (x + np.complex64(np.sqrt(p * 1e-2))).astype(np.complex64).tofile(leaky)
         del x
         no_leak = run("no leak", args.seconds, path=noisy)
+        clean_notched = run("no leak, notch on", args.seconds, path=noisy,
+                            centre_notch=True)
         unnotched = run("leak, notch off", args.seconds, path=leaky,
                         centre_notch=False)
-        notched = run("leak, notch on", args.seconds, path=leaky)
+        notched = run("leak, notch on", args.seconds, path=leaky,
+                      centre_notch=True)
+
+        print("\nthe leak meter: lines in the channel, wherever they are")
+        leak_meter_checks(noisy, leaky, fast, carrier_hz)
     finally:
         for path in (right, fast, noisy, leaky):
             if os.path.exists(path):
@@ -375,9 +448,17 @@ def main():
     check("unnotched, a -20 dBc leak costs the eye more than 2 dB",
           no_leak['mer'] - unnotched['mer'] > 2,
           f"MER {unnotched['mer']:.1f} against {no_leak['mer']:.1f} dB")
-    check("the centre notch gives it back, to within 0.5 dB",
-          abs(notched['mer'] - no_leak['mer']) < 0.5 and notched['bad_pct'] < 0.1,
-          f"MER {notched['mer']:.1f} against {no_leak['mer']:.1f} dB, "
+    # The notch is not free: on a clean signal it costs the eye about
+    # 0.7 dB (23.4 against 22.7, every run on 2026-11-24) - one reason it is
+    # off unless ticked. With a -20 dBc leak it gets back everything but that.
+    check("the notch costs a clean signal under 1 dB of MER, and no packets",
+          no_leak['mer'] - clean_notched['mer'] < 1.0
+          and clean_notched['bad_pct'] < 0.1,
+          f"MER {clean_notched['mer']:.1f} against {no_leak['mer']:.1f} dB")
+    check("with a leak, the notch gives back all but its own cost",
+          abs(notched['mer'] - clean_notched['mer']) < 0.5
+          and notched['bad_pct'] < 0.1,
+          f"MER {notched['mer']:.1f} against {clean_notched['mer']:.1f} dB, "
           f"{notched['bad_pct']:.3f}% bad")
     check("and the notch costs the receiver no speed worth having",
           notched['speed'] > 1.2, f"{notched['speed']:.2f}x real time")

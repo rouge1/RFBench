@@ -31,9 +31,10 @@ from gnuradio.fft import window  # type: ignore
 from gnuradio.filter import firdes  # type: ignore
 from PyQt5 import Qt, QtCore  # type: ignore
 
-from apps.atsc_rx_core import (Afc, SYMBOL_RATE, TsAnalyzer,
+from apps.atsc_rx_core import (Afc, LeakMeter, SYMBOL_RATE, TsAnalyzer,
                                channel_center_mhz, channel_for_center,
-                               channels, mer_db, mer_quality, since,
+                               channels, describe_leak, mer_db, mer_quality,
+                               pilot_offset_hz, since,
                                tv_channel_items)
 from apps.theme import TOKENS
 from apps.utils import (CONFIG_DIR, apply_dark_theme, apply_flowgraph_theme,
@@ -62,13 +63,21 @@ DEFAULT_CHANNEL = 24            # 533 MHz, the channel this bench uses
 
 # A notch at the channel centre, after the AFC has put the transmitter's
 # carrier there: the input less a one-pole running mean of itself, whose
-# time constant this is in samples - a notch about 2 kHz wide at 10-12.5
-# MS/s. (dc_blocker_cc did the same and took the receiver from 1.46x real
-# time to 0.91x; the one-pole costs nothing measurable.) A direct-conversion transmitter leaks its LO at the
-# carrier, and at low levels the leak falls more slowly than the signal: a
-# VSG60 at -59 dBm put it 20 dB under the channel, and 47 % of packets
-# failed. Notched, 0.1 %. On a clean signal it costs nothing measurable
-# (0 % bad and the same MER at -20 dBm). knowledge/atsc.md.
+# time constant this is in samples - a notch about 3 kHz wide at -3 dB at
+# 10 MS/s. (dc_blocker_cc did the same and took the receiver from 1.46x real
+# time to 0.91x; the one-pole costs nothing measurable.) A direct-conversion
+# transmitter that tunes to the channel centre leaks its LO there, and at
+# low levels the leak falls more slowly than the signal: a VSG60 at -59 dBm
+# put it 20 dB under the channel, and 47 % of packets failed. Notched, 0.1 %.
+#
+# **Off unless asked for, with a checkbox.** The leak is the transmitter's
+# fault, and a receiver that quietly removes it reports a good MER for a bad
+# transmitter. It also only catches a leak at the transmitter's centre: one
+# whose LO sits elsewhere (a VSG60 parks it up to a few hundred kHz off) is
+# untouched. And it costs 0.7 dB of MER on a clean signal. So the window
+# measures every line in the channel and says where it is (LeakMeter), and
+# the notch is there to tick when a leak at the centre is stopping a decode.
+# knowledge/atsc.md.
 CENTRE_NOTCH_LEN = 1024
 
 # 45 ms of signal: at 12 MS/s that is a 22 Hz FFT bin before interpolation,
@@ -289,7 +298,7 @@ class AtscDemod(gr.hier_block2):
     RRC_SYMS = 8
     EXCESS_BW = 0.1152
 
-    def __init__(self, sample_rate, sps=SPS, centre_notch=True):
+    def __init__(self, sample_rate, sps=SPS, centre_notch=False):
         gr.hier_block2.__init__(
             self, "atsc_demod",
             gr.io_signature(1, 1, gr.sizeof_gr_complex),
@@ -310,10 +319,14 @@ class AtscDemod(gr.hier_block2):
         # once and leaves the agc only the fine work.
         self.level = blocks.multiply_const_cc(1.0)
         # After the rotator, so the leak at the transmitter's carrier sits
-        # at DC whatever its frequency error (see CENTRE_NOTCH_LEN).
-        self.centre_notch = centre_notch      # False only in tests
+        # at DC whatever its frequency error (see CENTRE_NOTCH_LEN). Always
+        # wired; ``set_centre_notch`` turns it on and off by scaling the
+        # mean it subtracts, so the window's checkbox never rebuilds the
+        # flowgraph.
         self.mean = filter.single_pole_iir_filter_cc(1.0 / CENTRE_NOTCH_LEN)
+        self.mean_gain = blocks.multiply_const_cc(0.0)
         self.notch = blocks.sub_cc()
+        self.set_centre_notch(centre_notch)
 
         filter_rate = self.sample_rate * self.NFILTS
         ntaps = int((2 * self.RRC_SYMS + 1) * self.sps * self.NFILTS)
@@ -345,14 +358,9 @@ class AtscDemod(gr.hier_block2):
             align_output_buffer(blk, 0, 188)
 
         self.connect(self, self.tap)
-        if centre_notch:
-            self.connect(self.rotator, (self.notch, 0))
-            self.connect(self.rotator, self.mean, (self.notch, 1))
-            self.connect(self, self.rotator)
-            self.connect(self.notch, self.level)
-        else:
-            self.connect(self, self.rotator, self.level)
-        self.connect(self.level, self.pfb, self.fpll,
+        self.connect(self, self.rotator, (self.notch, 0))
+        self.connect(self.rotator, self.mean, self.mean_gain, (self.notch, 1))
+        self.connect(self.notch, self.level, self.pfb, self.fpll,
                      self.dcr, self.agc, self.btl, self.fsc)
         self.connect((self.fsc, 0), (self.equ, 0))
         self.connect((self.fsc, 1), (self.equ, 1))
@@ -386,6 +394,10 @@ class AtscDemod(gr.hier_block2):
         return {'packets': self.rsd.num_packets(),
                 'bad': self.rsd.num_bad_packets(),
                 'corrected': self.rsd.num_errors_corrected()}
+
+    def set_centre_notch(self, on):
+        self.centre_notch = bool(on)
+        self.mean_gain.set_k(1.0 if on else 0.0)
 
     def set_level(self, gain):
         self.level.set_k(float(gain))
@@ -640,6 +652,9 @@ class atscReceiver(gr.top_block, Qt.QWidget):
 
         self.afc = Afc(self.center_mhz * 1e6)
         self.afc_enabled = True
+        self.leaks = LeakMeter()
+        self._refreshes = 0
+        self._leak_ref = None
         self._last_snapshot = None
         self._last_rs = None
         self._last_time = None
@@ -705,6 +720,19 @@ class atscReceiver(gr.top_block, Qt.QWidget):
         self.afc_check.toggled.connect(self.set_afc_enabled)
         row.addWidget(self.afc_check)
 
+        # Off at every start: see CENTRE_NOTCH_LEN for why it is not simply on.
+        self.notch_check = Qt.QCheckBox("Centre Notch")
+        self.notch_check.setChecked(False)
+        self.notch_check.setToolTip(
+            "Remove a narrow band at the transmitter's centre - where a "
+            "direct-conversion transmitter that tunes to the channel leaks "
+            "its own LO. A workaround for the transmitter's fault, so it is "
+            "off by default: Carrier Leak, below, says whether there is "
+            "anything there to remove. Needs AFC on, and does nothing for a "
+            "leak anywhere else in the channel.")
+        self.notch_check.toggled.connect(self.set_centre_notch)
+        row.addWidget(self.notch_check)
+
         # The buttons go on the right of the same row, where there was a
         # band of empty window before, rather than on a row of their own.
         row.addStretch(1)
@@ -768,6 +796,12 @@ class atscReceiver(gr.top_block, Qt.QWidget):
         field(sg, 'mer', "Signal Quality", 1, 0)
         field(sg, 'level', "Input Level", 1, 1)
         field(sg, 'pilot', "Pilot", 2, 0, span=3, wrap=True)
+        field(sg, 'leak', "Carrier Leak", 3, 0, span=3, wrap=True)
+        self.lbl['leak'].setToolTip(
+            "Any narrow line in the channel other than the pilot, against "
+            "the whole channel's power - most often the transmitter's own LO "
+            "leaking through. Measured, never removed unless Centre Notch "
+            "is ticked, and then only at the transmitter's centre.")
         sg.setColumnStretch(1, 1)
         sg.setColumnStretch(3, 1)
         sg.setHorizontalSpacing(12)
@@ -907,6 +941,7 @@ class atscReceiver(gr.top_block, Qt.QWidget):
 
         self.afc.retune(centre)
         self.demod.apply_afc(self.afc)
+        self.leaks.reset()
         self.clear_stats()
 
     def set_afc_enabled(self, on):
@@ -914,6 +949,10 @@ class atscReceiver(gr.top_block, Qt.QWidget):
         if not on:
             self.afc.retune(self.center_mhz * 1e6)
             self.demod.apply_afc(self.afc)
+
+    def set_centre_notch(self, on):
+        self.demod.set_centre_notch(on)
+        self.clear_stats()
 
     def clear_stats(self):
         self.ts.reset()
@@ -992,6 +1031,29 @@ class atscReceiver(gr.top_block, Qt.QWidget):
                 + ("" if self.afc_enabled else "  - AFC off, not corrected"))
         else:
             self.lbl['pilot'].setText("not found - no 8VSB signal on this channel")
+
+        # Every other refresh is plenty: the meter averages eight taps, and
+        # each costs about 10 ms of FFT on this thread.
+        # With the AFC off it is not measuring the pilot, so measure it here:
+        # a line's offset is given from the transmitter's centre either way.
+        self._refreshes += 1
+        if samples.size and self._refreshes % 2 == 0:
+            self.leaks.update(samples, self.samp_rate)
+            if not self.afc_enabled:
+                err, prom = pilot_offset_hz(samples, self.samp_rate)
+                self._leak_ref = (err if prom >= Afc.MIN_PROMINENCE_DB
+                                  else None)
+        reference = (self.afc.error_hz if self.afc.locked else None) \
+            if self.afc_enabled else self._leak_ref
+        if reference is None:
+            self.lbl['leak'].setText("-")
+        elif self.leaks.ready:
+            lines, _, sensitivity = self.leaks.lines(reference)
+            self.lbl['leak'].setText(describe_leak(
+                lines, sensitivity, notch_on=self.demod.centre_notch,
+                afc_on=self.afc_enabled))
+        else:
+            self.lbl['leak'].setText("measuring...")
 
         mer = self.demod.mer()
         self.lbl['mer'].setText(
