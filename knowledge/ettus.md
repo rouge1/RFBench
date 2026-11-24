@@ -404,9 +404,13 @@ on worklaptop1.
 
 ## Not tested yet
 
-- Receiving above 20 MS/s (20 MS/s is clean by `benchmark_rate`; about
-  25 MS/s at 16-bit samples is the usual top for an N210), and transmitting
-  at 20 MS/s with no app in the way.
+- Transmitting at 20 MS/s with no app in the way. (Receiving at 25 MS/s is
+  clean now: `benchmark_rate` for 60 s from the BB60D's machine, 0 dropped
+  and 0 overruns, even with the BB60D streaming 40 MS/s beside it - see
+  [two radios on one host](two-radios-one-host.md).)
+- `atscXmitter` at 25 MS/s, the rate it asks of an N210 since its LO offset
+  ([atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23)): arithmetic
+  only, not transmitted.
 - PPM-OOK still transmits, and FM video transmits and receives, at 20 MS/s
   on the N210 - the odd ratio. FM video decodes and measures right both
   ways (FM does not care about amplitude); PPM-OOK was judged by spectrum

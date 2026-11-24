@@ -316,3 +316,92 @@ at 17.57 a second with memory flat. Two details that matter:
 nothing did: it runs the decoder at the radio's pace into a stand-in player
 and requires every decoded picture to arrive whole. Against the old write
 it reads 1.0 pictures of 14.
+
+## The transmitter's own LO leak (2026-11-23)
+
+Found in CTF night three's round 18, when skinny-fm's receiver lost 35-65 %
+of packets from the VSG60 at −59 dBm on 5830 MHz until it notched a line
+at the channel centre. Measured again over the cable into the BB60D here,
+with `atscXmitter` sending the colour bars:
+
+| VSG60 level | The line at the centre | `atscReceiver` (gain) |
+|---|---|---|
+| −20 dBm | −28.6 dBc | clean, MER 23 dB (40 %) |
+| −40 dBm | −32.6 dBc | 100 % lost at 40 %; clean at 70 % and 100 % |
+| −59 dBm | −19.8 dBc | not decoding at 40 %; 38-55 % lost at 100 % |
+
+- **The line is the VSG60's LO.** The app tuned the radio to the channel
+  centre, so the leak sat in the middle of the channel, carried +2.2 kHz
+  by the VSG's frequency error at 5.8 GHz like the signal itself.
+  - It does not fall with the level the way the signal does: 29 dB less
+    from −20 to −59 dBm while the signal fell 38.
+  - So it matters only at low levels, and only together with a channel
+    already near the noise.
+- **−40 dBm failing was not the leak but the gain.** At the receiver's
+  default 40 % the BB60D's noise set MER at 17.5 dB, and every packet
+  failed; at 70 % it decoded cleanly. A weak cabled signal needs the gain
+  slider up before blaming anything else.
+- **At −59 dBm the leak was the difference.** A full-gain capture decoded
+  offline through `AtscDemod` lost 47 % of packets and never settled.
+  Notching the line first took it to 0.1 % after lock, at MER 18.1 dB.
+  - The same notch on the −20 dBm capture changed nothing (0 % bad, MER 23.3).
+  - A synthetic −20 dBc carrier on a clean link costs 3 dB of MER (22.7
+    to 19.5) but decodes. The real link was nearer the edge, and the
+    VSG at −59 dBm brings more than white noise.
+
+Three fixes, on branch `atsc-leak-fixes`:
+
+1. **`atscXmitter` tunes the radio `LO_OFFSET` (4.5 MHz) above the
+   channel** and shifts the signal down to match after the last
+   resampler, as `ntscAnalogVideoRecorded` already did.
+   - The radio rate went up to make room: 20 MS/s for the VSG60 and the
+     HackRF (×40/57 from 28.5 MS/s), and 25 for the N210, an even divide
+     of its 100 MHz.
+   - The channel then spans −7.5 to −1.5 MHz at baseband, inside the
+     VSG60's 80 % of 20 MS/s.
+   - The chain's rms is 0.3696 at 12, 20 and 25 MS/s alike, peak 0.97, so
+     `BASEBAND_SCALE` and the loopback's SNR arithmetic stand. The
+     spectrum display still shows the channel at `cf`.
+   - **Over the cable at −59 dBm** the VSG60 tuned to 5834.5 MHz and the
+     centre line was gone. The leak turned up at **5834.669 MHz**, 169 kHz
+     from where the radio was tuned (as [radios](radios.md#vsg60-notes)
+     warns it can), −30.7 dBc and 1.7 MHz above the channel edge.
+     `atscReceiver` at 100 % gain: "Locked - clean stream", 0.2 % bad,
+     MER 18.2 dB. At −20 dBm and the default gain: 0 % bad, MER 22.5.
+   - Run on the VSG60 only. The HackRF at 20 MS/s and the N210 at 25 are
+     arithmetic, not yet transmitted.
+2. **`atscReceiver` notches the channel centre** after the AFC rotator,
+   which has put the transmitter's carrier at DC: the input less a
+   one-pole running mean (`CENTRE_NOTCH_LEN` = 1024 samples, about 2 kHz
+   wide). It is there for a transmitter that leaks into its own channel,
+   ours before the fix or anyone's.
+   - `dc_blocker_cc` did the same job and took the receiver from 1.46× to
+     0.91× real time; the one-pole keeps 1.53×.
+   - `test_atsc_receiver.py` adds a −20 dBc leak: MER 19.5 dB unnotched,
+     22.7 notched, 22.7 with no leak at all.
+   - With AFC off the leak sits wherever the carrier error puts it, and a
+     2 kHz notch catches it only partly.
+3. **`atsc_source` names the programme in the SDT**: the clip's name as
+   `dvbt2_tx` names its programmes, and provider `RF Bench`. Before, ffmpeg
+   wrote its defaults, "Service01" from "FFmpeg".
+   - These are DVB service-description tables. ffmpeg writes no ATSC PSIP
+     (VCT, MGT), and `atscReceiver` lists programmes from the PAT and PMT.
+   - A pre-made `.ts` plays as it is and keeps whatever tables it was made
+     with. `scripts/test_atsc_source.py` reads the SDT back.
+
+`test_atsc_loopback.py` follows the new chain: it shifts back by
+`LO_OFFSET` before `dtv.atsc_rx` and takes an optional leak at the
+radio's LO (`... bars 2 none -20`). Colour bars come back 99.56 %
+byte-perfect clean, 99.60 % with a −20 dBc leak, 99.06 % at 15 dB SNR and
+98.20 % at 14.
+
+**Once, not explained:** one `atscReceiver` run, started about 10 s after
+the transmitter came on air, reported 100 % of packets lost for all 55 s
+with MER 23 dB and the eye wide open. A second run straight after, on the
+same transmission, was clean from the first report, and so was every run
+before and since. A decoder that locked to the wrong state and never let
+go is the likeliest reading; restarting the receiver cleared it.
+
+The −20 dBm MER-17 limit [ettus](ettus.md) recorded at 915 MHz over the
+air, on both the BB60D and the N210, predates the offset. Whether the
+leak was part of it has not been checked.
