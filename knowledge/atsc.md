@@ -26,7 +26,10 @@ fixing. Three other things did:
   **But not on an Ettus N210**, which cannot make 12 and quietly gave 12.5,
   so everything went out 4.17 % fast: the transmitter and the receiver both
   take 12.5 for a USRP now (`RADIO_RATES`, `SAMPLE_RATES`) - see
-  [ettus](ettus.md#every-app-on-the-n210-2026-11-21).
+  [ettus](ettus.md#every-app-on-the-n210-2026-11-21). **Since 2026-11-23
+  the transmitter runs at 20 MS/s (×40/57), and 25 on an N210**, to make
+  room for its LO offset: see
+  [the transmitter's own LO leak](#the-transmitters-own-lo-leak-2026-11-23).
 - **It clipped.** 8VSB is noise-like: measured 8.7 dB peak-to-average, and the
   chain came out at 1.007 peak against radios that take 1.0 as I/Q full scale,
   so the loudest samples were flattened before the signal left the box - worse
@@ -369,18 +372,27 @@ Three fixes, on branch `atsc-leak-fixes`:
      `atscReceiver` at 100 % gain: "Locked - clean stream", 0.2 % bad,
      MER 18.2 dB. At −20 dBm and the default gain: 0 % bad, MER 22.5.
    - Run on the VSG60 only. The HackRF at 20 MS/s and the N210 at 25 are
-     arithmetic, not yet transmitted.
+     arithmetic, not yet transmitted. With the LO above the channel the
+     pilot sits at −7.19 MHz, near the edge of what those radios pass at
+     those rates: compare its height on their first run, and put the LO
+     below the channel instead if it has sagged. The chain itself keeps
+     up: into a null sink, 2.1× real time at 20 MS/s and 1.85× at 25,
+     against 1.96× at the old 12 (on this 20-thread host, possibly with
+     another session's tests running).
 2. **`atscReceiver` notches the channel centre** after the AFC rotator,
    which has put the transmitter's carrier at DC: the input less a
-   one-pole running mean (`CENTRE_NOTCH_LEN` = 1024 samples, about 2 kHz
-   wide). It is there for a transmitter that leaks into its own channel,
+   one-pole running mean (`CENTRE_NOTCH_LEN` = 1024 samples). At 10 MS/s it
+   is −3 dB at ±1.5 kHz, −10 dB at ±500 Hz and −1.8 dB at ±2.2 kHz. It is there for a transmitter that leaks into its own channel,
    ours before the fix or anyone's.
    - `dc_blocker_cc` did the same job and took the receiver from 1.46× to
      0.91× real time; the one-pole keeps 1.53×.
    - `test_atsc_receiver.py` adds a −20 dBc leak: MER 19.5 dB unnotched,
      22.7 notched, 22.7 with no leak at all.
-   - With AFC off the leak sits wherever the carrier error puts it, and a
-     2 kHz notch catches it only partly.
+   - With AFC off the leak sits wherever the carrier error puts it - +2.2
+     kHz from the VSG60 at 5.8 GHz - where the notch takes only 1.8 dB off
+     it. So it works only with AFC on, the default.
+   - Our own transmitter no longer needs it: the post-fix −59 dBm capture
+     decodes the same with the notch off (MER 18.2 dB) as on (18.1).
 3. **`atsc_source` names the programme in the SDT**: the clip's name as
    `dvbt2_tx` names its programmes, and provider `RF Bench`. Before, ffmpeg
    wrote its defaults, "Service01" from "FFmpeg".
@@ -395,12 +407,27 @@ radio's LO (`... bars 2 none -20`). Colour bars come back 99.56 %
 byte-perfect clean, 99.60 % with a −20 dBc leak, 99.06 % at 15 dB SNR and
 98.20 % at 14.
 
-**Once, not explained:** one `atscReceiver` run, started about 10 s after
-the transmitter came on air, reported 100 % of packets lost for all 55 s
+**Once, not explained:** one `atscReceiver` run, started within seconds of
+the transmitter coming on air, reported 100 % of packets lost for all 55 s
 with MER 23 dB and the eye wide open. A second run straight after, on the
 same transmission, was clean from the first report, and so was every run
 before and since. A decoder that locked to the wrong state and never let
 go is the likeliest reading; restarting the receiver cleared it.
+
+Chased afterwards, it did not come back:
+- **Live:** three fresh keyings of the transmitter, and ten receiver starts
+  across them, five on the branch (with the notch) and five on `main`
+  (without). Three started within seconds of keying, one with the N210
+  joining at 10 s as in the failed run. Every one was "Locked - clean
+  stream", 0 bad packets.
+- **Offline:** the −20 dBm capture decoded from 20 start points spread
+  across one field, notch on and off: none above 14 % bad, which is only
+  the acquisition inside a 2 s slice.
+
+So it is once in about sixteen starts of the branch's receiver, not seen
+on `main`'s in five. That is too few to call it either the notch or
+pre-existing. If it returns, restart the receiver, and note how soon after
+keying it started.
 
 The −20 dBm MER-17 limit [ettus](ettus.md) recorded at 915 MHz over the
 air, on both the BB60D and the N210, predates the offset. Whether the

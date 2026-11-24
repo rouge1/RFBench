@@ -137,7 +137,7 @@ read back too. Transmitters at 915 MHz (FM video 5800), 10 % (UBX gain 3 dB).
 | FM audio | ✅ | 204 kHz wide for its 100 kHz deviation |
 | Subcarrier | ✅ | carrier and the 20 kHz subcarrier |
 | FM + RDS | ✅ | **`rdsReceiver` on the BB60D: 99 % blocks good**, PS, RadioText, Now Playing, stereo pilot |
-| **ATSC** | ❌ **12 MS/s asked, 12.5 given** (fixed - below) | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
+| **ATSC** | ❌ **12 MS/s asked, 12.5 given** (fixed - below; since 2026-11-23 it asks 25, see [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23)) | **pilot at −2802.7 kHz, not −2690.6; 5.74 MHz wide; `atscReceiver` on the BB60D: "pilot not found"** |
 | **NTSC** | ✅ LO 6 MHz high on purpose; 20 MS/s | visual carrier −1750 kHz, aural +2750 kHz - exact; **but `ntscReceiver` on the BB60D: "picture, but only 0-2 frames a second"**, where the VSG60 decodes 17.9 (fixed at 25 MS/s - below) |
 | ISM | ✅ LO 400 kHz low on purpose | **`ismReceiver` on the BB60D: every burst decoded**, Nexus-TH 19.0 °C 71 % as sent (at 433.92 MHz) |
 | FM video | ✅ 20 MS/s at 5.8 GHz | **`fmVideoReceiver` on the BB60D: picture, 17.4-18.1 frames/s**, colour, line rate within 3 ppm, deviation read 7.87-7.94 MHz of 7.93 set - below FM threshold at 10 % (CNR 1-11 dB), so clicks |

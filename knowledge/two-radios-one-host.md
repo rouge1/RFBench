@@ -54,21 +54,25 @@ with a load average of about 1.5 while these ran.
 
 So opening the N210 mid-capture, streaming it at 25 MS/s, and decoding
 8VSB live on the same host disturbed nothing on either radio. The
-worklaptop1 overruns in [ettus](ettus.md#every-app-on-the-n210-2026-11-21)
-were that machine's load, not the pairing. The night-three captures taken
-on the N210 while skinny-fm held the BB60D (rounds 10 and 18) were fine to
-take.
+night-three captures taken on the N210 while skinny-fm held the BB60D
+(rounds 10 and 18) were fine to take. The VSG60 + N210 pair on one host is
+a different pair; it was not tried here, because it needs one radio moved
+to the other's machine.
 
 Two things around it, neither the pairing:
 
 - **`bb60_tone.py` at 40 MS/s for 30 s** wrote all 9.6 GB (exactly 30.0 s
-  of samples, 0 overruns) and then exited with an error. It did the same
-  with or without the N210. It analyses the whole capture in memory, so
-  keep captures that long at that rate short, or skip its analysis.
+  of samples) and then exited with an error, once, with the N210 running;
+  12 s at the same rate was fine with it and without. Its `peaks()` takes
+  one FFT across the whole capture at once in double precision, which for
+  1.2 billion samples needs several times the file's size in memory - the
+  likely cause, read from the code rather than the error, which was
+  filtered out. Keep long 40 MS/s captures out of it, or analyse a slice.
 - **One `atscReceiver` run reported 100 % of packets lost for all 55 s**,
   with MER 23 dB. The failure was already there at 5 s, before the N210
   started at 10 s. The receiver alone, straight after, was clean, and so was
-  the repeat with the N210. See [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23).
+  the repeat with the N210. Whether the branch's receiver or the old one
+  does this is in [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23). See [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23).
 
 Not tested: the N210 *transmitting* beside the BB60D, which needs a cable
 or a go over the air; the N210 writing to the same disk as a BB60D capture
