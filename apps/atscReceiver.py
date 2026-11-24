@@ -60,6 +60,17 @@ SAMPLE_RATES = {'hackrf': 12e6, 'usrp': 12.5e6, 'bb60': 10e6}
 SPS = 1.2
 DEFAULT_CHANNEL = 24            # 533 MHz, the channel this bench uses
 
+# A notch at the channel centre, after the AFC has put the transmitter's
+# carrier there: the input less a one-pole running mean of itself, whose
+# time constant this is in samples - a notch about 2 kHz wide at 10-12.5
+# MS/s. (dc_blocker_cc did the same and took the receiver from 1.46x real
+# time to 0.91x; the one-pole costs nothing measurable.) A direct-conversion transmitter leaks its LO at the
+# carrier, and at low levels the leak falls more slowly than the signal: a
+# VSG60 at -59 dBm put it 20 dB under the channel, and 47 % of packets
+# failed. Notched, 0.1 %. On a clean signal it costs nothing measurable
+# (0 % bad and the same MER at -20 dBm). knowledge/atsc.md.
+CENTRE_NOTCH_LEN = 1024            # 533 MHz, the channel this bench uses
+
 # 45 ms of signal: at 12 MS/s that is a 22 Hz FFT bin before interpolation,
 # which resolves a clock error far finer than the demodulator cares about.
 AFC_WINDOW = 1 << 19
@@ -278,7 +289,7 @@ class AtscDemod(gr.hier_block2):
     RRC_SYMS = 8
     EXCESS_BW = 0.1152
 
-    def __init__(self, sample_rate, sps=SPS):
+    def __init__(self, sample_rate, sps=SPS, centre_notch=True):
         gr.hier_block2.__init__(
             self, "atsc_demod",
             gr.io_signature(1, 1, gr.sizeof_gr_complex),
@@ -298,6 +309,11 @@ class AtscDemod(gr.hier_block2):
         # anything. Setting the level from a measurement puts it there at
         # once and leaves the agc only the fine work.
         self.level = blocks.multiply_const_cc(1.0)
+        # After the rotator, so the leak at the transmitter's carrier sits
+        # at DC whatever its frequency error (see CENTRE_NOTCH_LEN).
+        self.centre_notch = centre_notch      # False only in tests
+        self.mean = filter.single_pole_iir_filter_cc(1.0 / CENTRE_NOTCH_LEN)
+        self.notch = blocks.sub_cc()
 
         filter_rate = self.sample_rate * self.NFILTS
         ntaps = int((2 * self.RRC_SYMS + 1) * self.sps * self.NFILTS)
@@ -329,7 +345,14 @@ class AtscDemod(gr.hier_block2):
             align_output_buffer(blk, 0, 188)
 
         self.connect(self, self.tap)
-        self.connect(self, self.rotator, self.level, self.pfb, self.fpll,
+        if centre_notch:
+            self.connect(self.rotator, (self.notch, 0))
+            self.connect(self.rotator, self.mean, (self.notch, 1))
+            self.connect(self, self.rotator)
+            self.connect(self.notch, self.level)
+        else:
+            self.connect(self, self.rotator, self.level)
+        self.connect(self.level, self.pfb, self.fpll,
                      self.dcr, self.agc, self.btl, self.fsc)
         self.connect((self.fsc, 0), (self.equ, 0))
         self.connect((self.fsc, 1), (self.equ, 1))

@@ -123,10 +123,10 @@ class Decode(gr.top_block):
     clock then measures the receiver alone.
     """
 
-    def __init__(self, path, carrier_hz=0.0, clock_ratio=1.0):
+    def __init__(self, path, carrier_hz=0.0, clock_ratio=1.0, centre_notch=True):
         gr.top_block.__init__(self, "decode", catch_exceptions=True)
         src = blocks.file_source(gr.sizeof_gr_complex, path, False, 0, 0)
-        self.demod = AtscDemod(RATE)
+        self.demod = AtscDemod(RATE, centre_notch=centre_notch)
         self.demod.rotator.set_phase_inc(-2 * math.pi * carrier_hz / RATE)
         self.demod.pfb.set_rate(self.demod.nominal_interp * clock_ratio)
         self.ts = ts_sink()
@@ -290,6 +290,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix='atsc_rx_test_')
     right = os.path.join(tmp, 'clock_right.cf32')
     fast = os.path.join(tmp, 'clock_fast.cf32')
+    noisy = os.path.join(tmp, 'noisy.cf32')
+    leaky = os.path.join(tmp, 'leaky.cf32')
     try:
         print(f"\nrendering {args.seconds:g}s of signal twice, into {tmp}")
         Render(args.stream, args.seconds, 0.0, centre, right).run()
@@ -327,8 +329,25 @@ def main():
                       path=fast, carrier_hz=carrier_hz)
         both = run(f"{args.ppm:g} ppm, carrier + clock", args.seconds,
                    path=fast, carrier_hz=carrier_hz, clock_ratio=clock_ratio)
+
+        # A transmitter's own LO leak at the carrier, 20 dB under the
+        # channel: what a VSG60 at -59 dBm measured (knowledge/atsc.md).
+        # 30 dB of noise on both, so the leak is what differs.
+        print("\nthe transmitter's LO leak at the channel centre, -20 dBc")
+        x = np.fromfile(right, dtype=np.complex64)
+        p = float(np.mean(np.abs(x[len(x) // 3:]) ** 2))
+        rng = np.random.default_rng(7)
+        x = x + (np.sqrt(p * 1e-3 / 2) * (rng.normal(size=x.size)
+                 + 1j * rng.normal(size=x.size))).astype(np.complex64)
+        x.tofile(noisy)
+        (x + np.complex64(np.sqrt(p * 1e-2))).astype(np.complex64).tofile(leaky)
+        del x
+        no_leak = run("no leak", args.seconds, path=noisy)
+        unnotched = run("leak, notch off", args.seconds, path=leaky,
+                        centre_notch=False)
+        notched = run("leak, notch on", args.seconds, path=leaky)
     finally:
-        for path in (right, fast):
+        for path in (right, fast, noisy, leaky):
             if os.path.exists(path):
                 os.remove(path)
         os.rmdir(tmp)
@@ -353,6 +372,15 @@ def main():
           f"MER {both['mer']:.1f} against {clean['mer']:.1f} dB")
     check("the receiver keeps up with the air, with room to spare",
           both['speed'] > 1.2, f"{both['speed']:.2f}x real time")
+    check("unnotched, a -20 dBc leak costs the eye more than 2 dB",
+          no_leak['mer'] - unnotched['mer'] > 2,
+          f"MER {unnotched['mer']:.1f} against {no_leak['mer']:.1f} dB")
+    check("the centre notch gives it back, to within 0.5 dB",
+          abs(notched['mer'] - no_leak['mer']) < 0.5 and notched['bad_pct'] < 0.1,
+          f"MER {notched['mer']:.1f} against {no_leak['mer']:.1f} dB, "
+          f"{notched['bad_pct']:.3f}% bad")
+    check("and the notch costs the receiver no speed worth having",
+          notched['speed'] > 1.2, f"{notched['speed']:.2f}x real time")
 
     print()
     if failures:
