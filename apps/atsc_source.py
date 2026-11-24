@@ -29,6 +29,7 @@ at 55x real time here.
 """
 
 import os
+import re
 import subprocess
 
 from apps.ntsc_source import (BAR_COLOURS, VIDEO_EXTENSIONS, have_ffmpeg,
@@ -72,6 +73,12 @@ ENCODE = ['-c:v', 'mpeg2video', '-b:v', '15M', '-minrate', '15M',
 #: Windows file name, so no clip in any media folder can be mistaken for it.
 COLOUR_BARS = '<colour bars>'
 
+#: The SDT's provider name. Without one ffmpeg writes its own defaults,
+#: "Service01" from "FFmpeg", which is what a receiver showed in CTF night
+#: three. These are DVB service-description tables; ATSC's own PSIP (VCT,
+#: MGT) is something ffmpeg does not write. knowledge/atsc.md.
+SERVICE_PROVIDER = 'RF Bench'
+
 
 def colour_bars_input():
     """ffmpeg input arguments: colour bars and a 1 kHz tone, forever.
@@ -100,6 +107,15 @@ def colour_bars_input():
     audio = ('sine=frequency=1000:sample_rate=48000,volume=0.8,'
              'pan=stereo|c0=c0|c1=c0')
     return ['-f', 'lavfi', '-i', video, '-f', 'lavfi', '-i', audio]
+
+
+def service_name(path):
+    """What a receiver calls the programme: the file's name, dashes and
+    underscores as spaces - as dvbt2_tx names its programmes."""
+    if path == COLOUR_BARS:
+        return 'Colour Bars'
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return re.sub(r'\s+', ' ', re.sub(r'[-_]+', ' ', stem)).strip()[:40] or 'Programme'
 
 
 def needs_encoding(path):
@@ -159,7 +175,9 @@ class TransportStream:
             if loop:
                 argv += ['-stream_loop', '-1']
             argv += ['-i', path, '-vf', VIDEO_FILTER]
-        argv += ENCODE + ['pipe:1']
+        argv += ENCODE + ['-metadata', f'service_name={service_name(path)}',
+                          '-metadata', f'service_provider={SERVICE_PROVIDER}',
+                          'pipe:1']
         self._proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                                       stderr=subprocess.DEVNULL)
 
