@@ -441,7 +441,10 @@ in the radio:
 ## NTSC Receiver
 
 `ntscReceiver.py` is the other end of `ntscAnalogVideoRecorded.py` and
-shares its tile. The picture side is described above; the **sound** is a
+shares its tile. (Since 2026-11-24 its pictures come from
+`StreamingFrameSink` - every frame, sound muxed in step - see [Watching:
+every frame, with the sound in step](#watching-every-frame-with-the-sound-in-step);
+the 17.6 pictures a second measured below are from the block it replaced.) The picture side is described above; the **sound** is a
 second, separate chain off the same radio, because System M puts it on its
 own FM carrier 4.5 MHz above the visual one and the picture's Nyquist
 filter exists partly to throw it away (a video detector fed both produces
@@ -604,7 +607,7 @@ like the rest of `docs/`):
   BB60D's flat +-8.5 MHz at 20 MS/s (radios.md); at 6 the vestige would be
   at -10. The LO then sits 1.2 MHz (I) or 1.7 MHz (B/G) above the sound
   carrier, clear of the channel.
-- **The NTSC apps are untouched by it.** `VsbModulator` on System M gives
+- **The NTSC transmitter's radio stage is untouched by it.** `VsbModulator` on System M gives
   `NtscModulator`'s output to float32 rounding (6e-8, which is also how far
   `NtscModulator` differs from *itself* run to run: GNU Radio's FFT filter
   rounds by where the scheduler's buffers fall, so "bit for bit" is not a
@@ -738,6 +741,29 @@ video receiver keeps the old block, which suits a measuring instrument.
   while it starts and labels what is left from where it really is; ffplay
   plays by those labels. Read raw, as if both streams began together, the
   sound looked 46 ms early when it was in step.
+
+- **A player that stops reading loses whole frames, picture and sound
+  together** (`QUEUE_FRAMES`, about 2 s), so it comes back in step: the
+  test freezes its recorder for 6 s, 65 frames go, and the sound is still
+  0.6 ms from the picture after. A repeat is never sent before the sound
+  has been anchored to a real frame.
+- **The workers are spawned, so the main script must be guarded.** Spawn
+  re-imports the parent's ``__main__`` in every worker; a script without
+  ``if __name__ == '__main__':`` built a whole receiver in each worker,
+  which tried to spawn its own and failed ("RuntimeError" with no text,
+  from GNU Radio's block thread), and left processes that ignore SIGTERM.
+  The launcher, ``apps/_run.py``, the app files and the scripts here are
+  guarded. Workers are terminated by the sink's ``stop()``, and each also
+  exits by itself once its parent has gone.
+- **No sound device, or Windows: pictures only.** If ``audio.sink`` fails
+  the tap is dropped (it would never be fed, and Watch would wait a second
+  a frame for its sound). Windows has no ``pass_fds`` to hand ffmpeg a
+  second pipe, so there Watch sends every frame straight to ffplay and the
+  sound stays on the speakers, not muxed - not tried on Windows yet.
+- **NTSC has all of this but has not been on the air with it.** The NTSC
+  receiver uses the same sink and tap, and the NTSC transmitter the same
+  repeat catch-up in ``ntsc_source``; both are tested in software
+  (``test_tv_watch.py --ntsc``, ``test_ntsc_transmit.py``), not off air.
 
 `scripts/test_tv_watch.py` (PAL, `--ntsc`) runs a flash and a beep once a
 second through the transmit and receive chains in real time and records

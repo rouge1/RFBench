@@ -51,6 +51,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ntsc', action='store_true')
     ap.add_argument('--secs', type=float, default=10.0)
+    ap.add_argument('--stall', action='store_true',
+                    help='freeze the player for 6 s half-way, as a stalled ffplay')
     a = ap.parse_args()
     system = SYSTEM_M if a.ntsc else SYSTEM_G
     std = system.standard
@@ -98,7 +100,16 @@ def main():
     sink.start_player(sink.player_argv('test'))
     t0 = time.time()
     d0 = sink.frames_decoded
-    time.sleep(a.secs)
+    if a.stall:
+        import signal as _signal
+        time.sleep(a.secs / 2 - 3)
+        rec = sink._player_procs[-1]
+        rec.send_signal(_signal.SIGSTOP)
+        time.sleep(6.0)
+        rec.send_signal(_signal.SIGCONT)
+        time.sleep(a.secs / 2 - 3)
+    else:
+        time.sleep(a.secs)
     decoded = sink.frames_decoded - d0
     wall = time.time() - t0
     sink.stop_player()
@@ -145,8 +156,15 @@ def main():
     flashes = np.flatnonzero(level > (level.max() + np.median(level)) / 2)
     gaps = np.diff(flashes)
     print(f"       flashes on pictures {flashes.tolist()}")
-    check("the flashes come exactly a cycle apart - nothing skipped or doubled",
-          gaps.size >= 3 and np.all(gaps == period), str(gaps.tolist()))
+    if a.stall:
+        # Frames a stalled player missed are gone from both streams, so
+        # one gap is short by however many; the rest are a cycle.
+        check("the flashes come a cycle apart, but for the stall",
+              gaps.size >= 3 and np.sum(gaps != period) <= 1, str(gaps.tolist()))
+        print(f"       {sink.queue_dropped} frames dropped, picture and sound together")
+    else:
+        check("the flashes come exactly a cycle apart - nothing skipped or doubled",
+              gaps.size >= 3 and np.all(gaps == period), str(gaps.tolist()))
 
     # The beep's start, in recorded-picture time.
     env = np.abs(audio)
@@ -171,6 +189,9 @@ def main():
     check("and stays there - no drift across the run",
           len(offsets) >= 3 and np.ptp(offsets) < 10, f"{np.ptp(offsets):.1f} ms spread"
           if offsets else "")
+
+    import shutil
+    shutil.rmtree(os.path.dirname(out), ignore_errors=True)
 
     print()
     if failures:

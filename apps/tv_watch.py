@@ -53,7 +53,25 @@ AUDIO_RATE = 48000
 _WORKER = {}
 
 
-def _worker_init(sample_rate, standard_key):
+def _watch_parent(parent):
+    """End this worker when the receiver that spawned it is gone.
+
+    A receiver killed, or one that exits without its flowgraph's stop(),
+    left its workers behind - idle, ignoring the end of the pipe they were
+    fed by, and holding open whatever stdout they inherited (13 of them
+    were found after one afternoon's tests). Checking the parent's PID
+    once a second costs nothing.
+    """
+    while True:
+        time.sleep(1.0)
+        if os.getppid() != parent:
+            os._exit(0)
+
+
+def _worker_init(sample_rate, standard_key, parent=None):
+    if parent is not None:
+        threading.Thread(target=_watch_parent, args=(parent,), daemon=True,
+                         name='tv-worker-watchdog').start()
     from apps.ntsc_encode import STANDARDS
     std = STANDARDS[standard_key]
     _WORKER['std'] = std
@@ -76,6 +94,11 @@ def _measure(decoder, x, sample_rate, std):
             period = float(one.mean()) / sample_rate
             status['line_rate'] = 1.0 / period if period > 0 else 0.0
     return status
+
+
+def _warm():
+    """Nothing: proves a worker has been spawned and initialised."""
+    return True
 
 
 def _decode_in_worker(window):
@@ -191,6 +214,7 @@ class StreamingFrameSink(ntsc_frame_sink):
         self.frames_repeated = 0
         self._aligned = False
         self._realign = 0.0
+        self._warming = None
         #: Frames whose sound had still not arrived a second later.
         self.audio_short = 0
 
@@ -216,7 +240,12 @@ class StreamingFrameSink(ntsc_frame_sink):
             max_workers=self.workers,
             mp_context=multiprocessing.get_context('spawn'),
             initializer=_worker_init,
-            initargs=(self.sample_rate, self.standard.key))
+            initargs=(self.sample_rate, self.standard.key, os.getpid()))
+        # Spawning takes a second or two. Windows that arrive before every
+        # worker is up are let go without counting - not dropped, not
+        # repeated - so the first pictures are a clean start rather than a
+        # burst of repeats while the pool fills.
+        self._warming = [self._pool.submit(_warm) for _ in range(self.workers)]
         self._emitter = threading.Thread(target=self._emit_loop, daemon=True,
                                          name='tv-emit')
         self._emitter.start()
@@ -263,6 +292,14 @@ class StreamingFrameSink(ntsc_frame_sink):
         if self._realign:
             self._next_start += self._realign
             self._realign = 0.0
+        if self._warming:
+            if all(f.done() for f in self._warming):
+                self._warming = None
+            else:
+                # Not ready: move the windows on with the signal, unnumbered.
+                while self._total >= int(self._next_start) + self._need:
+                    self._next_start += self.frame_len
+                return items
         while self._total >= int(self._next_start) + self._need:
             start = int(self._next_start)
             seq = self._seq
@@ -333,8 +370,17 @@ class StreamingFrameSink(ntsc_frame_sink):
         timeout = 3 * self.standard.frame
         while self._running.is_set():
             with self._results_ready:
-                if self._out_seq not in self._results:
-                    self._results_ready.wait(timeout)
+                # Wait to a real deadline. Any worker finishing wakes this,
+                # and the frame after the one wanted often finishes first -
+                # several decode at once - so giving up on the first wake
+                # repeated frames that were only a few milliseconds behind.
+                deadline = time.time() + timeout
+                while (self._out_seq not in self._results
+                       and self._running.is_set()):
+                    left = deadline - time.time()
+                    if left <= 0:
+                        break
+                    self._results_ready.wait(left)
                 if self._out_seq not in self._results:
                     later = [s for s in self._results if s > self._out_seq]
                     if not later:
@@ -359,14 +405,27 @@ class StreamingFrameSink(ntsc_frame_sink):
             self._last_rgb = rgb
         if self._video_q is None:
             return
+        with_sound = self._audio_q is not None and self.tap is not None
+        if with_sound and self._audio_cursor is None:
+            if frame_start is None:
+                # A repeat cannot say when it is; wait for a real frame to
+                # anchor the sound, rather than send a picture without it.
+                return
+            # The sound that was on the air when this picture was.
+            self._audio_cursor = frame_start / self.sample_rate * AUDIO_RATE
+        # **A player that stops reading loses whole frames - picture and
+        # sound together.** Dropping pictures from the queue alone, while
+        # the sound went on, is how a slow-starting ffmpeg once left every
+        # picture 0.8 s ahead of its sound. Both streams are timestamped by
+        # count, so dropping both keeps them in step.
+        if len(self._video_q[0]) >= self.QUEUE_FRAMES:
+            self.queue_dropped += 1
+            if with_sound:
+                self._audio_cursor += AUDIO_RATE * self.standard.frame
+            return
         self._put(self._video_q, rgb)
-        if self._audio_q is not None and self.tap is not None:
+        if with_sound:
             per_frame = AUDIO_RATE * self.standard.frame
-            if self._audio_cursor is None:
-                if frame_start is None:
-                    return
-                # The sound that was on the air when this picture was.
-                self._audio_cursor = frame_start / self.sample_rate * AUDIO_RATE
             start = int(round(self._audio_cursor))
             self._audio_cursor += per_frame
             count = int(round(self._audio_cursor)) - start
@@ -387,14 +446,14 @@ class StreamingFrameSink(ntsc_frame_sink):
             audio = self.tap.read(start, count) * self.volume
             self._put(self._audio_q, audio.astype(np.float32).tobytes())
 
-    def _put(self, q, item):
+    @staticmethod
+    def _put(q, item):
         with q[1]:
             q[0].append(item)
-            if len(q[0]) > 50:          # a player that stopped reading
-                q[0].pop(0)
-                self.queue_dropped += 1
             q[2].set()
 
+    #: Pictures held for a player that has fallen behind, about 2 s.
+    QUEUE_FRAMES = 50
     queue_dropped = 0
 
     # -- the player ------------------------------------------------------
@@ -412,10 +471,15 @@ class StreamingFrameSink(ntsc_frame_sink):
     #: ffmpeg that records what Watch would have shown.
     play_cmd = None
 
+    #: Whether the running player carries the sound (else the speakers do).
+    player_has_sound = False
+
     def start_player(self, argv):
         """Start ffmpeg and ffplay; ``argv`` is ``player_argv``'s answer."""
         self.stop_player()
         std, title = argv
+        if os.name == 'nt':
+            return self._start_picture_only(std, title)
         size = f"{std.width}x{std.height}"
         rate = f"{std.frame_rate:.6f}"
         video_r, video_w = os.pipe()
@@ -464,9 +528,40 @@ class StreamingFrameSink(ntsc_frame_sink):
                 target=self._pipe_loop, args=(self._audio_q, self._audio_pipe),
                 daemon=True, name='tv-audio-out'))
         self._audio_cursor = None
+        self.player_has_sound = audio_w is not None
         self._writers = threads
         for t in threads:
             t.start()
+        return play
+
+    def _start_picture_only(self, std, title):
+        """Every frame to ffplay on its stdin, the sound left on the speakers.
+
+        Windows has no ``pass_fds``, so ffmpeg cannot be handed a second
+        pipe for the sound. The pictures are still every frame, paced by
+        the radio; the sound is the receiver's own speaker path, not muxed
+        with them.
+        """
+        play = subprocess.Popen(
+            self.play_cmd or
+            ['ffplay', '-hide_banner', '-loglevel', 'error',
+             '-probesize', '32', '-analyzeduration', '0',
+             '-f', 'rawvideo', '-pixel_format', 'rgb24',
+             '-video_size', f"{std.width}x{std.height}",
+             '-framerate', f"{std.frame_rate:.6f}",
+             '-window_title', title, '-i', 'pipe:0'],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        self._player_procs = [play]
+        self._player = play
+        self._video_pipe = play.stdin
+        self._video_q = ([], threading.Lock(), threading.Event())
+        self._audio_q = None
+        self.player_has_sound = False
+        self._writers = [threading.Thread(
+            target=self._pipe_loop, args=(self._video_q, self._video_pipe),
+            daemon=True, name='tv-video-out')]
+        self._writers[0].start()
         return play
 
     def _pipe_loop(self, q, pipe):
@@ -505,6 +600,7 @@ class StreamingFrameSink(ntsc_frame_sink):
         self._player_procs = []
         self._player = None
         self._audio_cursor = None
+        self.player_has_sound = False
 
     def player_alive(self):
         return self._player is not None and self._player.poll() is None

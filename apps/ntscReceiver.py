@@ -1035,6 +1035,12 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
             print(f"{self.TITLE}: no audio output ({exc})", file=sys.stderr)
             self.want_sound = False
             self.sound = None
+            # The tap is inside the sound chain that was just abandoned, so
+            # it would never be fed, and Watch would wait a second for each
+            # frame's sound. Watch goes without sound instead.
+            self.audio_tap = None
+            if hasattr(self.frames, 'tap'):
+                self.frames.tap = None
             return
         self.connect(self.radio_source, self.sound, self.audio_out)
 
@@ -1078,8 +1084,13 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         """
         level = 0.0 if self._muted() else self.volume
         self.frames.volume = level
+        # Only a player that carries the sound takes it off the speakers:
+        # on Windows Watch shows pictures only (tv_watch) and the speakers
+        # keep it.
+        player_sound = self._watching() and getattr(
+            self.frames, 'player_has_sound', False)
         if self.sound is not None:
-            self.sound.set_volume(0.0 if self._watching() else level)
+            self.sound.set_volume(0.0 if player_sound else level)
 
     def _muted(self):
         return hasattr(self, 'mute_btn') and self.mute_btn.isChecked()

@@ -225,6 +225,9 @@ damage something. Each links to the why.
   interpreter lock kept it from draining the radio: "Sample Overrun" every
   few seconds, with every test fed by C++ blocks passing. Heavy work goes
   in worker processes, and a Python block in a fast stream takes vectors.
+  Those workers are spawned, which re-imports `__main__` in each: any
+  script that builds a TV receiver needs `if __name__ == '__main__':`, or
+  every worker builds a receiver of its own.
   [ntsc](knowledge/ntsc.md#watching-every-frame-with-the-sound-in-step)
 - **A Python block's `start()` must never raise.** GNU Radio calls it on
   the block's own thread and `tb.start()` waits for it forever; an app's
