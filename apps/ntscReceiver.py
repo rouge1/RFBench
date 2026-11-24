@@ -194,7 +194,7 @@ class NtscSound(gr.hier_block2):
     """
 
     def __init__(self, sample_rate, center_offset=LO_OFFSET,
-                 audio_rate=AUDIO_RATE, volume=0.5):
+                 audio_rate=AUDIO_RATE, volume=0.5, tap=None):
         gr.hier_block2.__init__(
             self, "ntsc_sound",
             gr.io_signature(1, 1, gr.sizeof_gr_complex),
@@ -227,6 +227,12 @@ class NtscSound(gr.hier_block2):
         self.gain = blocks.multiply_const_ff(float(volume))
         self.connect(self, self.channel, self.demod, self.audio_lpf,
                      self.resamp, self.deemph, self.gain, self)
+        # ``tap`` (tv_watch.AudioTap) takes the sound before the volume, so
+        # Watch's synced player can have it while the speakers are muted.
+        self.tap = tap
+        if tap is not None:
+            self.tap_vector = blocks.stream_to_vector(gr.sizeof_float, tap.VLEN)
+            self.connect(self.deemph, self.tap_vector, tap)
 
         # Two meters. The carrier level says the sound is being transmitted
         # at all; the deviation says something is modulating it. A station
@@ -275,10 +281,17 @@ class ntsc_frame_sink(gr.sync_block):
     #: came back black.
     BUFFER_FRAMES = 1.7
 
+    #: Samples per input item. 1 here; the streaming sink in tv_watch takes
+    #: its input in vectors so GNU Radio calls it a few hundred times a
+    #: second rather than thousands (see VLEN there).
+    VLEN = 1
+
     def __init__(self, sample_rate, width=None, active_lines=None,
                  standard=None):
-        gr.sync_block.__init__(self, name='ntsc_frame_sink',
-                               in_sig=[np.float32], out_sig=None)
+        gr.sync_block.__init__(
+            self, name='ntsc_frame_sink',
+            in_sig=[np.float32 if self.VLEN == 1 else (np.float32, self.VLEN)],
+            out_sig=None)
         self.sample_rate = float(sample_rate)
         # The standard is a parameter because the FM video receiver decodes
         # PAL as well, off the same block - see `CompositeFrameSink` below.
@@ -531,13 +544,20 @@ CompositeFrameSink = ntsc_frame_sink
 # --------------------------------------------------------------------------
 
 class ConfigDialog(Qt.QDialog):
+    #: What a subclass for another standard changes - ``palReceiver``'s.
+    TITLE = "NTSC Video Receiver"
+    CONFIG_NAME = "ntscReceiver_config.json"
+    #: The sound carrier's tooltip says where the standard puts it.
+    SOUND_TIP = ("System M sends the sound on its own FM carrier 4.5 MHz "
+                 "above the picture. Turning this off leaves the picture "
+                 "untouched - the two are decoded by separate chains.")
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("NTSC Video Receiver Configuration")
+        self.setWindowTitle(f"{self.TITLE} Configuration")
         self.layout = Qt.QVBoxLayout(self)
         self.config_dir = CONFIG_DIR
-        self.config_file = os.path.join(self.config_dir,
-                                        "ntscReceiver_config.json")
+        self.config_file = os.path.join(self.config_dir, self.CONFIG_NAME)
 
         settings = read_settings()
         self.usrp_ip = settings.get('usrp_ip', '')
@@ -563,7 +583,7 @@ class ConfigDialog(Qt.QDialog):
         apply_dark_theme(self)
 
     def create_cannot_receive(self):
-        self.setWindowTitle("NTSC Video Receiver")
+        self.setWindowTitle(self.TITLE)
         row = Qt.QHBoxLayout()
         icon = Qt.QLabel()
         icon.setPixmap(self.style().standardIcon(
@@ -572,7 +592,7 @@ class ConfigDialog(Qt.QDialog):
         row.addWidget(icon)
         message = Qt.QLabel(
             "<b>The Signal Hound VSG60 cannot receive.</b><br><br>"
-            "It only transmits, so the NTSC Receiver has no radio to listen "
+            f"It only transmits, so the {self.TITLE.replace(' Video', '')} has no radio to listen "
             "with. Choose the HackRF One, an Ettus USRP or the Signal Hound "
             "BB60D in Settings (the gear icon), then open it again.")
         message.setWordWrap(True)
@@ -610,10 +630,7 @@ class ConfigDialog(Qt.QDialog):
     def create_sound_control(self):
         self.sound_check = Qt.QCheckBox("Play the sound carrier")
         self.sound_check.setChecked(True)
-        self.sound_check.setToolTip(
-            "System M sends the sound on its own FM carrier 4.5 MHz above "
-            "the picture. Turning this off leaves the picture untouched - "
-            "the two are decoded by separate chains.")
+        self.sound_check.setToolTip(self.SOUND_TIP)
         self.layout.addWidget(self.sound_check)
 
     def update_ok_state(self):
@@ -696,10 +713,54 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
     SAVED_SETTINGS = {'gain_percent': 'gain_percent',
                       'center_mhz': 'center_mhz'}
 
+    # What another standard's receiver changes, and nothing else: the PAL
+    # receiver (``palReceiver``) is this class with these replaced. Each is
+    # exactly the constant this file used before it had them.
+    TITLE = "NTSC Video Receiver"
+    SETTINGS_KEY = "ntscReceiver"
+    dialog_class = None                  # ConfigDialog, once it is defined
+    STANDARD = NTSC_STANDARD
+    LO_OFFSET = LO_OFFSET
+    SPECTRUM_CUTOFF = 3.6e6
+    SPECTRUM_TRANSITION = 1.4e6
+    SPECTRUM_TITLE = ('Received Channel - visual carrier 1.75 MHz below '
+                      'channel centre, sound 4.5 MHz above it')
+
+    def channel_items(self):
+        return tv_channel_items()
+
+    def channel_centre(self, channel):
+        return channel_center_mhz(channel)
+
+    def channel_for(self, mhz):
+        return channel_for_center(mhz)
+
+    def default_centre(self):
+        return channel_center_mhz(DEFAULT_CHANNEL)
+
+    def make_demod(self):
+        return NtscDemod(self.samp_rate)
+
+    def make_frames(self, composite_rate):
+        # Every frame, decoded on several threads and handed to a player in
+        # step with the sound - apps/tv_watch.py. Imported here because it
+        # builds on ntsc_frame_sink, defined in this module.
+        from apps.tv_watch import StreamingFrameSink
+        return StreamingFrameSink(composite_rate, standard=self.STANDARD,
+                                  tap=self.audio_tap)
+
+    def make_audio_tap(self):
+        from apps.tv_watch import AudioTap
+        return AudioTap(AUDIO_RATE)
+
+    def make_sound(self):
+        return NtscSound(self.samp_rate, volume=self.volume,
+                         tap=self.audio_tap)
+
     def __init__(self, config_values=None):
-        gr.top_block.__init__(self, "NTSC Video Receiver", catch_exceptions=True)
+        gr.top_block.__init__(self, self.TITLE, catch_exceptions=True)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("NTSC Video Receiver")
+        self.setWindowTitle(self.TITLE)
         apply_flowgraph_theme(self)
         # The lock line's colours, from the theme the window was just
         # painted in - not taken at import, when the launcher may have had
@@ -723,7 +784,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         self.top_grid_layout = Qt.QGridLayout()
         self.top_layout.addLayout(self.top_grid_layout)
 
-        self.settings = Qt.QSettings("GNU Radio", "ntscReceiver")
+        self.settings = Qt.QSettings("GNU Radio", self.SETTINGS_KEY)
         try:
             geometry = self.settings.value("geometry")
             if geometry:
@@ -732,7 +793,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
             print(f"Qt GUI: Could not restore geometry: {exc}", file=sys.stderr)
 
         if config_values is None:
-            dialog = ConfigDialog()
+            dialog = (self.dialog_class or ConfigDialog)()
             if not dialog.exec_():
                 sys.exit(0)
             values = dialog.get_values()
@@ -741,7 +802,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
 
         self.radio_type = values.get('radio_type', 'hackrf')
         self.center_mhz = float(values.get('center_mhz',
-                                           channel_center_mhz(DEFAULT_CHANNEL)))
+                                           self.default_centre()))
         self.gain_percent = float(values.get('gain_percent', 60))
         self.usrp_ip = values.get('ipXmitAddr', '')
         self.samp_rate = SAMPLE_RATES.get(self.radio_type, 20e6)
@@ -765,13 +826,13 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         row = Qt.QHBoxLayout()
         row.addWidget(Qt.QLabel("Channel:"))
         self.channel_combo = Qt.QComboBox()
-        for n, centre in [(n, c) for n, c, _ in tv_channel_items()]:
+        for n, centre in [(n, c) for n, c, _ in self.channel_items()]:
             self.channel_combo.addItem(f"{n} ({centre:g})", n)
-        index = self.channel_combo.findData(channel_for_center(self.center_mhz))
+        index = self.channel_combo.findData(self.channel_for(self.center_mhz))
         if index >= 0:
             self.channel_combo.setCurrentIndex(index)
         self.channel_combo.currentIndexChanged.connect(
-            lambda _: self.set_center(channel_center_mhz(
+            lambda _: self.set_center(self.channel_centre(
                 self.channel_combo.currentData())))
         row.addWidget(self.channel_combo)
 
@@ -893,13 +954,13 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         """
         self.spectrum_channel = filter.freq_xlating_fir_filter_ccf(
             SPECTRUM_DECIM,
-            filter.firdes.low_pass(1.0, self.samp_rate, 3.6e6, 1.4e6),
-            -LO_OFFSET, self.samp_rate)
+            filter.firdes.low_pass(1.0, self.samp_rate, self.SPECTRUM_CUTOFF,
+                                   self.SPECTRUM_TRANSITION),
+            -self.LO_OFFSET, self.samp_rate)
         self.spectrum = qtgui.freq_sink_c(
             2048, window.WIN_BLACKMAN_hARRIS,
             self.center_mhz * 1e6, self.samp_rate / SPECTRUM_DECIM,
-            'Received Channel - visual carrier 1.75 MHz below channel centre, '
-            'sound 4.5 MHz above it', 1, None)
+            self.SPECTRUM_TITLE, 1, None)
         self.spectrum.set_update_time(0.10)
         self.spectrum.set_y_axis(*SPECTRUM_Y_AXIS)
         self.spectrum.set_y_label('Relative Gain', 'dB')
@@ -916,7 +977,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
 
     # ----------------------------------------------------------- flowgraph
     def _build_flowgraph(self):
-        tuned = self.center_mhz * 1e6 + LO_OFFSET
+        tuned = self.center_mhz * 1e6 + self.LO_OFFSET
         if self.radio_type == 'usrp':
             self.radio_source = uhd.usrp_source(
                 ",".join((f"addr={self.usrp_ip}", '')),
@@ -938,13 +999,22 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
             self.radio_source.set_frequency(0, tuned)
             self.radio_source.set_gain_mode(0, False)
 
-        self.demod = NtscDemod(self.samp_rate)
-        self.frames = ntsc_frame_sink(self.demod.composite_rate)
+        self.demod = self.make_demod()
+        # The sound is tapped for Watch's player before the picture sink is
+        # built, so the sink knows it has sound to keep in step with.
+        self.audio_tap = self.make_audio_tap() if self.want_sound else None
+        self.frames = self.make_frames(self.demod.composite_rate)
         self.level_probe = blocks.probe_signal_f()
         # 0.0001 was so slow the reading flickered between the signal and
         # the noise floor from one refresh to the next.
         self.rms = blocks.rms_cf(0.01)
-        self.connect(self.radio_source, self.demod, self.frames)
+        vlen = getattr(self.frames, 'VLEN', 1)
+        if vlen > 1:
+            self.frames_vector = blocks.stream_to_vector(gr.sizeof_float, vlen)
+            self.connect(self.radio_source, self.demod, self.frames_vector,
+                         self.frames)
+        else:
+            self.connect(self.radio_source, self.demod, self.frames)
         self.connect(self.radio_source, self.rms, self.level_probe)
         if self.want_sound:
             self._build_sound()
@@ -958,11 +1028,11 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         a failure here turns sound off and says so rather than taking the
         receiver down with it.
         """
-        self.sound = NtscSound(self.samp_rate, volume=self.volume)
+        self.sound = self.make_sound()
         try:
             self.audio_out = audio.sink(AUDIO_RATE, '', True)
         except Exception as exc:
-            print(f"NTSC receiver: no audio output ({exc})", file=sys.stderr)
+            print(f"{self.TITLE}: no audio output ({exc})", file=sys.stderr)
             self.want_sound = False
             self.sound = None
             return
@@ -993,8 +1063,23 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
     def set_volume(self, percent):
         """Loudness, as a plain 0-100% like every other slider here."""
         self.volume = max(0.0, min(100.0, float(percent))) / 100.0
-        if self.sound is not None and not self._muted():
-            self.sound.set_volume(self.volume)
+        self._apply_volume()
+
+    def _watching(self):
+        return self.frames.player_alive()
+
+    def _apply_volume(self):
+        """Sound to the speakers here, or to Watch's player - never both.
+
+        While watching, the player has the sound, in step with the picture,
+        and the speaker path is held at zero so it is not heard twice and
+        half a second apart. The sound chain keeps running either way: the
+        carrier level and deviation meters go on reading.
+        """
+        level = 0.0 if self._muted() else self.volume
+        self.frames.volume = level
+        if self.sound is not None:
+            self.sound.set_volume(0.0 if self._watching() else level)
 
     def _muted(self):
         return hasattr(self, 'mute_btn') and self.mute_btn.isChecked()
@@ -1002,8 +1087,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
     def set_muted(self, muted):
         # The sound chain keeps running while muted: the carrier level and
         # deviation meters go on reading, which is the point of having them.
-        if self.sound is not None:
-            self.sound.set_volume(0.0 if muted else self.volume)
+        self._apply_volume()
         if hasattr(self, 'mute_btn'):
             self.mute_btn.setText("Unmute" if muted else "Mute")
 
@@ -1012,7 +1096,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         if abs(mhz - self.center_mhz) < 1e-6:
             return
         self.center_mhz = mhz
-        tuned = mhz * 1e6 + LO_OFFSET
+        tuned = mhz * 1e6 + self.LO_OFFSET
         if self.radio_type == 'usrp':
             self.radio_source.set_center_freq(tuned, 0)
         elif self.radio_type == 'bb60':
@@ -1025,7 +1109,7 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         self.spectrum.set_frequency_range(mhz * 1e6,
                                           self.samp_rate / SPECTRUM_DECIM)
         for widget, value in ((self.freq_spin, mhz),
-                              (self.channel_combo, channel_for_center(mhz))):
+                              (self.channel_combo, self.channel_for(mhz))):
             widget.blockSignals(True)
             if widget is self.freq_spin:
                 widget.setValue(value)
@@ -1046,29 +1130,30 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
     def toggle_watch(self):
         if self.frames.player_alive():
             self.frames.stop_player()
+            self._apply_volume()
             self.watch_btn.setText("Watch")
             self.action_note.setText("")
             return
-        # The rate pictures actually arrive at, not the standard's frame
-        # rate: a buffer holds BUFFER_FRAMES frames and yields one picture,
-        # so they come 1.7 frames apart in real time. Telling a player
-        # 29.97 when it is being fed 17.6 leaves it starved between frames.
-        argv = find_player(frame_rate=1.0 / (FRAME * ntsc_frame_sink.BUFFER_FRAMES))
+        # Every frame at the standard's own rate, with the sound muxed in
+        # beside it - see apps/tv_watch.py.
+        argv = self.frames.player_argv(title=self.TITLE.replace(' Receiver', ''))
         if argv is None:
             Qt.QMessageBox.warning(
                 self, "No Media Player",
-                "Watching needs ffplay or mpv on PATH, and neither is "
-                "installed.")
+                "Watching needs ffmpeg and ffplay on PATH, and they are not "
+                "both installed.")
             return
         try:
             self.frames.start_player(argv)
         except Exception as exc:
             Qt.QMessageBox.warning(self, "Could Not Start Player", str(exc))
             return
+        self._apply_volume()
         self.watch_btn.setText("Stop Watching")
         self.action_note.setText(
-            f"{os.path.basename(argv[0])} started - it shows the decoded "
-            "pictures as they arrive.")
+            "ffplay started - every frame, with the sound in step"
+            if self.audio_tap is not None else
+            "ffplay started - every frame (sound is off)")
 
     # ------------------------------------------------------------- readout
     def refresh(self):
@@ -1094,7 +1179,8 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         if line_rate:
             # How far the transmitter's line rate is from 15734.266 Hz, the
             # same clock error the ATSC receiver reads off the pilot.
-            ppm = (line_rate - FH) / FH * 1e6
+            fh = self.STANDARD.line_rate
+            ppm = (line_rate - fh) / fh * 1e6
             self.lbl['line_rate'].setText(
                 f"{line_rate:,.1f} Hz  ({ppm:+.0f} ppm)")
         else:
@@ -1106,11 +1192,11 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
         else:
             self.lbl['levels'].setText("-")
 
-        # A buffer holds 1.7 frames and yields one picture, so the ceiling
-        # is 29.97/1.7 = 17.6 a second, not 29.97. Say what is actually
-        # attainable rather than flagging the design as a shortfall.
+        # Against what the frame sink can give: every frame with the
+        # streaming sink (apps/tv_watch.py); one picture per 1.7 frames -
+        # 17.6 a second in NTSC - with the plain ntsc_frame_sink.
         self.lbl['frames'].setText(
-            f"{decoded:,}  ({rate:.1f}/s of {1.0 / FRAME / 1.7:.1f})"
+            f"{decoded:,}  ({rate:.1f}/s of {self._picture_rate():.1f})"
             if decoded else "none")
         self.lbl['dropped'].setText(
             f"{self.frames.frames_dropped} / {self.frames.failures}")
@@ -1143,21 +1229,29 @@ class ntscReceiver(gr.top_block, Qt.QWidget):
 
         if not self.frames.player_alive() and self.watch_btn.text() != "Watch":
             self.frames.stop_player()
+            self._apply_volume()
             self.watch_btn.setText("Watch")
             self.action_note.setText("")
+
+    def _picture_rate(self):
+        """Pictures a second the frame sink can give: every frame now."""
+        per = getattr(self.frames, 'FRAMES_PER_PICTURE',
+                      ntsc_frame_sink.BUFFER_FRAMES)
+        return 1.0 / (self.STANDARD.frame * per)
 
     def _status(self, decoded, rate, line_rate):
         if not decoded:
             return ("No picture - nothing is syncing on this channel", self.BAD)
-        if line_rate and abs(line_rate - FH) / FH > 0.01:
+        fh = self.STANDARD.line_rate
+        if line_rate and abs(line_rate - fh) / fh > 0.01:
             return (f"Syncing, but the line rate is {line_rate:,.0f} Hz "
-                    f"and should be {FH:,.0f}", self.WARN)
-        if rate < 12:
+                    f"and should be {fh:,.0f}", self.WARN)
+        if rate < 0.8 * self._picture_rate():
             return (f"Picture, but only {rate:.0f} frames a second", self.WARN)
         return ("Locked - picture decoding", self.GOOD)
 
     def closeEvent(self, event):
-        self.settings = Qt.QSettings("GNU Radio", "ntscReceiver")
+        self.settings = Qt.QSettings("GNU Radio", self.SETTINGS_KEY)
         self.settings.setValue("geometry", self.saveGeometry())
         self.status_timer.stop()
         self.stop()

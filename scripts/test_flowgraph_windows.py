@@ -77,6 +77,7 @@ MODULES = [
     'fmAudioRecordedGenerator', 'subcarrierRecordedAudio',
     'fmRdsTransmitter', 'rdsReceiver',
     'atscXmitter', 'atscReceiver', 'ntscAnalogVideoRecorded', 'ntscReceiver',
+    'palAnalogVideoRecorded', 'palReceiver',
     'fmVideoXmitter', 'fmVideoReceiver', 'dvbt2Xmitter', 'dvbt2Receiver',
     'ismXmitter', 'ismReceiver',
 ]

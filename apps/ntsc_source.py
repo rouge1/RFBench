@@ -465,6 +465,9 @@ class ntsc_source(gr.sync_block):
         self.frames_encoded = 0
         self.starved = 0
         self.repeats = 0
+        #: Frames of the source read and thrown away to make up for repeats
+        #: - see ``_produce``.
+        self.skipped = 0
         #: The last complete frame, replayed when the encoder has not kept
         #: up. A frozen picture holds sync; blanking does not.
         self._last = None
@@ -529,6 +532,25 @@ class ntsc_source(gr.sync_block):
         try:
             while self._running.is_set():
                 while len(pending) < self.workers and self._running.is_set():
+                    # **Make up for every repeat.** A repeated frame fills
+                    # a frame's worth of air with the last picture, and the
+                    # next one off the source then goes out a frame late -
+                    # for good, since the sound comes from its own ffmpeg
+                    # and is paced by the radio. On worklaptop1, where the
+                    # PAL encoder runs just short of real time, that put
+                    # the picture 14.4 s behind the sound after eleven
+                    # minutes (2026-11-24, scripts/tv_watch_compare.py).
+                    # Reading - not encoding - the frames that were missed
+                    # costs little and keeps the picture on the clock: a
+                    # one-frame stutter, where before it drifted.
+                    # ``repeats`` is written only by work() and ``skipped``
+                    # only here, so neither needs a lock.
+                    while self.skipped < self.repeats and self._running.is_set():
+                        try:
+                            self.frames.next_frame()
+                        except Exception:
+                            break
+                        self.skipped += 1
                     try:
                         frame = self.frames.next_frame()
                     except Exception as exc:

@@ -78,7 +78,7 @@ fixed.
 | [rds.md](knowledge/rds.md) | `rdsReceiver`, `fmRdsTransmitter`, `rds_core`, `rds_encode` | decoding RDS through errors, RadioText and RT+, the clock, stereo and channel separation, Next Track |
 | [atsc.md](knowledge/atsc.md) | `atscXmitter`, `atscReceiver`, `atsc_source`, `atsc_rx_core` | 8VSB on the air, AFC, MER, Watch and Record, the transmitter's own LO leak, the offset that fixed it, the switchable centre notch and the Carrier Leak readout - and why the analog receivers' Watch writes from a thread of its own |
 | [dvbt2.md](knowledge/dvbt2.md) | `dvbt2Xmitter`, `dvbt2Receiver`, `dvbt2_tx`, `apps/dvbt2/`, anything DVB-T2, DVB-T, OFDM television, DVB SI (SDT/EIT/NIT) | why DVB-T2 exists and where it is used, how it is built (PLPs, LDPC, rotated constellations, P1/P2, FFT sizes, guards, pilots, SFN), how it differs from ATSC 1.0 and 3.0 and from the LTE downlink, pros and cons, capacity and thresholds; the two apps - live ffmpeg multiplex of several programmes, the decoder copied from skinny-fm and its spawned workers, Watch per programme - and what over the air found |
-| [ntsc.md](knowledge/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound |
+| [ntsc.md](knowledge/ntsc.md) | `ntsc_encode`, `ntsc_decode`, `ntsc_source`, `ntscAnalogVideoRecorded`, `ntscReceiver`, `palAnalogVideoRecorded`, `palReceiver`, `tv_system`, `tv_watch` | composite video to SMPTE 170M and PAL to BT.1700, video sources, the NTSC transmitter and receiver, and measuring their sound; the PAL B/G and I transmitter and receiver, the broadcast systems table from BT.1701 they share, what the cable test found, and Watch - every frame, sound in step |
 | [fm-video.md](knowledge/fm-video.md) | `fmVideoXmitter`, `fmVideoReceiver`, `fm_video_core` | the FPV and F.405 profiles, the receiver as a measuring instrument, and a real FPV transmitter measured |
 | [ism.md](knowledge/ism.md) | `ism_frame`, `ismXmitter`, `ismReceiver`, anything on 315/433/868/915 MHz, the RTL-SDR, OOK and ASK bursts | what is legal to radiate and why the bench uses a cable, the carrier that never turns off, building an OOK frame rtl_433 will decode, what the encoder turned out to need, rtl_433 as the receiver's decoder, and the RTL-SDR's limits |
 | [bluetooth.md](knowledge/bluetooth.md) | anything on 2.4 GHz, any Bluetooth transmitter or receiver | what a VSG60 can send - LE advertising yes, a Classic link no, Classic packets on one channel for bluey-ox-walker - the LE PHY from the Core spec, and the bench (not built yet) |
@@ -220,6 +220,12 @@ damage something. Each links to the why.
   paint does with a size or a value that can be zero: a 0 px tile's
   shadow took the launcher down on every bank toggle.
   [ui](knowledge/ui.md#banks-that-collapse)
+- **A Python thread doing heavy numpy work starves a Python radio block.**
+  The BB60D's source is a Python block, and decoding threads holding the
+  interpreter lock kept it from draining the radio: "Sample Overrun" every
+  few seconds, with every test fed by C++ blocks passing. Heavy work goes
+  in worker processes, and a Python block in a fast stream takes vectors.
+  [ntsc](knowledge/ntsc.md#watching-every-frame-with-the-sound-in-step)
 - **A Python block's `start()` must never raise.** GNU Radio calls it on
   the block's own thread and `tb.start()` waits for it forever; an app's
   `main()` runs on the launcher's thread, so a BB60D left open by another
@@ -366,6 +372,8 @@ frequency and sample-rate callbacks work through the existing HackRF path.
 | `fmVideoReceiver.py` | FM video receiver - pictures, sound, and what the transmitter's own numbers actually are | ✅ |
 | `ntscAnalogVideoRecorded.py` | NTSC analog video transmitter | ✅ |
 | `ntscReceiver.py` | NTSC analog video receiver - pictures and sound | ✅ |
+| `palAnalogVideoRecorded.py` | PAL B/G and I analog video transmitter | ✅ VSG60 into a BB60D on a cable, G and I |
+| `palReceiver.py` | PAL B/G and I analog video receiver - pictures and sound | ✅ BB60D on a cable from the VSG60, G and I |
 | `atscXmitter.py` | ATSC digital TV transmitter | ✅ |
 | `atscReceiver.py` | ATSC digital TV receiver - decodes the transport stream | ✅ |
 | `dvbt2Xmitter.py` | DVB-T2 transmitter - several videos from the media folder as programmes of one multiplex, encoded live | ✅ VSG60 over the air into a BB60D, 16QAM to 256QAM, up to nine programmes |

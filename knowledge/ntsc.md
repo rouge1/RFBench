@@ -1,4 +1,4 @@
-# NTSC and PAL: composite video, the NTSC transmitter and receiver
+# NTSC and PAL: composite video, the NTSC and PAL transmitters and receivers
 
 One of the notes in `knowledge/`. What applies everywhere, and which
 file covers what, is in [CLAUDE.md](../CLAUDE.md).
@@ -554,3 +554,198 @@ reference to normalise against, and scored a recovery that was in fact
 perfect at **0.007** - which looks exactly like sound that never arrived.
 Delaying the slice by a known amount is what catches it: the reported
 offset moved by 1234 samples the wrong way.
+
+## PAL Transmitter and Receiver
+
+`palAnalogVideoRecorded.py` and `palReceiver.py` (2026-11-24, branch
+`pal-tv`) put a 625-line PAL picture and its sound on a broadcast channel
+and take it off again: System B, G or I, from the dialog's "PAL B/G" or
+"PAL I". They share a tile beside NTSC's. Before them PAL existed only as
+composite (above) and on the FM video apps; the NTSC transmitter's radio
+stage had System M built into its constants, which is why skinny-fm's
+625-line AM-VSB test signal could not be sent.
+
+**The radiated signal is a table, `apps/tv_system.py`,** one row per system
+from ITU-R BT.1701-1 Table 1, kept in `docs/itu/` with BT.470-6 (git-ignored,
+like the rest of `docs/`):
+
+| | M (NTSC) | B | G | I |
+|---|---|---|---|---|
+| Channel | 6 MHz | 7 (VHF) | 8 (UHF) | 8 |
+| Sound above vision (item 2) | 4.5 | 5.5 | 5.5 | 5.9996 |
+| Main / vestigial sideband (4, 5) | 4.2 / 0.75 | 5 / 0.75 | 5 / 0.75 | 5.5 / 1.25 |
+| Peak white, % of sync carrier (8) | 12.5 | 12.5 | 12.5 | 20 |
+| Blanking, % (8), as it lands | 75 | 73.75 | 73.75 | 76 |
+| Deviation (10) / pre-emphasis (11) | 25 kHz / 75 us | 50 / 50 | 50 / 50 | 50 / 50 |
+| Vision/sound power (12) | 10/1 | 10/1 | 10/1 | 10/1 |
+| Composite rate / LO offset | 10 MS/s / 6 MHz | 12.5 / 4.5 | 12.5 / 4.5 | 12.5 / 4.5 |
+
+- **Vision is 1.25 MHz above the channel's lower edge in every system**
+  (item 3), so it is 2.75 MHz below centre on an 8 MHz channel and 2.25 on
+  a 7. `cf` is the channel centre, as in the NTSC and ATSC apps. B/G is one
+  choice that becomes B below 300 MHz and G above it - how the two are
+  defined: the same signal in 7 MHz VHF or 8 MHz UHF channels. The window
+  keeps the system it opened on if retuned across that line.
+- **PAL's blanking and white cannot both be nominal.** A PAL composite has
+  blanking at 30% of sync-to-white (NTSC's is 28.6%), so on a straight line
+  from sync at 100% the B/G figures give white 12.5% (10-15 allowed) and
+  blanking 73.75% (75 +- 2.5); both are inside. System I's 20% white puts
+  blanking on exactly its nominal 76.
+- **System I's vestige reaches the channel edge on purpose**: 1.25 MHz
+  below a carrier 1.25 above the edge, with only 20 dB asked for at
+  -3.0 MHz. The transmitter's out-of-channel check skips that side for I.
+- **12.5 MS/s, not NTSC's 10.** PAL chroma reaches 5.7 MHz and folds back
+  on itself at 10 (fm-video.md); the FM video apps proved 12.5 on TVAdemo.
+  The radio runs at 20 MS/s on the HackRF, the VSG60 and the BB60D, which
+  is 8/5 on the way out and 5/8 on the way back, and at 25 on an N210 (an
+  even 4 from 100 MHz).
+- **The LO offset is 4.5 MHz, not 6.** It puts the vision carrier 7.25 MHz
+  below the radio's LO and the bottom of I's vestige at -8.5, inside the
+  BB60D's flat +-8.5 MHz at 20 MS/s (radios.md); at 6 the vestige would be
+  at -10. The LO then sits 1.2 MHz (I) or 1.7 MHz (B/G) above the sound
+  carrier, clear of the channel.
+- **The NTSC apps are untouched by it.** `VsbModulator` on System M gives
+  `NtscModulator`'s output to float32 rounding (6e-8, which is also how far
+  `NtscModulator` differs from *itself* run to run: GNU Radio's FFT filter
+  rounds by where the scheduler's buffers fall, so "bit for bit" is not a
+  property either block has). `ntscReceiver` gained class attributes - the
+  standard, the LO offset, the channel plan, which demodulator and sound
+  blocks to build - each set to the constant it used before, and
+  `palReceiver` is that class with them replaced.
+
+The blocks: `VsbModulator` (composite to vision carrier), `VsbTransmitter`
+(vision and sound, scaled, resampled to the radio's rate and shifted by the
+LO offset - the app and the test build exactly this), `VsbDemod` (Nyquist
+slope with the system's upper edge, PLL, synchronous detection, down to
+12.5 MS/s) and `AuralSound` (Carson's bandwidth from the deviation, the
+system's de-emphasis). Channels are the CCIR plan: E2-E4 and E5-E12 at
+7 MHz, E21-E69 at 8 MHz (vision 48.25, 175.25 and 471.25 MHz on the first
+of each).
+
+**Verified in software**, `scripts/test_pal_transmit.py`: every Table 1
+figure for M, B, G and I; carrier levels off the envelope through a
+Nyquist slope (G: sync 1.02, white 0.114, blanking 0.736; I: 1.01, 0.181,
+0.759); the vestige 60 dB down at -1.25 MHz where 20 is asked, flat to
+0.1 dB at 0.4 MHz short of the main sideband's top and 63 dB down 0.4 past
+it, nothing out of the channel within 57 dB of the picture; and colour bars
+and two tones through the whole chain at the radio's rate and back - worst
+colour error 0.012-0.018 for B, G and I at 20 MS/s and G at 25 (NTSC's
+chain reads 0.081 against the same 0.10 limit), the sound flat to 0.45 dB
+between 1 and 7 kHz. A frame of the Rick Astley video (below) through G
+comes back with a mean error of 0.0075.
+
+**The Rick Astley video** is a copy made for this, in the media folder as
+`Rick-Astley-Never-Gonna-Give-You-Up.mp4`: H.264 1024x640 at 25 fps with
+AAC stereo, transcoded from an MPEG-2 1920x1200 transport stream on the
+4TB drive that is not one of this project's files. The media folder had only the song's `.wav`.
+
+**Off air, on a cable, 2026-11-24.** The VSG60 on worklaptop1 into the
+BB60D here, no pad, E21 (vision 471.25 MHz), -30 dBm, receiver gain 70%.
+Over the air was ruled out first: a receive-only scan found ATSC stations
+on US channels 14 and 15, which E21 (470-478 MHz) overlaps. The Rick
+Astley clip went out as G and as I and was recorded as Watch shows it,
+then compared with the original clip (`scripts/tv_watch_compare.py`):
+
+| | G | I |
+|---|---|---|
+| Pictures recorded, frames gained or lost | 3,749, 0 | 2,249, 0 |
+| Picture against the original, luma PSNR | 34.2 dB (29.2-37.7) | 32.7 dB (27.8-36.8) |
+| Sound against the original's own track | 0.9991 | 0.9929 |
+| Sound against picture, against the original | +0.6 ms | +0.6 ms |
+| BB60D overruns, receiver repeats | 0, 0 | 0, 6 |
+
+Line rate 15,625.0 Hz within 10 ppm throughout. skinny-fm's iq-tvframe
+read the 625-line test card off the same link horizontally exact to the
+pixel, and moved its own first picture line after the 2-3 lines it found
+it was starting early.
+
+Getting there found five things, every one of which the software tests
+had passed:
+
+- **20% receiver gain left the picture in the BB60D's own noise** - sync
+  and blanking 0.002 apart, sidebands 5-10 dB over the floor, sound below
+  FM threshold and scratchy. 70% cleared it. The headless check at 20% had
+  reported a lock and a line rate and looked fine.
+- **The transmitter could not keep up on worklaptop1.** Built first at the
+  composite rate with a complex 8/5 resampler to the radio's 20 MS/s, it
+  took 6.8 of the eight cores, load 10.5; the resampler was a whole core
+  by itself and set the pace, the 48 kHz-to-12.5 MS/s audio resampler and
+  the FM modulator took most of two more, and the VSG60 ran dry - white
+  lines across the picture, scratchy sound, and the receiver's input
+  dropping 20 dB for moments. `VsbTransmitter` now resamples the picture
+  while it is real and modulates at the radio's rate, does the FM at
+  200 kS/s, and sets every carrier where the radio wants it: 7.3 cores to
+  4.8 on this machine with the same clip, no thread over 73%.
+- **Repeated frames pushed the picture behind the sound for good.** When
+  the encoder is late, `ntsc_source` repeats the last frame to keep the
+  radio fed, which is right; but the next frame off the clip then went out
+  a frame late, and the sound comes from its own ffmpeg paced by the radio.
+  Recorded eleven minutes into a run, the picture was **14.4 s behind the
+  sound**, and losing 9 frames a minute. `ntsc_source` now reads and
+  discards a frame of the source for every repeat (`skipped`), and PAL
+  encodes on four threads where there are eight cores. Afterwards: 0
+  frames lost in 150 s, sound and picture 0.6 ms apart. This is in the
+  shared source, so the NTSC transmitter has it too.
+- **The receiver showed 14 frames a second with the sound unrelated to
+  the picture.** That is how `ntsc_frame_sink` was built - one picture
+  per 1.7 frames, handed to a player told a frame rate, while the sound
+  went to the speakers by its own path - so the sound drifted a different
+  amount each time Watch was pressed. See [Watching: every frame, with the
+  sound in step](#watching-every-frame-with-the-sound-in-step).
+- **`NtscModulator`'s window callback overwrites the baseband scale.**
+  `ntscAnalogVideoRecorded.set_rfPwr` sets it to 0.95 where the flowgraph
+  built 0.646, so any power change made in the NTSC transmitter's window
+  drives the baseband to about 1.25 of full scale. Not changed here; the
+  PAL app does not do it.
+
+## Watching: every frame, with the sound in step
+
+`apps/tv_watch.py`, used by `ntscReceiver` and `palReceiver` (2026-11-24).
+`StreamingFrameSink` replaces `ntsc_frame_sink` in those two; the FM
+video receiver keeps the old block, which suits a measuring instrument.
+
+- **Every frame.** Windows of 1.7 frames step forward one frame at a time,
+  so the first whole frame in each is the next frame broadcast, once.
+  The first window that opens on field two moves the rest on by half a
+  frame, so every picture is one frame, field one then field two.
+- **In worker processes, not threads.** A PAL frame takes 40.6 ms to
+  decode against 40 ms of signal (NTSC 20.3 against 33.4), so two or three
+  decode at once. Threads passed a test fed by GNU Radio's C++ blocks and
+  then lost samples off air: the BB60D's driver block is Python, and the
+  decoding threads holding the interpreter lock kept it from draining the
+  radio - "Sample Overrun" every few seconds, 20 frames a second of 25.
+  Spawned processes, each with its own lock, return 8-bit RGB.
+- **Python blocks take vectors.** The sink takes 50,000 samples an item
+  and the sound tap 960, each behind a `stream_to_vector`: called with
+  whatever GNU Radio had, a few samples at a time, the tap alone used a
+  third of a core, nearly all of it on the interpreter lock. With both
+  batched: 0 overruns while watching.
+- **One picture out per frame of signal**, the previous one again for a
+  frame that failed or was late, so the count of pictures never slips
+  against the radio's clock.
+- **Sound and picture into one player.** The sound is tapped before the
+  volume (`AudioTap`, inside `NtscSound` and `AuralSound`); each picture
+  goes to one ffmpeg with the sound received during it, found from where
+  the decoder says the frame began, and ffmpeg muxes them as NUT for
+  ffplay, which keeps them in step against the sound card. The speaker
+  path is held at zero while watching.
+- **ffmpeg must not probe.** By default it reads seconds of each input
+  before it starts, one input after the other; the picture pipe filled
+  while it read sound, 55 pictures were dropped in six seconds, and every
+  picture after was 0.8 s ahead of its sound. `-probesize 32
+  -analyzeduration 0` on both inputs.
+- **A stream's start time counts.** ffmpeg drops the first ~45 ms of sound
+  while it starts and labels what is left from where it really is; ffplay
+  plays by those labels. Read raw, as if both streams began together, the
+  sound looked 46 ms early when it was in step.
+
+`scripts/test_tv_watch.py` (PAL, `--ntsc`) runs a flash and a beep once a
+second through the transmit and receive chains in real time and records
+Watch's stream: every frame at 25.00 (29.97) a second, the flashes exactly
+a cycle apart, sound within 0.6 (0.8) ms of picture with no drift.
+**Run it on a quiet machine** - beside a running receiver it reads as a
+failure. `scripts/tv_watch_compare.py` records Watch off the BB60D and
+compares it with the original clip; it finds the clip position from the
+sound first, because the video's chorus repeats near-identical shots and a
+whole-clip picture search landed on the wrong one.
+

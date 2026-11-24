@@ -450,6 +450,14 @@ class NtscDecoder:
         lines_between = ((starts[fields[1]] - starts[fields[0]])
                          / (std.line * self.sample_rate))
         swap = 0 if lines_between > std.lines / 2 else 1
+        #: Where in ``x`` the frame just decoded begins - the first line
+        #: after its first field-sync block - for a caller that has to know
+        #: when the picture happened: the streaming frame sink lines the
+        #: sound up against it.
+        self.last_frame_start = int(starts[fields[0]])
+        #: Whether the first field in ``x`` was field two, so the picture
+        #: just decoded paired it with field one of the *next* frame.
+        self.last_swapped = bool(swap)
 
         rows = np.zeros((2 * self.active_lines, self.width, 3))
         for parity, f in enumerate(fields[:2]):
