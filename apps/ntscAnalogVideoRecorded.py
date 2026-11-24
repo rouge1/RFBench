@@ -1056,7 +1056,6 @@ class ntscAnalogVideoRecorded(gr.top_block, Qt.QWidget):
 
     def set_rfPwr(self, rfPwr):
         self.rfPwr = rfPwr
-        self.blocks_multiply_const_vxx_2.set_k(0.95)
         if self.radio_type == 'vsg':
             self.radio_sink.set_level(scale_power(self.rfPwr, self._power_range))
         elif self.radio_type == 'usrp':
