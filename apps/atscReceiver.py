@@ -69,7 +69,7 @@ DEFAULT_CHANNEL = 24            # 533 MHz, the channel this bench uses
 # VSG60 at -59 dBm put it 20 dB under the channel, and 47 % of packets
 # failed. Notched, 0.1 %. On a clean signal it costs nothing measurable
 # (0 % bad and the same MER at -20 dBm). knowledge/atsc.md.
-CENTRE_NOTCH_LEN = 1024            # 533 MHz, the channel this bench uses
+CENTRE_NOTCH_LEN = 1024
 
 # 45 ms of signal: at 12 MS/s that is a 22 Hz FFT bin before interpolation,
 # which resolves a clock error far finer than the demodulator cares about.
