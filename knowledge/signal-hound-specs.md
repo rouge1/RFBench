@@ -67,8 +67,10 @@ timebases should do. That is a free-running pair. The two instruments can
 share one clock: the BB60D's rear SMA can output 10 MHz, and the VSG60 takes
 10 MHz on a BNC. There is no cable here for it (SMA to BNC), and stage 2
 was run free on purpose, because bluey wanted a real clock offset. A
-shared clock would give a zero-ppm control. Whether `bb60_source` can switch
-the rear connector to a 10 MHz output has not been looked at.
+shared clock would give a zero-ppm control. The BB60D's 10 MHz output is on
+its rear port 2 (*Trig/Sync In/Out*), and SoapySDR cannot switch it on; the
+vendor library can, and it has driven an N210 since (2026-11-25) - how, in
+[radios](radios.md#signal-hound-bb60d-as-a-receiver) ("Its 10 MHz output").
 
 ## What it means for stage 3
 

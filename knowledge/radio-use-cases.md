@@ -27,7 +27,7 @@ needs the user's go for that run.
 | VSG60 + HackRF | either | - | ⚠️ only in two processes | [radios](radios.md#vsg60-notes) |
 | N210 RF1 → its own RF2 | either | - | ⚠️ one process only (`txrx_loopback_to_file`) | [ettus](ettus.md#rf1-into-rf2-on-the-one-radio) |
 | **Two transmitters at once**: VSG60 + N210, both into the BB60D | two machines | 20 + 25 MS/s | ✅ both tones in one capture, no gap on either, 0 `U`, 0 overruns | [below](#two-transmitters-at-once-2026-11-25), 2026-11-25 |
-| **A wider band**: BB60D + N210 on adjacent bands, stitched | BB60D's machine | 40 + 25 MS/s | ✅ one coherent 26 MHz band; the halves add in phase | [below](#a-wider-band-two-receivers-stitched-2026-11-25), 2026-11-25 |
+| **A wider band**: BB60D + N210 on adjacent bands, stitched | BB60D's machine | 40 + 25 MS/s | ✅ one coherent 26 MHz band; the halves add in phase - free-running with the phase tracked every 2 ms, or on a **shared 10 MHz** with one fixed phase | [below](#a-wider-band-two-receivers-stitched-2026-11-25), 2026-11-25 |
 
 How "no gap" was judged: a CW tone, mixed to DC in 1,000-sample blocks,
 checked for any block under half the median amplitude and any phase step
@@ -131,6 +131,39 @@ graded against the file. In order:
 
 So two receivers on adjacent bands make one band about twice as wide,
 coherent across the seam, from one machine - with the phase tracked,
-since the clocks are not shared. Over the air that stays inside 26 MHz;
+since the clocks are not shared (but see the next section). Over the air that stays inside 26 MHz;
 anything wider than the ISM band needs a cable and a pad. The scripts
 (generator, stitch, grade) were throwaways in the session scratchpad.
+
+## The same on one clock: a shared 10 MHz reference (2026-11-25)
+
+An SMA cable from the BB60D's rear **port 2** (*Trig/Sync In/Out*) to the
+N210's **REF IN**, the BB60D switched to output its 10 MHz through the
+vendor library (SoapySDR cannot - how, in
+[radios](radios.md#signal-hound-bb60d-as-a-receiver)), the N210 on
+`--ref external`. Checked first with no RF: the N210 on its internal clock
+reports `ref_locked` True; on external with the BB60D not outputting,
+False; with the BB60D outputting, True; and False again once the BB60D
+closes. Then the same test file over the air (user's go), the same tunings
+and gains, both captures on the one clock, stitched the same way.
+
+| | Free-running (above) | **Shared 10 MHz** |
+|---|---|---|
+| Frequency between the two radios, from the tones both see | +174.6 Hz | **−0.18 Hz** (constant; the tuners' steps) |
+| Clock drift between them | −0.193 ppm | **−0.002 ppm** |
+| Relative phase on a tone both see, its constant offset removed, 2.5 s | wanders 11.2 rad | **0.05 rad** (rms 0.007) |
+| Stitched with **one fixed complex gain**, no tracking: the halves' compressed sweeps | 1.00 rad apart, peak 0.40 of their sum | **0.03 rad apart, peak 0.98** |
+| Tone spread, 902.5-927.5 MHz | 4.3 dB | 4.1 dB |
+
+So on a shared reference one phase, measured once in the overlap, holds
+for the whole capture: the 2 ms tracking, and the need for signal in the
+overlap all the time, go away. It still takes the overlap to find that
+one phase and the time offset - the captures start whenever each radio
+opens; a trigger shared through the same port 2 (it is also a trigger
+input) or the N210's PPS input is the next step for that, not tried. One
+thing not explained: the fine-timing residual was 0.87 samples on the
+shared clock against 0.11 free-running, though the stitch came out
+coherent.
+
+The VSG60 can join the same clock through its BNC 10 MHz input (an SMA
+to BNC adapter); not tried.

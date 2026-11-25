@@ -195,6 +195,24 @@ Five things about this device that are not like the others:
   behind a broad `except` that looks *exactly* like no device being plugged
   in. That cost an afternoon; `find_devices()` now converts first and
   prints anything that goes wrong.
+- **Its 10 MHz output cannot be switched on through SoapySDR.** The
+  BB60D puts its internal 10 MHz out on **port 2**, the rear SMA labelled
+  *Trig/Sync In/Out* (port 1 is the 10 MHz reference *in*), set with the
+  vendor's `bbConfigureIO(device, 0, BB60D_PORT2_10MHZ_REF_OUT)` - `1`
+  in `/usr/local/include/bb_api.h`. The SoapySDR module's `port1`/`port2`
+  settings offer only the BB60A/C codes (no 10 MHz out on port 2 at all),
+  and it **sets the ports itself when the stream starts**, back to off;
+  while streaming the ports cannot change (`-10`, `bbDeviceNotIdleErr`).
+  What works (2026-11-25): open through SoapySDR, `setupStream`,
+  configure, `activateStream`, then through `ctypes.CDLL('libbb_api.so.5')`
+  - the same library the module loaded - `bbAbort(0)`,
+  `bbConfigureIO(0, 0, 1)`, `bbInitiate(0, 4, 0)` (`BB_STREAMING`,
+  `BB_STREAM_IQ`); samples flow as before, 0 overruns, and an N210 on
+  its REF IN reports `ref_locked` True. **The output is on only while
+  the BB60D is open**: when the process closes it the N210 loses lock, so
+  the BB60D must be opened first and closed last. `bb60_source` does not do
+  this yet. The result it gave is in
+  [radio use cases](radio-use-cases.md#the-same-on-one-clock-a-shared-10-mhz-reference-2026-11-25).
 - **SoapySDR loads its modules once per process, on first use**, reading
   `SOAPY_SDR_PLUGIN_PATH` then and never again. Anything that touches
   SoapySDR before `ensure_plugin_path()` runs - the launcher's HackRF
