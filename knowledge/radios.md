@@ -128,18 +128,38 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   worklaptop1's VSG60A on 2026-10-30 from the leak line, as where it sat
   relative to the requested centre: −4.2 kHz at 144.29 MHz, −8.3 kHz at 162.675 MHz, −43 kHz at
   868.35 MHz, −250 kHz at 50.29 MHz, +90 kHz at 1240.29 MHz and +200 kHz at
-  5615.8 MHz. On 2026-11-24 the same unit at 915.000 MHz and 40 MS/s
-  put it at −93 kHz, found from its image rather than its leak: in a
-  frequency-hopping test loop played over the cable into the BB60D, two
-  stray bursts at 909.414 and 914.414 MHz were images of carriers at
-  920.4 and 915.4 MHz, both mirrored about 914.907 MHz (a blind
-  analysis by skinny-fm's `iq-hop`, graded against the file's truth). The step is not the same at every frequency and its size is not
+  5615.8 MHz. (An entry here
+  from 2026-11-24 put it at −93 kHz at 915 MHz, from two "stray bursts" in
+  a frequency-hopping test that looked like images mirrored about
+  914.907 MHz. **That was wrong** - checked 2026-11-25 against the file's
+  truth and the recording: both were the third sender's own bursts, on
+  their own channels (909.404 and 914.404 MHz, 43.5 dB, as its others) in
+  their own slots, with nothing at the would-be originals (920.4 and
+  915.4 MHz, at the floor). The decoder had left them unclassified - one
+  cut by the start of the recording - and reported their frequency
+  ~10 kHz off on a coarse grid, which made the mirror arithmetic fit. So
+  there is no measurement of the LO at 915 MHz.) The step is not the same at every frequency and its size is not
   documented, so take these as one unit's numbers. The image of a carrier at
   f appears at 2·LO − f, and a weak line sits exactly halfway between the
   leak and the carrier. It matters to anything that places its signal "away
   from the leak" - the ISM, AM and NTSC apps, and the offset trick in
   [ism](ism.md#the-carrier-never-turns-off): allow for a leak up to a few
   hundred kHz from where it was expected, or look at the spectrum once.
+- **Its I/Q image is well inside the specified −40 dBc**: at 915 MHz,
+  40 MS/s, played from memory over the cable into the BB60D (2026-11-24),
+  25 GFSK carriers from 903.4 to 927.4 MHz showed **no consistent image
+  anywhere the LO could be**, and averaged over the 25 it is **below
+  about −58 dBc**. Measured from skinny-fm's recording of the hopping test:
+  for each candidate LO across 915 MHz ± 300 kHz, the power at 2·LO − f
+  (150 kHz wide) with the carrier on, less the same with every burst off,
+  as a fraction of the carrier, summed over all 25 channels - one search,
+  since a real image implies the same LO on every channel. Blocks with any
+  other burst near the region (the other hopper, and the OOK sender on even
+  MHz) were left out of both; without that the OOK sender's channels read
+  as "images" at −19 dBc. The statistic sits slightly positive at every
+  LO (z median 1.1, best 5.0 at 915.144 MHz with no peak above the rest),
+  most likely the carriers' own skirts. So a full-strength burst at a
+  mirror frequency is not the image; look for a real one there first.
 
 - **A VSG60 and a HackRF stream together on one host - in two processes.**
   Measured on one powered hub, the HackRF on its USB 2 side and the VSG on
