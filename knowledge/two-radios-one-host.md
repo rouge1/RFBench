@@ -14,7 +14,7 @@ they come from.
 | VSG60 + BB60D | **No.** BB60D: `Device packet framing issues` after three buffers; VSG: a USB transfer failure | [radios](radios.md#vsg60-notes) |
 | VSG60 + HackRF | Yes, in two processes. In one process the VSG60 transmits nothing if the HackRF was opened first | [radios](radios.md#vsg60-notes) |
 | **VSG60 + N210** | **Yes, as radios.** The VSG60 streaming at 20 and 40 MS/s while the N210 received it at 25 MS/s: no gap on either, below. The ATSC pair still overruns there: the receiver alone is short of the 8 cores | here, 2026-11-25 |
-| **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, below | here, 2026-11-23 |
+| **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, receiving or transmitting, below. But the ATSC transmitter app on the N210 starves beside the ATSC receiver app on the BB60D | here, 2026-11-23 and 2026-11-25 |
 
 So the only pair that cannot share a host is the VSG60 with the BB60D. A
 VSG60 transmitter and an N210 receiver can share worklaptop1, as far as
@@ -149,6 +149,35 @@ It loops with a break in the transport stream every pass.
 Not tested: the N210 *transmitting* beside the VSG60; per-thread CPU of
 the ATSC receiver; worklaptop1 with a realtime limit for UHD.
 
+## The N210 transmitting beside the BB60D (2026-11-25)
+
+The N210 back on the BB60D's machine (USB Ethernet adapter), over the air
+with the user's go. That machine is an i7-12700H - 6 performance cores
+(12 threads) and 8 efficiency cores - on the `powersave` governor, and the
+N210's adapter, the BB60D and the 4TB drive hang off one 5 Gb/s USB hub.
+
+| Run | N210 transmitting | BB60D, same machine | Machine |
+|---|---|---|---|
+| A: a tone | UHD's `tx_waveforms`, 25 MS/s, sine at 916.0 MHz, gain 0, 0.3: **0 `U`** in 60 s | `bb60_tone.py` 5 MS/s, ATT −20, 30 s: no gap, no phase step, 0 overruns; tone 67.6 dB over the floor, the N210's LO −37.5 dBc | idle |
+| B: the ATSC pair | `atscXmitter`, 25 MS/s, 10 %, Big Buck Bunny encoded live: **21,033 `U`**, in bursts all through | `atscReceiver`, gain 20 %: 0 overruns, pilot found, programme list read, "Locked - clean stream" in one 5 s window only, 100 % of packets lost in the rest, MER 15.8-18.6 dB | 66-68 % idle |
+| C: the transmitter alone | the same, no receiver: **13 `U`** in 60 s | off | 89 % idle |
+
+So the radios share the machine, as in A, and the ATSC transmitter at
+25 MS/s on the N210 is fine alone (C - its first time on the air at that
+rate, which [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23) had as
+arithmetic only). Together with the receiver app it starves, though the
+machine is two thirds idle: the receiver takes about 3.5 threads, the
+transmitter 2.2. The likely reading, not proven: an average over 20
+threads hides the 6 fast cores filling, and the transmitter's 25 MS/s chain
+then runs on efficiency cores or a busy core's second thread and falls
+behind - on `powersave`, too. Not tried: the `performance` governor,
+pinning each app to its own P-cores (`taskset`), and the receiver app
+beside the tone of A.
+
+UHD on both machines says `Unable to set the thread priority`
+(`pthread_setschedparam` fails): the user has no realtime limit, so no
+UHD thread gets priority on a loaded machine.
+
 Two things around it, neither the pairing:
 
 - **`bb60_tone.py` at 40 MS/s for 30 s** wrote all 9.6 GB (exactly 30.0 s
@@ -164,8 +193,8 @@ Two things around it, neither the pairing:
   the repeat with the N210. Whether the branch's receiver or the old one
   does this is in [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23). See [atsc](atsc.md#the-transmitters-own-lo-leak-2026-11-23).
 
-Not tested: the N210 *transmitting* beside the BB60D, which needs a cable
-or a go over the air; the N210 writing to the same disk as a BB60D capture
+Not tested then: the N210 *transmitting* beside the BB60D - done since,
+above; the N210 writing to the same disk as a BB60D capture
 at full rate; and the HackRF with either.
 
 The scripts were throwaways in the session scratchpad. `benchmark_rate`
