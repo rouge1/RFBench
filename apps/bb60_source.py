@@ -29,6 +29,17 @@ Four things about this device that are not like the others:
 
 Gain is two elements, an attenuator and an RF stage, presented as one
 0-100% control like every other radio here.
+
+**It can lend its clock: ``ref_out=True``** puts the BB60D's internal 10 MHz
+out on its rear port 2 (*Trig/Sync In/Out*) while the block runs, so an N210
+on REF IN (or anything else on 10 MHz) shares it. SoapySDR cannot do this:
+its module offers only the BB60A/C port codes, and it sets the ports back to
+off itself whenever the stream starts and on every retune; and the ports
+cannot change while streaming (``bbDeviceNotIdleErr``). So after each of
+those the block stops the stream, sets port 2, and starts it again through
+the vendor library the module already loaded (``_apply_ref_out``). The
+output is there only while the BB60D is open - open it before whatever
+locks to it, close it after (knowledge/radios.md).
 """
 
 import ctypes
@@ -42,6 +53,13 @@ import numpy as np
 from gnuradio import gr  # type: ignore
 
 DRIVER = 'SignalHoundBB60'
+#: The vendor library the SoapySDR module links; loaded again it is the same copy, sharing the module's open device.
+#: It loads only once the module has (alone it fails on ``FT_Write``: it needs the FTDI library the module brings),
+#: so ``vendor_lib()`` is called after the device is open, and a failure is not remembered.
+VENDOR_LIBS = ('libbb_api.so.5', '/usr/local/lib/libbb_api.so.5', 'libbb_api.so')
+#: From bb_api.h: ``bbConfigureIO`` port values for a BB60D, ``bbInitiate``'s mode and flag for I/Q streaming.
+BB60D_PORT1_DISABLED, BB60D_PORT2_10MHZ_REF_OUT = 0, 1
+BB_STREAMING, BB_STREAM_IQ = 4, 0
 #: The rates the hardware actually has. Anything else is refused.
 SAMPLE_RATES = [40e6, 20e6, 10e6, 5e6, 2.5e6, 1.25e6, 625e3, 312.5e3]
 #: Gain elements, in the order the slider should open them up: take the
@@ -350,6 +368,27 @@ def ensure_plugin_path():
     return paths
 
 
+_vendor = [None]
+
+
+def vendor_lib():
+    """The BB60 vendor library through ctypes - the one the SoapySDR module loaded, by soname - with the three calls
+    ``ref_out`` needs typed. ``None`` if it cannot be loaded."""
+    if _vendor[0] is None:
+        for name in VENDOR_LIBS:
+            try:
+                lib = ctypes.CDLL(name)
+            except OSError:
+                continue
+            lib.bbAbort.argtypes = [ctypes.c_int]
+            lib.bbConfigureIO.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32]
+            lib.bbInitiate.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32]
+            lib.bbGetErrorString.restype = ctypes.c_char_p
+            _vendor[0] = lib
+            break
+    return _vendor[0]
+
+
 def gain_plan(percent):
     """Map 0-100% onto the attenuator and the RF stage, in that order.
 
@@ -536,9 +575,14 @@ class bb60_source(gr.sync_block):
     #: not a spin loop, short enough that a pending retune lands promptly.
     TIMEOUT_US = 200000
 
-    def __init__(self, center_freq, sample_rate, gain_percent=60.0):
+    def __init__(self, center_freq, sample_rate, gain_percent=60.0, ref_out=False):
         gr.sync_block.__init__(self, name='bb60_source', in_sig=None,
                                out_sig=[np.complex64])
+        #: Put the internal 10 MHz out on port 2 while running - see the module docstring.
+        self.ref_out = bool(ref_out)
+        #: How many times it has been (re)applied, and the last vendor status (0 is no error).
+        self.ref_out_applied = 0
+        self.ref_out_status = None
         self.center_freq = float(center_freq)
         self.sample_rate = nearest_rate(sample_rate)
         self.gain_percent = float(gain_percent)
@@ -605,6 +649,25 @@ class bb60_source(gr.sync_block):
                         sample_rate=self.sample_rate,
                         gain_percent=self.gain_percent)
         self._sdr.activateStream(self._stream)
+        if self.ref_out:
+            self._apply_ref_out()          # raises on failure; start() turns that into False
+
+    def _apply_ref_out(self):
+        """Port 2 to the 10 MHz output: stop the stream, set it, start again. Needed after the stream starts and after
+        every retune, since the module sets the ports back to off each time."""
+        lib = vendor_lib()
+        if lib is None:
+            raise RuntimeError("ref_out: the BB60 vendor library (libbb_api) could not be loaded")
+        dev = int(dict(self._sdr.getHardwareInfo()).get('device_id', 0))
+        for name, status in (('bbAbort', lib.bbAbort(dev)),
+                             ('bbConfigureIO', lib.bbConfigureIO(dev, BB60D_PORT1_DISABLED,
+                                                                 BB60D_PORT2_10MHZ_REF_OUT)),
+                             ('bbInitiate', lib.bbInitiate(dev, BB_STREAMING, BB_STREAM_IQ))):
+            self.ref_out_status = status
+            if status < 0:
+                raise RuntimeError(f"ref_out: {name} failed: {status} "
+                                   f"{lib.bbGetErrorString(status).decode('ascii', 'replace')}")
+        self.ref_out_applied += 1
 
     def stop(self):
         sdr, stream, self._sdr, self._stream = self._sdr, self._stream, None, None
@@ -671,6 +734,8 @@ class bb60_source(gr.sync_block):
         if pending:
             try:
                 self._configure(**pending)
+                if self.ref_out:
+                    self._apply_ref_out()  # the retune set the ports back to off
             except Exception as exc:
                 print(f"BB60 source: could not apply {sorted(pending)}: {exc}",
                       file=sys.stderr)

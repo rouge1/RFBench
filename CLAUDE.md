@@ -93,7 +93,7 @@ fixed.
 | [ptt.md](knowledge/ptt.md) | `scripts/dmr_demod.py`, `scripts/dmr_fec.py`, `scripts/dmr_synth.py`, anything on push-to-talk radio: TETRA, P25, DMR, NXDN, dPMR, CTCSS/DCS, trunking, MCPTT, D-STAR, M17 | an index to one note per system, each drafted from the public ETSI, NXDN Forum, FCC and 3GPP documents (kept in `docs/ptt/`): modulation, burst and frame layouts, sync words, addressing, the push-to-talk call, FEC, encryption, how to decode, and what the documents did not give |
 | [logitech-mouse-rf.md](knowledge/logitech-mouse-rf.md) | anything on a wireless mouse or keyboard at 2.4 GHz, Logitech LIGHTSPEED/Unifying/Bolt, reading a Sceptre `.cdif` (BLUE) file | the BLUE header and where the centre frequency hides, the Prac_Ex_9 mouse link (2 Mbit/s GFSK, 1 kHz exchange, adaptive two-channel hop), its frame with a BLE CRC-24 and an encrypted payload, why it reads as LIGHTSPEED, and what the traffic does and does not show |
 | [media.md](knowledge/media.md) | `media`, `audio_file`, any file picker | how media is found, MP3, song tags, and plain-ASCII RDS text |
-| [radios.md](knowledge/radios.md) | `vsg_sink`, `bb60_source` | the VSG60's and the BB60D's limits, locks, gain and traps |
+| [radios.md](knowledge/radios.md) | `vsg_sink`, `bb60_source`, `scripts/test_bb60_ref_out.py` | the VSG60's and the BB60D's limits, locks, gain and traps, and the BB60D lending its 10 MHz (`ref_out`) |
 | [ettus.md](knowledge/ettus.md) | anything on the Ettus N210 or its antennas, running any app on it, `scripts/n210_ota_test.sh`, `scripts/app_pair.sh`, `scripts/remote_tx.py`, `scripts/vsg_stream_file.py`, `scripts/app_tx_check.py`, `scripts/app_rx_check.py`, `scripts/spectrum_report.py`, `scripts/bb60_tone.py`, `scripts/vsg_tone.py` | the N210 and its UBX-40, RF1 and RF2, the host's socket buffers, its LO leak, spurs and frequency against the BB60D, three antennas compared over the air, every app run on it - which work, the ATSC apps' 12 MS/s that no N210 can make and NTSC's 20 MS/s rolloff on transmit and receive, all fixed, RF1 into RF2 - and how to test an app on a radio over the air |
 | [signal-hound-specs.md](knowledge/signal-hound-specs.md) | choosing a sample rate, a bandwidth or a level on the VSG60A or BB60D | what the manufacturer's documents give for each - the 27 MHz and 40 MHz instantaneous bandwidths, flatness, levels that damage, timebases, the 10 MHz reference connectors - beside what has been measured here |
 | [signal-hound-calibration.md](knowledge/signal-hound-calibration.md) | trusting a level or frequency from the VSG60A or BB60D, temperature, recalibration | neither has a calibration source inside: factory tables per temperature, the BB60D recalibrating at open and on `bbInitiate` (2 °C), the one-year cycle and the lab it needs, and the 10 MHz adjustment's limited flash |
@@ -242,6 +242,11 @@ damage something. Each links to the why.
   app run through `apps/_run.py` ignored `SIGTERM` and `timeout` with a
   transmitter on the air; `_run.py` now keeps one.
   [ui](knowledge/ui.md#running-one-app-without-the-launcher)
+- **An N210's `ref_locked` is not proof of an external reference**: with
+  nothing on REF IN it reads True on some switches and False on others. Prove
+  a shared clock by frequency - one off-air carrier on both radios at once.
+  The BB60D lends its 10 MHz through `bb60_source(..., ref_out=True)`, not
+  through SoapySDR. [ettus](knowledge/ettus.md#its-external-10-mhz-and-a-lock-sensor-that-cannot-be-trusted-2026-11-25)
 - **A `read-only` Grok sandbox reads the whole home directory**, ssh keys and
   every session's scratchpad included, and what it reads goes to the model.
   Run a reviewer under a profile whose `deny` list names those, tell it never

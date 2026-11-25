@@ -165,5 +165,19 @@ thing not explained: the fine-timing residual was 0.87 samples on the
 shared clock against 0.11 free-running, though the stitch came out
 coherent.
 
-The VSG60 can join the same clock through its BNC 10 MHz input (an SMA
-to BNC adapter); not tried.
+**A start trigger cannot come from the BB60D while it lends the clock.**
+Its port 2 is either the 10 MHz output or the trigger input, not both, and
+port 1 is a reference input only (`bb_api.h`). Both at once need a source
+of 10 MHz and a pulse from outside - a GPS-disciplined reference or a
+distribution box with 10 MHz and PPS out - into the BB60D's port 1 and
+port 2 and the N210's REF IN and PPS. Without one, the start offset comes
+from the overlap, which on one clock needs measuring only once.
+
+`bb60_source(..., ref_out=True)` now lends the clock from any app or
+script (`scripts/test_bb60_ref_out.py`).
+
+The VSG60 can join the same clock through its BNC 10 MHz input: its
+library has `vsgSetTimebase(handle, vsgTimebaseStateExternal)`, which
+`vsg_sink` does not call yet. The hardware is the obstacle: the BB60D has
+one 10 MHz output, already on the N210, so a third radio needs a tee or a
+splitter, and the VSG60 sits on the other machine. Not tried.

@@ -210,8 +210,18 @@ Five things about this device that are not like the others:
   `BB_STREAM_IQ`); samples flow as before, 0 overruns, and an N210 on
   its REF IN reports `ref_locked` True. **The output is on only while
   the BB60D is open**: when the process closes it the N210 loses lock, so
-  the BB60D must be opened first and closed last. `bb60_source` does not do
-  this yet. The result it gave is in
+  the BB60D must be opened first and closed last. **`bb60_source(...,
+  ref_out=True)` does all of this**, and again after every retune or gain
+  change: the module sets the ports back to off on those too ("ConfigureIO"
+  in its chatter), so the block re-applies the output each time
+  (`ref_out_applied` counts it). `scripts/test_bb60_ref_out.py` checks it on
+  the radios by frequency, not by the N210's lock sensor (unreliable - see
+  [ettus](ettus.md#its-external-10-mhz-and-a-lock-sensor-that-cannot-be-trusted-2026-11-25)): the off-air RF 36 ATSC
+  pilot read on both at once agreed within 0.37 Hz at start and 0.17 Hz
+  after a retune, against 168 Hz (0.28 ppm) apart with `ref_out` off; 0
+  overruns. The vendor library loads only once the SoapySDR module has (on
+  its own it fails on `FT_Write`, needing the FTDI library the module
+  brings). The result it gave is in
   [radio use cases](radio-use-cases.md#the-same-on-one-clock-a-shared-10-mhz-reference-2026-11-25).
 - **SoapySDR loads its modules once per process, on first use**, reading
   `SOAPY_SDR_PLUGIN_PATH` then and never again. Anything that touches

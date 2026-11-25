@@ -285,6 +285,22 @@ A VSG60 control at −20 dBm decoded nothing either, but it arrived at −62
 dBFS, barely over the BB60D's −67 floor, so it proved nothing; at −9.5 dBm
 (the level [ntsc](ntsc.md) used) it decoded at once.
 
+## Its external 10 MHz, and a lock sensor that cannot be trusted (2026-11-25)
+
+REF IN takes a 10 MHz reference - the BB60D's port 2 drove it here (how, in
+[radios](radios.md#signal-hound-bb60d-as-a-receiver)) - selected with
+`set_clock_source('external')`, or `--ref external` on UHD's examples.
+**`ref_locked` is not proof of lock.** With nothing at all on REF IN, it
+read True on two of five switches from internal to external and False on
+the others, and True again on a second call already on external. With a
+reference it read True every time - but so it can without one. What proved
+the lock here was frequency: the N210 and the BB60D reading the same
+off-air carrier at once agreed within 0.4 Hz on the shared reference and
+differed by 140-170 Hz (0.24-0.28 ppm) free-running
+(`scripts/test_bb60_ref_out.py`). UHD's own wait for `ref_locked` in its
+examples passes or times out on the same sensor, so it cannot be relied on
+either way.
+
 ## RF1 into RF2 on the one radio
 
 The N210 transmits on RF1 and receives on RF2 at once, but only from **one
