@@ -170,9 +170,33 @@ machine is two thirds idle: the receiver takes about 3.5 threads, the
 transmitter 2.2. The likely reading, not proven: an average over 20
 threads hides the 6 fast cores filling, and the transmitter's 25 MS/s chain
 then runs on efficiency cores or a busy core's second thread and falls
-behind - on `powersave`, too. Not tried: the `performance` governor,
-pinning each app to its own P-cores (`taskset`), and the receiver app
-beside the tone of A.
+behind - on `powersave`, too. Then both of those, the same pair each
+time:
+
+| Run | Transmitter `U` | Receiver | Machine idle |
+|---|---|---|---|
+| B, `powersave` | 21,033 | one clean 5 s window of 12 | 66-68 % |
+| D, `performance` governor | 6,595 (23 reports) | none clean; MER 14.7-18.6 dB | 66-74 % |
+| E, `performance`, transmitter pinned to four P-cores (CPUs 0-7), receiver to the other two and the eight E-cores (8-19) | 662 (5 reports, in bursts of a few seconds about 30 s apart) | clean at 5 s and 55 s only; **3 BB60D `Sample Overrun`** | 59-68 % |
+
+Each step helped the transmitter, and pinning moved the shortage to the
+receiver: on mostly E-cores its Python BB60D source fell behind (the trap
+in CLAUDE.md, "a Python thread doing heavy numpy work starves a Python
+radio block"). The CPUs here are numbered P-cores first: 0-11 are the six
+P-cores' two threads each (4.6-4.7 GHz), 12-19 the E-cores (3.5 GHz).
+
+**And the signal itself may be short.** MER never passed 18.6 dB in any of
+the three, against 22.6-23.3 dB when the N210 sent ATSC from worklaptop1
+at 12.5 MS/s on 2026-11-21, and "100 % of packets lost" came with the eye
+open. Underruns break the stream whatever the MER, but the N210's 25 MS/s
+ATSC - its pilot 7.19 MHz below the LO - at 10 % and a metre from the
+BB60D at gain 20 % is not shown clean alone either. Not separated.
+
+So the ATSC pair has not decoded on one machine either way round: on
+worklaptop1 the receiver falls behind, here the transmitter (and, pinned,
+the receiver). On two machines it decodes. Not tried: the transmitter
+streamed from a rendered file here (as on worklaptop1), which would
+leave the receiver the whole machine and show the signal's own MER.
 
 UHD on both machines says `Unable to set the thread priority`
 (`pthread_setschedparam` fails): the user has no realtime limit, so no
