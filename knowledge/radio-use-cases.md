@@ -217,3 +217,23 @@ cabled, test it the way `scripts/test_bb60_ref_out.py` tests the N210 - by
 frequency, not by any lock flag: a tone from the VSG60 read on the BB60D
 should sit exactly where it was set, to a fraction of a hertz, against the
 0.37-0.41 ppm the two read apart free-running.
+
+## What is open (end of 2026-11-25)
+
+Each is written up in its section above; this is the list in one place.
+
+- **Two transmitter apps at once**, and both transmitters on one host (the
+  N210 back on worklaptop1). Only raw tones were sent together.
+- **The VSG60 on the shared clock**: `vsg_sink` calling
+  `vsgSetTimebase(..., vsgTimebaseStateExternal)`, plus a tee or splitter
+  for the BB60D's one 10 MHz output. Test by frequency.
+- **A shared start trigger**: it needs an outside 10 MHz and PPS source,
+  because the BB60D's port 2 is either the clock or the trigger.
+- **The stitch's timing residual**: 0.4-0.6 samples on real recordings
+  (0.87 on the shared clock) against 0.03 simulated. Multipath is the
+  untested guess.
+- **A 2.4 GHz stitch** to cover the Wi-Fi/Bluetooth band with the BB60D and
+  the N210, receive only.
+- **The ATSC pair on one machine with a live transmitter**: the
+  transmitter's chain renders at about 1.6x real time on the BB60D's
+  machine. Streaming it from a pre-rendered file works.
