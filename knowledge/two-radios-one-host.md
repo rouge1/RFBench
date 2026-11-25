@@ -14,7 +14,7 @@ they come from.
 | VSG60 + BB60D | **No.** BB60D: `Device packet framing issues` after three buffers; VSG: a USB transfer failure | [radios](radios.md#vsg60-notes) |
 | VSG60 + HackRF | Yes, in two processes. In one process the VSG60 transmits nothing if the HackRF was opened first | [radios](radios.md#vsg60-notes) |
 | **VSG60 + N210** | **Yes, as radios.** The VSG60 streaming at 20 and 40 MS/s while the N210 received it at 25 MS/s: no gap on either, below. The ATSC pair still overruns there: the receiver alone is short of the 8 cores | here, 2026-11-25 |
-| **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, receiving or transmitting, below. But the ATSC transmitter app on the N210 starves beside the ATSC receiver app on the BB60D | here, 2026-11-23 and 2026-11-25 |
+| **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, receiving or transmitting, below; ATSC from the N210 decodes on the BB60D beside it when streamed from a rendered file. The live ATSC transmitter app starves beside the receiver app | here, 2026-11-23 and 2026-11-25 |
 
 So the only pair that cannot share a host is the VSG60 with the BB60D. A
 VSG60 transmitter and an N210 receiver can share worklaptop1, as far as
@@ -192,11 +192,29 @@ open. Underruns break the stream whatever the MER, but the N210's 25 MS/s
 ATSC - its pilot 7.19 MHz below the LO - at 10 % and a metre from the
 BB60D at gain 20 % is not shown clean alone either. Not separated.
 
-So the ATSC pair has not decoded on one machine either way round: on
-worklaptop1 the receiver falls behind, here the transmitter (and, pinned,
-the receiver). On two machines it decodes. Not tried: the transmitter
-streamed from a rendered file here (as on worklaptop1), which would
-leave the receiver the whole machine and show the signal's own MER.
+**Then the transmitter streamed from a rendered file: it decodes.** The
+same chain rendered for the N210 (`RADIO_RATES['usrp']`, 25 MS/s, colour
+bars, 20 s, rms 0.314 as the app's), sent by UHD's `tx_samples_from_file
+--repeat` at 919.5 MHz, gain 3 dB - what 10 % gives - with the receiver
+unpinned on the `performance` governor:
+
+| Run | Transmitter `U` | Receiver | Machine idle |
+|---|---|---|---|
+| F, the file | **0** | **"Locked - clean stream" in 10 of 12 windows**, the other two "Marginal" at 1.2-1.3 % lost - the file's loop, a break in the transport stream every 20 s; 0 BB60D overruns | 60-75 % |
+
+MER stayed 18.3-18.8 dB with nothing underrunning, so that is this path's
+own figure - the N210 at 10 % a metre from the BB60D at gain 20 % - and
+not the CPU; what broke B, D and E was the transmitter's underruns. The
+render shows how thin its margin is: 20 s of the chain took 12.7 s on
+about 2.7 threads here with nothing else running, about 1.6 times real
+time at 25 MS/s, before ffmpeg encodes any video. Beside a receiver
+taking three or four threads, it falls behind.
+
+So **the ATSC pair decodes on one machine, here, with the transmitter's
+chain rendered ahead and streamed** - and live, both apps together, it
+has not decoded on either machine: on worklaptop1 the receiver falls
+behind, here the transmitter. The radios themselves share both machines
+at full rate.
 
 UHD on both machines says `Unable to set the thread priority`
 (`pthread_setschedparam` fails): the user has no realtime limit, so no
