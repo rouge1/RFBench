@@ -26,8 +26,8 @@ needs the user's go for that run.
 | VSG60 + BB60D | either | - | ❌ will not stream together on one host | [radios](radios.md#vsg60-notes) |
 | VSG60 + HackRF | either | - | ⚠️ only in two processes | [radios](radios.md#vsg60-notes) |
 | N210 RF1 → its own RF2 | either | - | ⚠️ one process only (`txrx_loopback_to_file`) | [ettus](ettus.md#rf1-into-rf2-on-the-one-radio) |
-| **Two transmitters at once** | - | - | ❔ not tested - [planned below](#planned-two-transmitters-at-once) | - |
-| **A wider band** than one radio's | - | - | ❔ not tested - [planned below](#planned-a-wider-band) | - |
+| **Two transmitters at once**: VSG60 + N210, both into the BB60D | two machines | 20 + 25 MS/s | ✅ both tones in one capture, no gap on either, 0 `U`, 0 overruns | [below](#two-transmitters-at-once-2026-11-25), 2026-11-25 |
+| **A wider band**: BB60D + N210 on adjacent bands, stitched | BB60D's machine | 40 + 25 MS/s | ✅ one coherent 26 MHz band; the halves add in phase | [below](#a-wider-band-two-receivers-stitched-2026-11-25), 2026-11-25 |
 
 How "no gap" was judged: a CW tone, mixed to DC in 1,000-sample blocks,
 checked for any block under half the median amplitude and any phase step
@@ -67,40 +67,70 @@ on the N210) - how the one-machine ATSC decode above was done. CPUs on the
 BB60D's machine are numbered P-cores first: 0-11 the P-cores' two threads
 each, 12-19 the E-cores.
 
-## Planned: two transmitters at once
+## Two transmitters at once (2026-11-25)
 
-Not run yet. The VSG60 on worklaptop1 and the N210 on the BB60D's machine
-transmitting together, the BB60D receiving both:
+Over the air (user's go): the VSG60 on worklaptop1 streaming a CW tone at
+910.000037 MHz (−30 dBm, 20 MS/s) and the N210 on the BB60D's machine
+sending one at about 922.0007 MHz (`tx_waveforms`, 25 MS/s, gain 0), the
+BB60D recording both at 40 MS/s centred 915 MHz, ATT −20, for 12 s.
 
-- **Raw first:** a CW tone from each, inside the BB60D's 27 MHz and inside
-  the 902-928 MHz ISM band - the VSG60 at 909 + 1.000037 MHz, the N210 at
-  921 + 1.000037 MHz, say - and the same gap check on both tones in one
-  BB60D capture at 40 MS/s centred on 915 MHz, beside each transmitter's
-  own `U`/underrun count. Two transmitters on two machines exercise the
-  air, not a host; the N210 transmitting beside the BB60D is already shown
-  clean.
-- **Then two transmitter apps**, one per radio at different frequencies,
-  each judged by the BB60D in turn or by a receiver app.
-- **On one host**, the VSG60 and the N210 both transmitting, needs the
-  N210 back on worklaptop1.
+- **Both tones were in the one capture**, 0 BB60D overruns, 0 `U` on the
+  N210. The N210's tone: no gap, no phase step, 41.6 dB block SNR. The
+  VSG60's (19 dB weaker at that attenuation): no gap of its own.
+- **What the gap finder did flag was someone else**: three 2 ms bursts
+  within 200 kHz of 910 MHz, 20-25 dB over the floor, exactly 0.648 s
+  apart - another device in the ISM band. Before calling a flag a gap,
+  look at the band around the tone at that moment.
+- Not tried yet: two transmitter **apps** at once, and both transmitters
+  on one host (that needs the N210 back on worklaptop1).
 
-## Planned: a wider band
+## A wider band: two receivers stitched (2026-11-25)
 
-Not run yet. No radio here passes more than about 27 MHz (the BB60D at
-40 MS/s; the VSG60 is flat to ±14.4 MHz at 40 MS/s; the N210's UBX-40 card
-at 25 MS/s). Wider takes two radios side by side:
+Over the air (user's go), inside 902-928 MHz. The VSG60 on worklaptop1
+streamed a 4 s test file at 40 MS/s, centred 915 MHz, −20 dBm: 26 tones
+(902.5-927.5 MHz, whole Hz), a sawtooth sweep 903 → 927 MHz every 10 ms,
+and twelve 1 ms silences at seeded random times. On the BB60D's machine,
+started together, **the BB60D took the lower half** (40 MS/s centred
+909 MHz) **and the N210 the upper** (25 MS/s centred 921 MHz, RX2, gain
+25) for 6 s each; the two overlap at 911-922 MHz. 0 overruns, no `O`.
 
-- **Receive:** the BB60D and the N210 on one machine (already shown to
-  stream together), tuned to adjacent bands - for example the BB60D
-  centred 13 MHz below a boundary and the N210 10 MHz above it - over a
-  signal that crosses the boundary, then the two captures lined up in time
-  and frequency and stitched. The open questions are lining them up (no
-  shared clock or trigger: the N210's and the BB60D's frequency differ by
-  about 0.2 ppm, and their start times by however long each takes to
-  open) and the seam.
-- **Transmit:** the VSG60 and the N210 on adjacent bands, one signal split
-  across them.
-- **The band:** 902-928 MHz is 26 MHz, about one radio's width. Over the
-  air, anything wider leaves the ISM band, so a wider-band test either
-  stays inside 26 MHz (two radios each covering half, to prove the
-  stitching) or needs a cable and a pad - the decision is the user's.
+The stitch used only the two captures (nothing from the file), then was
+graded against the file. In order:
+
+1. N210 to 40 MS/s (×8/5); both shifted to one frame centred 915 MHz.
+2. **Frequency**: the 12 tones both saw put the N210 174.5 Hz above the
+   BB60D at 915 MHz, rising 0.178 Hz/MHz - one radio's clock 0.19 ppm off
+   the other's.
+3. **Time, coarse**: power envelopes of the overlap band, cross-correlated
+   on the silences: the N210's capture started 1.0412 s after the BB60D's.
+4. **Time, fine**: GCC-PHAT on the overlap band in 3.3 ms segments, a line
+   through the lags: drift −0.193 ppm (agreeing with step 2), residual
+   0.11 samples (3 ns). Two traps: plain cross-correlation is ruled by the
+   strong tones and gives flat, ambiguous peaks (second best 0.92-1.00 of
+   the best); and whitening must be limited to the overlap band, or the
+   empty bins' noise wins and every lag lands on the window's edge.
+5. **Phase, tracked**: the radios' relative phase **wanders** - 24 rad in
+   2.5 s, by as much as 1.4 Hz over a quarter second, the same at every
+   frequency - because each runs on its own reference oscillator. A fixed
+   gain and phase left the halves 1.37 rad apart and 10 dB adrift; the
+   complex gain is measured from the overlap band every 2 ms and applied
+   smoothly in time. A 10 MHz reference shared by both radios would remove
+   this; neither is wired to one.
+6. **Residual delay and phase** at the seam from the cross-spectrum, and
+   **the level** from the strong lines either side of the seam - not from
+   |cross-spectrum / power|, which noise in the N210's half biases 4 dB low.
+7. **Join** at 916.5 MHz (mid-overlap) with complementary filters, 1 MHz
+   transition.
+
+| Graded against the file | Result |
+|---|---|
+| The 26 tones, 902.5-927.5 MHz | all present, within 3.5 dB: a tilt of +1.7 to −1.7 dB across the band, no step at the seam; the tone on the seam 1.1 dB low |
+| The sweep, compressed against its known shape | stitched peak 1.00; the BB60D's half alone 0.59, the N210's 0.42 (13.5 and 10.5 of 24 MHz predict 0.5625 and 0.4375); the halves sum to 1.008 and sit 0.26 rad apart |
+| Pulse width (−3 dB) | stitched 50 ns; either half 100 ns; 1/24 MHz is 42 ns |
+| The stitched frame against the VSG60 | +0.376 ppm (the BB60D's own offset) |
+
+So two receivers on adjacent bands make one band about twice as wide,
+coherent across the seam, from one machine - with the phase tracked,
+since the clocks are not shared. Over the air that stays inside 26 MHz;
+anything wider than the ISM band needs a cable and a pad. The scripts
+(generator, stitch, grade) were throwaways in the session scratchpad.
