@@ -13,12 +13,14 @@ they come from.
 |---|---|---|
 | VSG60 + BB60D | **No.** BB60D: `Device packet framing issues` after three buffers; VSG: a USB transfer failure | [radios](radios.md#vsg60-notes) |
 | VSG60 + HackRF | Yes, in two processes. In one process the VSG60 transmits nothing if the HackRF was opened first | [radios](radios.md#vsg60-notes) |
-| VSG60 + N210 | They streamed, but the ATSC transmitter and receiver together overran on worklaptop1. Two heavy apps on 8 cores, or one slow stage, not separated | [ettus](ettus.md#every-app-on-the-n210-2026-11-21) |
+| **VSG60 + N210** | **Yes.** The VSG60 streaming at 20 and 40 MS/s while the N210 received it at 25 MS/s: no gap on either, below. The ATSC pair that overran there was CPU, not the radios | here, 2026-11-25 |
 | **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, below | here, 2026-11-23 |
 
-So a transmitter and a receiver still need two machines whenever the
-transmitter is the VSG60. The receiving machine can hold the BB60D and the
-N210 both, and use them at once.
+So the only pair that cannot share a host is the VSG60 with the BB60D. A
+VSG60 transmitter and an N210 receiver can share worklaptop1, as far as
+the radios go; what the apps cost in CPU on 8 cores is a separate question
+(below). The receiving machine can hold the BB60D and the N210 both, and
+use them at once.
 
 ## BB60D and N210 together (2026-11-23)
 
@@ -55,9 +57,66 @@ with a load average of about 1.5 while these ran.
 So opening the N210 mid-capture, streaming it at 25 MS/s, and decoding
 8VSB live on the same host disturbed nothing on either radio. The
 night-three captures taken on the N210 while skinny-fm held the BB60D
-(rounds 10 and 18) were fine to take. The VSG60 + N210 pair on one host is
-a different pair; it was not tried here, because it needs one radio moved
-to the other's machine.
+(rounds 10 and 18) were fine to take. The VSG60 + N210 pair is in the next
+section.
+
+## VSG60 and N210 together (2026-11-25)
+
+The N210 was moved to worklaptop1, beside the VSG60: the VSG60 on USB, the
+N210 on gigabit Ethernet through a USB Ethernet adapter. It is the 8-core
+machine, on the performance governor, with UHD's socket buffers at 50 MB.
+Every radio was on an antenna, so this ran over the air with the user's
+go: a CW tone at 916.000 MHz (the VSG60 at 915 MHz, the tone 1,000,037 Hz
+off centre in a one-second file), at −30 dBm.
+
+- **The VSG60 streamed** the file from disk through `vsg_stream_file.py`
+  (by `remote_tx.py stream`), at 20 MS/s and at 40 MS/s, the rate that
+  matters most to the USB: 320 MB/s of IQ. It reports no underruns of its
+  own - an underrun would go out as a gap in the RF - so the tone was
+  checked at the far end.
+- **The N210 received that tone off its own antenna** on RX2, at 25 MS/s,
+  through UHD's `rx_samples_to_file` into `/dev/shm`, gain 10 (peaks at
+  1,400-2,800 of 32,767).
+- **The BB60D**, on the other machine, recorded the same tone at 5 MS/s as
+  a check on the VSG60 that does not share its host.
+- **The checks** on each recording, in 1,000-sample blocks after mixing the
+  tone to DC: any block under half the median amplitude (a gap or an
+  underrun), and any step in phase between blocks over 0.5 rad (lost
+  samples). Neither recording ever came near: the worst phase step in any
+  of them was 0.12 rad. The tone's frequency is chosen so that losing any
+  short run of samples moves its phase - at 1 MHz exactly, losing 500
+  samples at 20 MS/s is 25 whole cycles and invisible, which a self-test
+  with planted faults caught. On top of that, UHD's own `O`/`D` and the
+  BB60D's overrun count.
+
+| Run | VSG60 | N210, same host | BB60D, other host |
+|---|---|---|---|
+| N210 alone (`benchmark_rate`) | off | 25 MS/s, 30 s: 749,907,350 samples, 0 dropped, 0 overruns | - |
+| VSG60 alone | 20 MS/s | - | 30 s: no gap, no phase step, 0 overruns |
+| **Both** | **20 MS/s** | **30 s: no `O`/`D`, no gap, no phase step** | 30 s: no gap, no phase step, 0 overruns |
+| **Both** | **40 MS/s** | **40 s: 999,970,000 samples, no `O`/`D`, no gap, no phase step** | 40 s: tone on 100 % of the time, no gap, no phase step, 0 overruns |
+
+worklaptop1 sat 90-92 % idle through both, the streamer on about 62 % of
+one core at 40 MS/s. So the radios themselves share the host at full rate.
+The ATSC transmitter and receiver that overran together there
+([ettus](ettus.md#every-app-on-the-n210-2026-11-21)) had the machine 83 %
+busy: that was the apps' CPU, or one receiver stage too slow at 12.5 MS/s,
+and not the pair.
+
+Against the VSG60 at 916 MHz the N210 read the tone 566 to 616 Hz high
+(+0.62 to +0.67 ppm, across two runs) and the BB60D 373 to 380 Hz
+(+0.41 ppm).
+
+**A capture timed by hand missed two runs.** Two BB60D captures at
+40 MS/s started 60-70 s after the run's `ON AIR` line, caught its end, and
+looked like the VSG60 falling silent mid-stream. The silence began on the
+second of `remote_tx`'s scheduled stop. Start a check capture from the
+`ON AIR` line in the same shell, and before calling anything a transmitter
+fault, put the capture's start (its file time less its length) beside the
+run's on and stop times.
+
+Not tested: the N210 *transmitting* beside the VSG60, and a transmitter
+and a receiver app both on worklaptop1 since the move.
 
 Two things around it, neither the pairing:
 
