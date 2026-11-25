@@ -31,10 +31,14 @@ needs the user's go for that run.
 
 How "no gap" was judged: a CW tone, mixed to DC in 1,000-sample blocks,
 checked for any block under half the median amplitude and any phase step
-over 0.5 rad, plus UHD's `O`/`D`/`U` and the BB60D's overrun count. The
-tone sits at 1,000,037 Hz so that losing a short run of samples moves its
-phase (at exactly 1 MHz, 500 samples at 20 MS/s are whole cycles and
-invisible). Details in
+over 0.5 rad, plus UHD's `O`/`D`/`U` and the BB60D's overrun count -
+now `scripts/tone_gaps.py` (tested by `scripts/test_tone_gaps.py`). The
+phase check cannot see every run of lost samples: losing k is invisible
+whenever k·f/rate is near a whole number of cycles, and no tone escapes
+that for every k - the 1,000,037 Hz used here still hides 500 samples at
+20 MS/s (25.0009 cycles), as does exactly 1 MHz. So the radios' own
+counters are the first check for lost samples; this one is strongest for
+dropouts. Details in
 [two radios](two-radios-one-host.md#vsg60-and-n210-together-2026-11-25).
 
 ## ATSC: a transmitter app and a receiver app
@@ -132,8 +136,36 @@ graded against the file. In order:
 So two receivers on adjacent bands make one band about twice as wide,
 coherent across the seam, from one machine - with the phase tracked,
 since the clocks are not shared (but see the next section). Over the air that stays inside 26 MHz;
-anything wider than the ISM band needs a cable and a pad. The scripts
-(generator, stitch, grade) were throwaways in the session scratchpad.
+anything wider than the ISM band needs a cable and a pad.
+
+**The stitcher is `scripts/band_stitch.py`** (`--fixed-phase` for a
+shared clock, `--df` when the overlap has no narrow lines), tested
+without a radio by `scripts/test_band_stitch.py`: two simulated receivers
+with a 170 Hz offset, a phase walk and a fractional delay must join
+coherently, one fixed phase on the same input must not, and with no walk
+it must. Writing that test found two traps the bench recordings had hidden
+under their noise, both fixed:
+
+- **A periodic wideband signal is a comb of lines.** On a clean signal a
+  chirp repeating every 10 ms clears any floor-based threshold as lines
+  100 Hz apart, and pairing them between receivers gave offsets anywhere
+  in ±1.7 kHz. Lines now count only within 20 dB of the strongest, and
+  pairs far from the median difference are dropped.
+- **A sharp timing peak is not a right one.** A segment whose overlap holds
+  only the tones (the chirp elsewhere in its sweep) correlates as well
+  every 40 samples - 1 MHz spacing at 40 MS/s - and lands anywhere with
+  high confidence. The segments now vote: the line through any two that
+  the most agree with to a sample.
+
+On the recordings the revised stitcher gives the same results (halves
+summing to 1.005 and 1.001, 0.20 and 0.11 rad apart), with a fine-timing
+residual of 0.4-0.6 samples where the simulation gives 0.03. A likely
+reason, not tested: the two receivers sit on different antennas in
+different places, so each hears its own reflections, and the delay between
+them differs with frequency - with whichever part of the chirp is in the
+overlap. The recordings, the transmit file's generator and its truth are on
+the 4TB drive, `sdr-archive/wideband-stitch-20261125/`
+([catalog](4tb-catalog.md)).
 
 ## The same on one clock: a shared 10 MHz reference (2026-11-25)
 

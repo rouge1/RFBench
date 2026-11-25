@@ -28,6 +28,7 @@ them by name.
 | `sdr-synth-tmp/` | 2,018, and 5,964 more in `rg-archive/` | 545 synthetic `.cf32`, 1.04 TB; 159 bench `.cf32` (recordings, crops and the files played), 1.04 TB | ours: every synthetic set since 2026-10-05, the bench recordings, scripts and an archive |
 | `sdr-archive/stage3-ota-raw-20261004/` | 24 | 6 `.cf32`, 39.7 GB | ours: stage 3 raw over-the-air captures |
 | `sdr-archive/rf-games-20261030-night2/` | 345 | 63 `.cf32`, 84.3 GB | ours: RF games night 2 with fm-rec2, cable only |
+| `sdr-archive/wideband-stitch-20261125/` | 14 | 4 `.cf32`, 7.2 GB | ours: two receivers on adjacent bands, over the air, free-running and on a shared 10 MHz, see [below](#sdr-archivewideband-stitch-20261125) |
 | `data/iq/ota_*` | 7 | 7 `.cf32` | ours: copies of the stage 2 and 3 captures, in bluey's tree |
 | `data/synth-batch2/mixed_v2/` | 4 | 2 `.cf32`, 4.0 GB | ours: a copy of `sdr-synth-tmp/mixed/` |
 | `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 19 | 3 `.cf32`, 70.1 GB | ours: three 2026-11-08 daPie and ESP32 role-switch recordings (2441, 2439 and 2439 MHz), see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
@@ -859,6 +860,27 @@ Beside the `.cf32` files, `rxseries/` holds 85 `.json` files (app-config rounds 
 - `report/` holds `index.html`, the morning report.
 - `iqset-from-scratch/` holds `cfg/` (17 config JSON files), `media/` (two WAV files, one a music track and one a 1 kHz stereo separation test), `out/` (11 `.cf32` renders, each with a log, a `TRUTH.txt` that was not read here, and a `cfg/` copy of the configs) and `cfg-folders-exact-names.tar`, a 44-entry tar of the config folders that was listed and not extracted.
 - The top level also holds `ctf.py` and `gen2.py`, the generators used on the night, and `README.txt`.
+
+### `sdr-archive/wideband-stitch-20261125/`
+
+Two receivers recording adjacent bands at once on one machine, over the
+air, of a known wideband test signal from the VSG60 (915 MHz, 40 MS/s,
+−20 dBm): 26 tones, a 903-927 MHz chirp every 10 ms, twelve 1 ms
+silences. The test that showed two receivers stitch into one coherent band,
+free-running and on a shared 10 MHz - see
+[radio use cases](radio-use-cases.md#a-wider-band-two-receivers-stitched-2026-11-25).
+
+| File | What |
+|---|---|
+| `bb60_909.cf32`, `n210_921.cf32` | free-running: BB60D 40 MS/s at 909 MHz (6 s, 1.92 GB); N210 25 MS/s at 921 MHz, RX2, gain 25 (6 s, 1.20 GB) |
+| `bb60_909_ref.cf32`, `n210_921_ref.cf32` | the same on one clock - the BB60D's 10 MHz out (port 2) on the N210's REF IN; 9 s, 2.88 GB, and 6 s, 1.20 GB |
+| `wide_truth.json`, `gen_wide.py` | the transmit file's truth, and its seeded generator, which remakes the 1.28 GB file byte for byte (checked) |
+| `README.txt`, `SHA256SUMS`, `logs/` | tunings, gains, start offsets and results; checksums, verified against the originals; the capture and transmit logs |
+
+Stitch either pair with `scripts/band_stitch.py` (low receiver first);
+`--fixed-phase` suits the `_ref` pair. Asked for by skinny-fm too, for a real
+over-the-air chirp; a third-party ISM device bursts near 910 MHz every
+~0.648 s in the BB60D captures.
 
 ### `sdr-synth-tmp/dm35-capture/`
 

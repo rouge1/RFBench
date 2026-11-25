@@ -84,11 +84,13 @@ off centre in a one-second file), at −30 dBm.
   tone to DC: any block under half the median amplitude (a gap or an
   underrun), and any step in phase between blocks over 0.5 rad (lost
   samples). Neither recording ever came near: the worst phase step in any
-  of them was 0.12 rad. The tone's frequency is chosen so that losing any
-  short run of samples moves its phase - at 1 MHz exactly, losing 500
-  samples at 20 MS/s is 25 whole cycles and invisible, which a self-test
-  with planted faults caught. On top of that, UHD's own `O`/`D` and the
-  BB60D's overrun count.
+  of them was 0.12 rad. The phase check cannot see every run of lost
+  samples: losing k is invisible when k·f/rate is near a whole number of
+  cycles - 500 samples at 20 MS/s at exactly 1 MHz (25 cycles), and still
+  at the 1,000,037 Hz used (25.0009 cycles), which a self-test with planted
+  faults showed. So UHD's own `O`/`D` and the BB60D's overrun count are the
+  first check for lost samples; the tone's is strongest for dropouts. The
+  check is now `scripts/tone_gaps.py`.
 
 | Run | VSG60 | N210, same host | BB60D, other host |
 |---|---|---|---|
@@ -239,7 +241,8 @@ Not tested then: the N210 *transmitting* beside the BB60D - done since,
 above; the N210 writing to the same disk as a BB60D capture
 at full rate; and the HackRF with either.
 
-The scripts were throwaways in the session scratchpad. `benchmark_rate`
+The scripts were throwaways in the session scratchpad, apart from the tone
+gap check, now `scripts/tone_gaps.py`. `benchmark_rate`
 lives at `$CONDA_PREFIX/lib/uhd/examples/benchmark_rate`, run as
 `benchmark_rate --args addr=<the N210's address> --rx_rate 25e6 --duration 60`,
 with the address from `uhd_find_devices`.
