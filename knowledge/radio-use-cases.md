@@ -180,4 +180,8 @@ The VSG60 can join the same clock through its BNC 10 MHz input: its
 library has `vsgSetTimebase(handle, vsgTimebaseStateExternal)`, which
 `vsg_sink` does not call yet. The hardware is the obstacle: the BB60D has
 one 10 MHz output, already on the N210, so a third radio needs a tee or a
-splitter, and the VSG60 sits on the other machine. Not tried.
+splitter, and the VSG60 sits on the other machine. Not tried. Once it is
+cabled, test it the way `scripts/test_bb60_ref_out.py` tests the N210 - by
+frequency, not by any lock flag: a tone from the VSG60 read on the BB60D
+should sit exactly where it was set, to a fraction of a hertz, against the
+0.37-0.41 ppm the two read apart free-running.
