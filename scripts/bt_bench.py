@@ -9,8 +9,8 @@ and the truth of the capture from the capture itself.
     python scripts/bt_bench.py align CAP.cf32 SHOT.cf32 [--tx TX.json] [--rec REC.json] --out DIR [--name NAME]
     python scripts/bt_bench.py snr CAP.cf32 SHOT.cf32 --out DIR [--name NAME] [--align NAME.align.json]  # the level
 
-**Never radiated.** The VSG60A is a signal generator, not a certified 2.4 GHz device: the bench is an SMA cable,
-antennas off (``knowledge/bluetooth.md``, the bench). It has no pad, so ``scripts/bt_bench_play.py``, the only thing that
+**Never radiated, by design.** The bench is an SMA cable, antennas off, for a known level and a channel no Wi-Fi
+shares (``knowledge/bluetooth.md``, the bench) - not because the VSG60 may not radiate at 2.4 GHz: it is certified to. It has no pad, so ``scripts/bt_bench_play.py``, the only thing that
 transmits (on worklaptop1, and only with ``--go``), caps the level at the BB60D's input instead: level minus the pad
 stated is at most -20 dBm.
 
