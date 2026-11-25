@@ -128,7 +128,12 @@ file covers what, is in [CLAUDE.md](../CLAUDE.md).
   worklaptop1's VSG60A on 2026-10-30 from the leak line, as where it sat
   relative to the requested centre: −4.2 kHz at 144.29 MHz, −8.3 kHz at 162.675 MHz, −43 kHz at
   868.35 MHz, −250 kHz at 50.29 MHz, +90 kHz at 1240.29 MHz and +200 kHz at
-  5615.8 MHz. The step is not the same at every frequency and its size is not
+  5615.8 MHz. On 2026-11-24 the same unit at 915.000 MHz and 40 MS/s
+  put it at −93 kHz, found from its image rather than its leak: in a
+  frequency-hopping test loop played over the cable into the BB60D, two
+  stray bursts at 909.414 and 914.414 MHz were images of carriers at
+  920.4 and 915.4 MHz, both mirrored about 914.907 MHz (a blind
+  analysis by skinny-fm's `iq-hop`, graded against the file's truth). The step is not the same at every frequency and its size is not
   documented, so take these as one unit's numbers. The image of a carrier at
   f appears at 2·LO − f, and a weak line sits exactly halfway between the
   leak and the carrier. It matters to anything that places its signal "away
