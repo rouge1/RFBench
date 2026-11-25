@@ -30,8 +30,9 @@ the BB60D's rate and centre, two loops long - for a like-for-like comparison
 of over the air against a file.
 
 Nothing transmits without ``--seconds``, and the level starts low: −40 dBm
-by default. The VSG60 is not certified for 2.4 GHz, so keep it on a cable and
-pad, or on an antenna only at a level nothing beyond the bench can hear.
+by default. The VSG60 is certified for 2.4 GHz, so an antenna is allowed with
+the user's go for the run; Wi-Fi and Bluetooth share the band, so keep the level low,
+and use a cable and a pad when the test needs a known level or a clean channel.
 Run it with ``timeout -k`` (CLAUDE.md), since it holds a transmitter open.
 """
 import argparse

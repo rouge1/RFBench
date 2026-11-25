@@ -160,13 +160,15 @@ code:
 
 ## The bench
 
-- **The band is unlicensed, but the equipment is not certified.** A
-  VSG60 is a signal generator, not a certified 2.4 GHz device, so the
-  same thinking as
-  [ism.md](ism.md#the-bands-and-what-is-actually-legal) applies:
-  go over a cable and a pad, not an antenna, unless the level is
-  down to the point where nothing beyond the bench can hear it. Wi-Fi
-  and every Bluetooth device in the building share this band.
+- **The VSG60 is certified for transmitting at 2.4 GHz** (the user,
+  2026-11-25; this line used to say it was not, and the cable-only rule
+  below came from that). Over the air is allowed, with the user's go
+  for each run as for any transmission. What is left to watch: Wi-Fi and
+  every Bluetooth device in the building share this band, so a test
+  signal there interferes with them and they with it; keep the level
+  low, and use a cable and a pad whenever the test needs a known level
+  or a clean channel. See also
+  [ism.md](ism.md#the-bands-and-what-is-actually-legal).
 - **Pad before any receiver.** +10 dBm into a HackRF is 15 dB past its
   −5 dBm limit; see
   [the bench](ism.md#the-bench-a-cable-and-a-pad-not-an-antenna).

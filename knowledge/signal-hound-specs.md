@@ -49,8 +49,9 @@ The BB60D datasheet is marked **preliminary** (20 May 2022).
   centre frequency of the waveform. Over 20 MHz of bandwidth the
   image response is below −40 dBc.
 - **Harmonics are below −30 dBc**, so a 2.4 GHz test is not clean at 4.8 GHz
-  and 7.2 GHz, and the VSG60 is not certified for 2.4 GHz
-  ([bluetooth.md](bluetooth.md#the-bench)).
+  and 7.2 GHz. The VSG60 is certified for transmitting at 2.4 GHz (the
+  user, 2026-11-25; an earlier line here said it was not) - see
+  [bluetooth.md](bluetooth.md#the-bench) for what that leaves to watch.
 - **The LO can hop in 200 µs** on a queued list, 80 ms when software
   controlled. A Bluetooth slot is 625 µs, so retuning per slot is not what
   stage 3 does: it shifts in baseband and keeps the LO still.
