@@ -13,14 +13,15 @@ they come from.
 |---|---|---|
 | VSG60 + BB60D | **No.** BB60D: `Device packet framing issues` after three buffers; VSG: a USB transfer failure | [radios](radios.md#vsg60-notes) |
 | VSG60 + HackRF | Yes, in two processes. In one process the VSG60 transmits nothing if the HackRF was opened first | [radios](radios.md#vsg60-notes) |
-| **VSG60 + N210** | **Yes.** The VSG60 streaming at 20 and 40 MS/s while the N210 received it at 25 MS/s: no gap on either, below. The ATSC pair that overran there was CPU, not the radios | here, 2026-11-25 |
+| **VSG60 + N210** | **Yes, as radios.** The VSG60 streaming at 20 and 40 MS/s while the N210 received it at 25 MS/s: no gap on either, below. The ATSC pair still overruns there: the receiver alone is short of the 8 cores | here, 2026-11-25 |
 | **BB60D + N210** | **Yes.** No overruns or drops on either, up to 40 MS/s on the BB60D and 25 MS/s on the N210, below | here, 2026-11-23 |
 
 So the only pair that cannot share a host is the VSG60 with the BB60D. A
 VSG60 transmitter and an N210 receiver can share worklaptop1, as far as
 the radios go; what the apps cost in CPU on 8 cores is a separate question
-(below). The receiving machine can hold the BB60D and the N210 both, and
-use them at once.
+(below) - the ATSC receiver, for one, does not keep up there even with
+the transmitter's encoder taken off the machine. The receiving machine can
+hold the BB60D and the N210 both, and use them at once.
 
 ## BB60D and N210 together (2026-11-23)
 
@@ -115,8 +116,38 @@ second of `remote_tx`'s scheduled stop. Start a check capture from the
 fault, put the capture's start (its file time less its length) beside the
 run's on and stop times.
 
-Not tested: the N210 *transmitting* beside the VSG60, and a transmitter
-and a receiver app both on worklaptop1 since the move.
+### Then the apps: ATSC both ends on worklaptop1 (same day)
+
+The pair that overran before, retested over the air (user's go): the
+VSG60 at 915 MHz (tuned to 919.5, `LO_OFFSET`), −9.5 dBm, and
+`atscReceiver` on the N210 at 915 MHz, 12.5 MS/s, gain 30 %, both on
+worklaptop1, through `remote_tx.py app` and `app_rx_check.py` from a staged
+copy of the tree, 60 s of receiver each.
+
+| Transmitter | worklaptop1 | Receiver |
+|---|---|---|
+| `atscXmitter`, live: ffmpeg encoding Big Buck Bunny, the 8VSB chain | 87 % busy; each app about 3.3 cores | 2-3 `usrp_source` overflows a second all through; pilot found (+0.6 ppm), MER 14.9-16.9 dB, **never decoded** - as on 2026-11-21 |
+| `vsg_stream_file.py`, a 20 s file of the same chain rendered offline (colour bars) | 67 % busy; streamer 0.9 core, receiver 4.2 | **MER 23.1-23.6 dB, eye wide open, "Locked - clean stream" at 5, 10 and 60 s** - but overflows from about 12 s, about one a second (44 reports, 125 `O`/`D`), and 27-100 % of packets lost in the 5 s windows between |
+
+So the receiver alone is short of this machine, not only the two apps
+together. With the transmitter's encoder off the machine the signal is as
+good as the BB60D ever read it, the first 10 s are clean, and the receiver
+still overruns at a third idle - once it is locked and decoding, some
+stage of it cannot keep up at 12.5 MS/s on these 8 cores. UHD also said
+`Unable to set the thread priority` (no realtime limit for the user
+there), which a loaded machine feels most. The same receiver on the
+20-thread machine had 0 `O`/`D` and decoded clean
+([ettus](ettus.md#every-app-on-the-n210-2026-11-21)). Which stage, by
+per-thread CPU, is not measured.
+
+How to run it this way: a heavy transmitter app can be replaced by its
+own chain rendered to a file and streamed, which leaves its CPU off the
+host - the render is the block chain of `scripts/test_atsc_loopback.py` up
+to the scale, into a `file_sink`; 20 s at 20 MS/s took about a minute here.
+It loops with a break in the transport stream every pass.
+
+Not tested: the N210 *transmitting* beside the VSG60; per-thread CPU of
+the ATSC receiver; worklaptop1 with a realtime limit for UHD.
 
 Two things around it, neither the pairing:
 

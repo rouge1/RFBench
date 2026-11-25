@@ -174,6 +174,10 @@ SoapySDR module refuses 12.5, and for the VSG60); the receiver's
   The radios themselves are not it: on 2026-11-25 the VSG60 streaming at
   40 MS/s and the N210 receiving at 25 MS/s on worklaptop1 lost nothing on
   either ([two radios](two-radios-one-host.md#vsg60-and-n210-together-2026-11-25)).
+  The receiver is: retested the same day, it overran there even with the
+  transmitter streamed from a file at 0.9 of a core - clean signal, MER 23 dB,
+  locked, then about one overflow a second once decoding, at a third idle
+  ([two radios](two-radios-one-host.md#then-the-apps-atsc-both-ends-on-worklaptop1-same-day)).
 
 **The ATSC transmitter also underran** - 4 to 20 `U` in the first 20 s of
 each run, against none from the 2-10 MS/s apps. After the rate fix: 10 in
