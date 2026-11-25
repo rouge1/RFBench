@@ -29,6 +29,7 @@ them by name.
 | `sdr-archive/stage3-ota-raw-20261004/` | 24 | 6 `.cf32`, 39.7 GB | ours: stage 3 raw over-the-air captures |
 | `sdr-archive/rf-games-20261030-night2/` | 345 | 63 `.cf32`, 84.3 GB | ours: RF games night 2 with fm-rec2, cable only |
 | `sdr-archive/wideband-stitch-20261125/` | 14 | 4 `.cf32`, 7.2 GB | ours: two receivers on adjacent bands, over the air, free-running and on a shared 10 MHz, see [below](#sdr-archivewideband-stitch-20261125) |
+| `sdr-archive/two-transmitters-20261125/` | 5 | 1 `.cf32`, 3.8 GB | ours: the VSG60 and an N210 transmitting at once, one BB60D recording, with a third-party ISM device, see [below](#sdr-archivetwo-transmitters-20261125) |
 | `data/iq/ota_*` | 7 | 7 `.cf32` | ours: copies of the stage 2 and 3 captures, in bluey's tree |
 | `data/synth-batch2/mixed_v2/` | 4 | 2 `.cf32`, 4.0 GB | ours: a copy of `sdr-synth-tmp/mixed/` |
 | `data/` (`iq/`, `btsnoop/`, `sidecar/`) | 19 | 3 `.cf32`, 70.1 GB | ours: three 2026-11-08 daPie and ESP32 role-switch recordings (2441, 2439 and 2439 MHz), see [below](#a-real-link-recorded-2026-11-08-a-mid-link-role-switch) |
@@ -881,6 +882,19 @@ Stitch either pair with `scripts/band_stitch.py` (low receiver first);
 `--fixed-phase` suits the `_ref` pair. Asked for by skinny-fm too, for a real
 over-the-air chirp; a third-party ISM device bursts near 910 MHz every
 ~0.648 s in the BB60D captures.
+
+### `sdr-archive/two-transmitters-20261125/`
+
+One BB60D recording (40 MS/s, 915 MHz, ATT −20, 12 s, 3.84 GB) of two
+transmitters at once, over the air: the VSG60's tone at 910.00004 MHz
+(read 910.00038) and an N210's at 922.00073 MHz, both on throughout, no gap
+in either - the test in
+[radio use cases](radio-use-cases.md#two-transmitters-at-once-2026-11-25).
+It also holds a **third-party device** near 910 MHz: ~2 ms bursts every
+0.6482 s, 20-25 dB over the floor, at 4.4636, 5.1118 and 5.7600 s. Kept
+for skinny-fm's `iq-hop` (two known senders and a real stranger).
+`README.txt` has the truth, `SHA256SUMS` was checked against the original,
+`logs/` the run script and the N210's transmit log.
 
 ### `sdr-synth-tmp/dm35-capture/`
 
