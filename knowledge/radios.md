@@ -395,3 +395,27 @@ Three things cost time on the way there, all in the *measuring*, not the radio:
   mid-capture, a window that straddles the transition catches an RT+ tag
   belonging to the *outgoing* message and reads exactly like a stale-tag bug.
   Decode a slice safely after the change before believing one.
+
+### The band edge at 40 MS/s, and how weak a chirp it sees (2026-11-26)
+
+Measured with skinny-fm's fm-receiver. The VSG60A was on a bare cable into the BB60D, at −40 dBm (|iq| 1, constant
+envelope). The BB60D was at 915 MHz, 40 MS/s, gain 5 % and AGC off. The waveforms were made blind and their truth
+checked afterwards: 2-FSK packets at 50 kBd, stepped 0.5 MHz across each edge, and a 24 MHz sawtooth chirp stepped
+down 3 dB at a time.
+
+- **The flat band is 901.41–928.63 MHz**, ±13.6 MHz about the centre. The datasheet's 27 MHz holds.
+- **The wall past it is steep and lopsided.** At 0.4 MHz past the upper edge (929.0 MHz) the packets were still
+  found at 40 dB over the floor there, but they were about 90 dB under their in-band level and none demodulated.
+  The filter cuts the upper FSK tone harder than the lower. Past the lower edge, 901.0 MHz gave 37 dB and
+  900.5 MHz gave 19 dB, with no packet decoded at either. From about 4 MHz past either edge almost nothing was
+  found. Every in-band packet was bit-exact (95/95 and 65/65). So decode only inside ±13.6 MHz: a burst on the skirt
+  can be *seen*, but not read.
+- **A strong in-band signal makes two fixed spurs, at about ±16 MHz** (898.8 and 931.1 MHz at a 915 MHz centre).
+  They appear wherever the signal is and were not in the waveform: they are the BB60D's own.
+- **Sensitivity at gain 5 %:** a 24 MHz-wide chirp, 2.4 GHz/s and 10 ms period, was found on every frame down to
+  **−64 dBm** at the input, partly at −67 and −70 dBm, and not at all from −73 dBm. Those levels are as set on the
+  VSG60A, which is specified only to ±2 dB.
+- The FSK deviation read **±21 kHz** against the ±25 kHz sent. That is not yet explained.
+- On the transmitter side, `repeat_waveform` took and looped a 320 M-sample buffer (8 s at 40 MS/s, 2.56 GB) with no
+  trouble. Its upper-edge waveform was centred at 929.5 MHz with 12.5 MS/s, its lower-edge one at 900.5 MHz, and
+  both leaked a carrier at their centre about 40 dB down.
