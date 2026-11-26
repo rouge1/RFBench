@@ -409,9 +409,11 @@ down 3 dB at a time.
   The filter cuts the upper FSK tone harder than the lower. Past the lower edge, 901.0 MHz gave 37 dB and
   900.5 MHz gave 19 dB, with no packet decoded at either. From about 4 MHz past either edge almost nothing was
   found. Every in-band packet was bit-exact (95/95 and 65/65). So decode only inside ±13.6 MHz: a burst on the skirt
-  can be *seen*, but not read.
+  can be *seen*, but not read. Re-centring proved it is the receiver's filter: the same upper-edge waveform
+  captured at a 929.0 MHz centre gave all 240 packets from 925 to 934 MHz, framed and bit-exact, 929.0-934.0 included.
 - **A strong in-band signal makes two fixed spurs, at about ±16 MHz** (898.8 and 931.1 MHz at a 915 MHz centre).
-  They appear wherever the signal is and were not in the waveform: they are the BB60D's own.
+  They appear wherever the signal is and were not in the waveform: they are the BB60D's own. At a 929.0 MHz centre
+  they moved with it, to 912.7 and 945.2 MHz (±16.2 MHz).
 - **Sensitivity at gain 5 %:** a 24 MHz-wide chirp, 2.4 GHz/s and 10 ms period, was found on every frame down to
   **−64 dBm** at the input, partly at −67 and −70 dBm, and not at all from −73 dBm. Those levels are as set on the
   VSG60A, which is specified only to ±2 dB.
