@@ -41,7 +41,7 @@ stay under full scale; build() refuses a spec that does not.
                                          CP-2FSK packets (55 55 2DD4 seq, 8 text bytes, CRC16),
                                          one per dwell on a fixed pseudo-random channel order
   dsss     payload, chip_rate            the fsk frame as DBPSK, each bit spread by Barker-11
-  qam16    rate, alpha, dur_s            16QAM, RRC, random data
+  qam16    rate, alpha, dur_s            16QAM, RRC, random data; fs/rate must be a whole number
   ofdm     text, df_hz                   64 bins, CP 16, BPSK on 48, pilots at +-7 and +-21
 
 CRC16 is CCITT-FALSE (poly 0x1021, init 0xFFFF) over the length byte and the
@@ -354,7 +354,13 @@ def rrc(alpha, sps, span):
 
 
 def qam16(it, fs, rng):
-    sps = int(round(fs / it['rate'])); nsym = int(it['dur_s'] * it['rate'])
+    # A whole number of samples a symbol, or nothing: rounding 2.5 to 2 once sent
+    # night four's round 9 at 1.25 MBd when the spec said 1 MBd, and said nothing.
+    sps = int(round(fs / it['rate']))
+    if sps < 2 or abs(fs / it['rate'] - sps) > 1e-9:
+        raise ValueError('qam16: fs %g / rate %g = %g samples a symbol; it must be a whole '
+                         'number, at least 2' % (fs, it['rate'], fs / it['rate']))
+    nsym = int(it['dur_s'] * it['rate'])
     lv = np.array([-3, -1, 1, 3])
     s = (lv[rng.integers(0, 4, nsym)] + 1j * lv[rng.integers(0, 4, nsym)]) / np.sqrt(10)
     up = np.zeros(nsym * sps, complex); up[::sps] = s

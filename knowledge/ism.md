@@ -993,6 +993,31 @@ the BB60D's, at port levels from −20 to −55 dBm.
   neighbour. "That's the neighbour" by frequency alone dismissed real test signals three
   times that night.
 
+## Over the air again, antennas closer, VSG60 and N210 both on worklaptop1 (2026-11-26)
+
+CTF night four, rounds 13-18, with a test tone in each band before it was used. The
+BB60D was at ATT 0, RF 0, 2.5 MS/s. Each level is the tone's power, sent at IQ amplitude 0.5.
+
+| Transmitter | 27 MHz | 915 MHz | 5800 MHz |
+|---|---|---|---|
+| VSG60 (`vsg_tone.py`) | below its 30 MHz floor | −40 dBm → −61 dBFS, −20 → −41 | −40 dBm → −95 dBFS, −20 → −74.5 |
+| N210 (`tx_waveforms`, UBX, TX/RX) | gain 0 → −67 dBFS, 20 → −47 | gain 10 → −32 dBFS | gain 10 → −54 dBFS |
+
+- **The antennas were closer than on 2026-11-22:** about 21 dB from the VSG port at
+  915 MHz, against 39 dB then. Measure again whenever the antennas move.
+- **HF works through UHF antennas a few inches apart.** At 27 MHz the N210 at gain 0
+  stood 60 dB over the floor. The VSG60 stops at 30 MHz, so the N210 is the only radio
+  here for the 13.56 and 27.12 MHz ISM bands. Both radios can reach 40.68 MHz.
+- **Calibrate every band before using it.** 2.4 GHz was skipped. A BLE beacon sent there at
+  −30 dBm never reached a decoder on either side, among eight real advertisers that
+  decoded cleanly.
+- **The N210's spurs** sit about 60 dB under its tone, at ±6 kHz and at +100, +200 and
+  +400 kHz from it. Against the BB60D, the N210 is −0.3 ppm and the VSG60 +0.35 ppm.
+- **More of the room**: a 5.8 GHz hopper stepping 2 MHz every ~42 ms over 5730-5821 MHz;
+  BLE (Govee, Apple) and Wi-Fi on channels 1, 10/11 and 13; carriers at 907.218, 914.014
+  and 920.845 MHz; 433.91 MHz bursts and a 432.03 MHz carrier; shortwave AM broadcasts at
+  4.84-5.95 MHz.
+
 ## Not measured yet
 
 Everything above is from source, documentation, or software-only tests.

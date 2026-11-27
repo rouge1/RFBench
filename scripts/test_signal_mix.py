@@ -58,6 +58,23 @@ got = [int(np.argmax(np.abs(np.fft.fft((x[start + k * n:start + (k + 1) * n] * d
        for k in range(len(syms))]
 check("symbols", got, syms)
 
+print("\nqam16 goes out at the rate asked, or not at all")
+x, _ = sm.build({'fs': 2.5e6, 'length_s': 0.2, 'seed': 3, 'items': [
+    {'kind': 'qam16', 'amp': 0.5, 'offset_hz': 0, 'rate': 625e3, 'alpha': 0.25, 'dur_s': 0.2}]})
+spec = np.abs(np.fft.fft(np.abs(x[:1 << 18]) ** 2))
+fr = np.fft.fftfreq(1 << 18, 1 / 2.5e6)
+band = (fr > 100e3) & (fr < 1.2e6)
+check("symbol-rate line of 625 kBd at 4 samples a symbol, kHz",
+      round(fr[band][np.argmax(spec[band])] / 1e3), 625)
+for rate in (1e6, 2e6):                       # 2.5 and 1.25 samples a symbol
+    try:
+        sm.build({'fs': 2.5e6, 'length_s': 0.01, 'items': [
+            {'kind': 'qam16', 'amp': 0.5, 'offset_hz': 0, 'rate': rate, 'alpha': 0.25,
+             'dur_s': 0.01}]})
+        check(f"{rate/1e6:g} MBd at 2.5 MS/s refused", False, True)
+    except ValueError:
+        check(f"{rate/1e6:g} MBd at 2.5 MS/s refused", True, True)
+
 print("\nbuild() refuses a sum over full scale")
 try:
     sm.build({'fs': FS, 'length_s': 0.01, 'items': [

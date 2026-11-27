@@ -85,8 +85,18 @@ BB60D recording both at 40 MS/s centred 915 MHz, ATT −20, for 12 s.
   within 200 kHz of 910 MHz, 20-25 dB over the floor, exactly 0.648 s
   apart - another device in the ISM band. Before calling a flag a gap,
   look at the band around the tone at that moment.
-- Not tried yet: two transmitter **apps** at once, and both transmitters
-  on one host (that needs the N210 back on worklaptop1).
+- **Both transmitters on one host (worklaptop1, 2026-11-26): files yes, two
+  live FM-video apps no.**
+  - `fmVideoXmitter` on the VSG60 and a second one on the N210, both live at
+    20 MS/s, starved the N210: about 900 `U` every 0.75 s.
+  - One live app plus the second signal rendered to a file and streamed with
+    `tx_samples_from_file --repeat` ran with no underflows. The file was the app's
+    own block chain written through a file sink, 20 s, 3.2 GB.
+  - Rendered files on both radios at once also ran clean: the VSG60 through
+    `remote_tx.py stream`, the N210 at 250 kS/s to 1 MS/s.
+  - `remote_tx.py` refuses to start while an `app_tx_check`, `tx_waveforms` or
+    another streamer runs on the host, so start it first and the N210 after. Its
+    busy check does not list `tx_samples_from_file`.
 
 ## A wider band: two receivers stitched (2026-11-25)
 
